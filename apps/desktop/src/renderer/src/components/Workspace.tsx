@@ -6,6 +6,7 @@ import { ChartView } from './ChartView';
 import { AddPersonDialog, BackupsDialog } from './dialogs';
 import { DuplicatesDialog, mergeSummary } from './duplicates';
 import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
+import { MediaLibraryDialog } from './media';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
 import { SourcesDialog } from './sources';
@@ -41,7 +42,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   /** The message about the import stays until it is dismissed; other messages come and go above it. */
   const [importNotice, setImportNotice] = useState(imported !== null);
   const [dialog, setDialog] = useState<
-    'add-person' | 'backups' | 'duplicates' | 'export' | 'import-report' | 'sources' | null
+    | 'add-person'
+    | 'backups'
+    | 'duplicates'
+    | 'export'
+    | 'import-report'
+    | 'media'
+    | 'sources'
+    | null
   >(null);
   /** What the right-hand side shows for the person selected: their details, or a chart. */
   const [view, setView] = useState<'person' | 'chart'>('person');
@@ -204,6 +212,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           >
             Sources
           </button>
+          <button
+            type="button"
+            title="The pictures and documents in this tree"
+            onClick={() => setDialog('media')}
+            data-testid="open-media"
+          >
+            Media
+          </button>
           <button type="button" onClick={() => setDialog('backups')} data-testid="open-backups">
             Backups
           </button>
@@ -343,6 +359,17 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
       )}
       {dialog === 'sources' && (
         <SourcesDialog
+          tree={tree}
+          onTree={onTree}
+          onSelect={(personId) => {
+            setSelectedId(personId);
+            setView('person');
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'media' && (
+        <MediaLibraryDialog
           tree={tree}
           onTree={onTree}
           onSelect={(personId) => {

@@ -78,6 +78,12 @@ export interface GedcomExportResult {
    * written in the version it was imported in.
    */
   unconverted: Record<string, number>;
+  /**
+   * Pictures and documents added in the app. The file does not mention them:
+   * writing them as media records is not built yet, and until it is, an
+   * export must say what it left out.
+   */
+  mediaNotWritten: number;
 }
 
 interface PersonRow {
@@ -936,6 +942,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     families: exportedFamilies.length,
     livingOmitted: omitted.size,
     unconverted: conversion.unconverted,
+    mediaNotWritten: sql(db, 'SELECT count(*) FROM media').pluck().get() as number,
   };
 }
 

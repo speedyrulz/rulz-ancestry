@@ -11,6 +11,7 @@ import type {
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { countOf } from '../format';
+import { MediaStrip } from './media';
 import { Dialog, FormDialog, SelectField, TextAreaField, TextField, useSubmit } from './ui';
 
 /**
@@ -211,13 +212,21 @@ interface CitationEditDialogProps {
   citation: CitationInfo;
   /** True when the citation supports more than one fact; the dialog then says so. */
   shared: boolean;
+  /** Goes up when the tree changes, so the citation's pictures are read again. */
+  revision: number;
   /** Called with the tree's new state once the change is saved. */
   onTree: (tree: TreeState) => void;
   onClose: () => void;
 }
 
 /** Changes what a citation says. The change applies to every fact it supports. */
-export function CitationEditDialog({ citation, shared, onTree, onClose }: CitationEditDialogProps) {
+export function CitationEditDialog({
+  citation,
+  shared,
+  revision,
+  onTree,
+  onClose,
+}: CitationEditDialogProps) {
   const [value, setValue] = useState(() => fieldsOf(citation));
   return (
     <FormDialog
@@ -229,6 +238,16 @@ export function CitationEditDialog({ citation, shared, onTree, onClose }: Citati
       onClose={onClose}
       testId="citation-dialog"
       wide
+      before={
+        // A scan of the place in the source the citation is about. It is added
+        // and removed at once, not with the Save button of the form below.
+        <MediaStrip
+          target={{ type: 'citation', id: citation.id }}
+          revision={revision}
+          onTree={onTree}
+          addLabel="Add a picture or a scan of it"
+        />
+      }
     >
       {shared && (
         <p className="hint" data-testid="citation-shared">
@@ -522,6 +541,12 @@ export function FactSourcesDialog({
                         page.
                       </span>
                     )}
+                    <MediaStrip
+                      target={{ type: 'citation', id: citation.id }}
+                      revision={tree.revision}
+                      onTree={onTree}
+                      addLabel="Add a picture or a scan of it"
+                    />
                   </div>
                   <div className="row-actions">
                     <button
@@ -567,6 +592,7 @@ export function FactSourcesDialog({
         <CitationEditDialog
           citation={editing}
           shared={editing.uses.length > 1}
+          revision={tree.revision}
           onTree={onTree}
           onClose={() => setEditingId(null)}
         />

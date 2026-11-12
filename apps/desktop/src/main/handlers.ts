@@ -1,15 +1,19 @@
 import {
   CITATION_LIMITS,
+  MEDIA_LIMITS,
   NAME_TYPES,
   PEDIGREES,
   SEXES,
   SOURCE_LIMITS,
+  canOpenOutside,
   kinshipTerm,
+  mediaKind,
   relationshipTerm,
 } from '@rulz/core';
 import {
   BackupError,
   GedcomFileError,
+  MediaFileError,
   NoTreeError,
   NotATreeError,
   NotFoundError,
@@ -19,11 +23,13 @@ import {
   addChildOf,
   addCitation,
   addFamilyEvent,
+  addMediaFiles,
   addName,
   addParent,
   addPartner,
   addPersonEvent,
   addPersonFromDraft,
+  countMedia,
   countPersons,
   countSearchPersons,
   countSourceCitations,
@@ -31,35 +37,46 @@ import {
   createSource,
   deleteCitation,
   deleteEvent,
+  deleteMedia,
   deleteName,
   deletePerson,
   deleteSource,
   findDuplicates,
   findRelationship,
   getChartData,
+  getMedia,
   getPersonPage,
   getPersonSummary,
   getSource,
+  isMediaPresent,
   keptLinesOf,
   keptLinesOfSource,
   linkCitation,
+  listAllMedia,
+  listMedia,
+  listMediaUses,
   listPersons,
   listSourceCitations,
   listSources,
   markNotDuplicate,
+  mediaFilePath,
   mergePersons,
   presumedLivingIds,
+  requireMedia,
   searchPersons,
   setChildPedigree,
   setPrimaryName,
   unlinkChild,
   unlinkCitation,
+  unlinkMedia,
   unlinkPartner,
   updateCitation,
   updateEvent,
+  updateMedia,
   updateName,
   updatePerson,
   updateSource,
+  type Media,
   type Tree,
 } from '@rulz/db';
 import { z } from 'zod';
@@ -67,6 +84,7 @@ import type {
   ApiMethod,
   AppInfo,
   IpcError,
+  MediaInfo,
   PersonChange,
   PersonSummary,
   RulzApi,
@@ -104,10 +122,20 @@ export interface Platform {
   chooseFolder(options: FolderPickerOptions): Promise<string | null>;
   /** Shows the system dialog for opening one file. Resolves to null when the user cancels. */
   chooseFileToOpen(options: FilePickerOptions): Promise<string | null>;
+  /**
+   * Shows the system dialog for opening files, where several may be chosen.
+   * Windows starts it in the folder it was last used in. Resolves to an empty
+   * list when the user cancels.
+   */
+  chooseFilesToOpen(options: Omit<FilePickerOptions, 'defaultPath'>): Promise<string[]>;
   /** Shows the system dialog for saving a file. Resolves to null when the user cancels. */
   chooseFileToSave(options: FilePickerOptions): Promise<string | null>;
   /** Shows a folder in File Explorer. */
   openFolder(dir: string): Promise<void>;
+  /** Opens a file in the program Windows uses for its kind. */
+  openFile(file: string): Promise<void>;
+  /** Shows a file in File Explorer, selected in its folder. */
+  showFileInFolder(file: string): void;
 }
 
 type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
@@ -202,11 +230,46 @@ const sourceRef = z.union([
   z.strictObject({ create: sourceInput }),
 ]);
 
+const mediaInput = z.strictObject({
+  title: text(MEDIA_LIMITS.title).exactOptional(),
+  description: text(MEDIA_LIMITS.description).exactOptional(),
+});
+
+const mediaTarget = z.strictObject({
+  type: z.enum(['person', 'family', 'event', 'citation', 'source']),
+  id,
+});
+
 /** What the file dialogs for import and export offer. */
 const GEDCOM_FILTERS = [
   { name: 'GEDCOM files', extensions: ['ged'] },
   { name: 'All files', extensions: ['*'] },
 ];
+
+/** What the file dialog for adding pictures and documents offers. Any file may be added. */
+const MEDIA_FILTERS = [
+  {
+    name: 'Pictures and documents',
+    extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'avif', 'heic', 'pdf'],
+  },
+  { name: 'All files', extensions: ['*'] },
+];
+
+/** A file of the tree as the page sees it. */
+function mediaInfo(tree: Tree, media: Media): MediaInfo {
+  return {
+    id: media.id,
+    kind: mediaKind(media.mime),
+    mime: media.mime,
+    ext: media.ext,
+    size: media.size,
+    fileName: media.fileName,
+    title: media.title,
+    description: media.description,
+    present: isMediaPresent(tree, media),
+    canOpen: canOpenOutside(media.ext),
+  };
+}
 
 const familyOption = z.strictObject({ familyId: id.exactOptional() });
 const childOptions = z.strictObject({
@@ -230,6 +293,18 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     const summary = getPersonSummary(session.tree, personId);
     if (!summary) throw new NotFoundError('person', personId);
     return summary;
+  };
+  /** The full path of a file of the tree. The page names the file by its id, never by a path. */
+  const storedFile = (mediaId: string): { path: string; ext: string } => {
+    const tree = session.tree;
+    const media = requireMedia(tree, mediaId);
+    const path = mediaFilePath(tree, media);
+    if (path === null || !isMediaPresent(tree, media)) {
+      throw new SessionError(
+        `${media.fileName} is not in the tree's media folder any more; add the file again to put it back`,
+      );
+    }
+    return { path, ext: media.ext };
   };
 
   return {
@@ -323,6 +398,7 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
           families: result.families,
           livingOmitted: result.livingOmitted,
           unconverted: Object.entries(result.unconverted).map(([what, count]) => ({ what, count })),
+          mediaNotWritten: result.mediaNotWritten,
         };
       },
     ),
@@ -353,8 +429,14 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     ),
 
     getPersonPage: define<'getPersonPage'>(z.tuple([id]), (personId) => {
-      const page = getPersonPage(session.tree, personId);
-      return page === null ? null : { ...page, keptLines: keptLinesOf(session.tree, personId) };
+      const tree = session.tree;
+      const page = getPersonPage(tree, personId);
+      if (page === null) return null;
+      return {
+        ...page,
+        media: page.media.map((media) => ({ ...mediaInfo(tree, media), uses: media.uses })),
+        keptLines: keptLinesOf(tree, personId),
+      };
     }),
 
     getChart: define<'getChart'>(
@@ -462,6 +544,49 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
         };
       },
     ),
+
+    listMedia: define<'listMedia'>(z.tuple([mediaTarget]), (target) => {
+      const tree = session.tree;
+      return listMedia(tree, target).map((media) => mediaInfo(tree, media));
+    }),
+
+    listAllMedia: define<'listAllMedia'>(
+      z.tuple([
+        z.strictObject({
+          query: text(200),
+          unattached: z.boolean(),
+          offset: z.number().int().min(0),
+          limit: z.number().int().min(1).max(500),
+        }),
+      ]),
+      ({ query, unattached, offset, limit }) => {
+        const tree = session.tree;
+        return {
+          total: countMedia(tree, { query, unattached }),
+          media: listAllMedia(tree, { query, unattached, offset, limit }).map((media) =>
+            mediaInfo(tree, media),
+          ),
+        };
+      },
+    ),
+
+    getMedia: define<'getMedia'>(z.tuple([id]), (mediaId) => {
+      const tree = session.tree;
+      const media = getMedia(tree, mediaId);
+      if (media === null) return null;
+      return {
+        media: mediaInfo(tree, media),
+        uses: listMediaUses(tree, mediaId).map((use) => ({
+          type: use.type,
+          id: use.id,
+          what: use.what,
+          detail: use.detail,
+          persons: use.personIds
+            .map((personId) => getPersonSummary(tree, personId))
+            .filter((person) => person !== null),
+        })),
+      };
+    }),
 
     addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
       link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
@@ -579,6 +704,38 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       edit((tree) => deleteCitation(tree, citationId)),
     ),
 
+    addMedia: define<'addMedia'>(z.tuple([mediaTarget.nullable()]), async (target) => {
+      // Without an open tree there is nowhere to put a file; say so before asking for one.
+      void session.tree;
+      // The page never names a file; the user picks them in the system dialog.
+      const files = await platform.chooseFilesToOpen({
+        title: 'Choose pictures or documents to add',
+        buttonLabel: 'Add',
+        filters: MEDIA_FILTERS,
+      });
+      if (files.length === 0) return null;
+      const added = session.change((tree) => addMediaFiles(tree, files, target));
+      return {
+        tree: session.state(),
+        chosen: files.length,
+        added: added.filter((entry) => entry.isNew).length,
+        attached: added.filter((entry) => entry.linked).length,
+        mediaIds: [...new Set(added.map((entry) => entry.media.id))],
+      };
+    }),
+
+    updateMedia: define<'updateMedia'>(z.tuple([id, mediaInput]), (mediaId, input) =>
+      edit((tree) => updateMedia(tree, mediaId, input)),
+    ),
+
+    unlinkMedia: define<'unlinkMedia'>(z.tuple([id, mediaTarget]), (mediaId, target) =>
+      edit((tree) => unlinkMedia(tree, mediaId, target)),
+    ),
+
+    deleteMedia: define<'deleteMedia'>(z.tuple([id]), (mediaId) =>
+      edit((tree) => deleteMedia(tree, mediaId)),
+    ),
+
     undo: define<'undo'>(none, () => session.undo()),
 
     redo: define<'redo'>(none, () => session.redo()),
@@ -597,6 +754,21 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     showBackupsFolder: define<'showBackupsFolder'>(none, () =>
       platform.openFolder(session.backupsDir()),
     ),
+
+    openMedia: define<'openMedia'>(z.tuple([id]), async (mediaId) => {
+      const file = storedFile(mediaId);
+      // A tree may hold files that came from someone else. Opening one must never run it.
+      if (!canOpenOutside(file.ext)) {
+        throw new SessionError(
+          'the app does not open files of this kind; use "Show in folder" and open it from there',
+        );
+      }
+      await platform.openFile(file.path);
+    }),
+
+    showMediaInFolder: define<'showMediaInFolder'>(z.tuple([id]), (mediaId) => {
+      platform.showFileInFolder(storedFile(mediaId).path);
+    }),
   };
 }
 
@@ -609,6 +781,7 @@ const RULE_ERRORS = [
   SchemaTooNewError,
   BackupError,
   GedcomFileError,
+  MediaFileError,
   SessionError,
 ] as const;
 

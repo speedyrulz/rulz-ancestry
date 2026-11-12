@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import type {
   CitationTarget,
   EventInfo,
+  MediaInfo,
+  MediaTarget,
   MergeInfo,
   PersonChange,
   PersonNameInfo,
@@ -24,6 +26,7 @@ import {
 import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
 import { EventDialog, NameDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
+import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
 import { RelationshipDialog } from './relationship';
 import { ConfirmDialog, SelectField } from './ui';
 
@@ -53,6 +56,7 @@ type Open =
   | { kind: 'merge' }
   | { kind: 'delete' }
   | { kind: 'sources'; target: CitationTarget; title: string }
+  | { kind: 'media'; target: MediaTarget; title: string }
   | { kind: 'citation'; citationId: string };
 
 interface PersonPageProps {
@@ -119,11 +123,22 @@ interface EventRowsProps {
   /** How many citations support an event. */
   sourceCount: (eventId: string) => number;
   onSources: (event: EventInfo) => void;
+  /** How many pictures and documents are attached to an event. */
+  mediaCount: (eventId: string) => number;
+  onMedia: (event: EventInfo) => void;
   onEdit: (event: EventInfo) => void;
   onDelete: (event: EventInfo) => void;
 }
 
-function EventRows({ events, sourceCount, onSources, onEdit, onDelete }: EventRowsProps) {
+function EventRows({
+  events,
+  sourceCount,
+  onSources,
+  mediaCount,
+  onMedia,
+  onEdit,
+  onDelete,
+}: EventRowsProps) {
   return (
     <>
       {events.map((event) => {
@@ -152,6 +167,11 @@ function EventRows({ events, sourceCount, onSources, onEdit, onDelete }: EventRo
                 count={sourceCount(event.id)}
                 onClick={() => onSources(event)}
                 testId="event-sources"
+              />
+              <FilesButton
+                count={mediaCount(event.id)}
+                onClick={() => onMedia(event)}
+                testId="event-media"
               />
               <button type="button" onClick={() => onEdit(event)} data-testid="edit-event">
                 Edit
@@ -290,6 +310,34 @@ export function PersonPageView({
     open?.kind === 'citation'
       ? (page.citations.find((citation) => citation.id === open.citationId) ?? null)
       : null;
+
+  /** How many pictures and documents are attached to one thing of this page. */
+  const mediaCount = (type: MediaTarget['type'], id: string): number =>
+    page.media.filter((media) => media.uses.some((use) => use.type === type && use.id === id))
+      .length;
+  const showMedia = (target: MediaTarget, title: string) =>
+    setOpen({ kind: 'media', target, title });
+  const eventMedia = (event: EventInfo, of: string) =>
+    showMedia(
+      { type: 'event', id: event.id },
+      `Pictures and documents of the ${labelOf(event.type).toLowerCase()} of ${of}`,
+    );
+  /** What a file is attached to on this page, in a few words. */
+  const mediaNote = (media: MediaInfo): string => {
+    const uses = page.media.find((entry) => entry.id === media.id)?.uses ?? [];
+    return uses
+      .map((use) => {
+        if (use.type === 'citation') {
+          const citation = page.citations.find((entry) => entry.id === use.id);
+          return `Source: ${sourceTitle(citation?.sourceTitle ?? '')}`;
+        }
+        // A file of the person as a whole needs no label; the page is theirs.
+        if (use.type === 'person' || use.type === 'source') return '';
+        return factLabel({ type: use.type, id: use.id });
+      })
+      .filter((label) => label !== '')
+      .join(', ');
+  };
 
   return (
     <div className="person-page" data-testid="person-page">
@@ -437,6 +485,8 @@ export function PersonPageView({
                 events={page.events}
                 sourceCount={(eventId) => sourceCount('event', eventId)}
                 onSources={(event) => eventSources(event, name)}
+                mediaCount={(eventId) => mediaCount('event', eventId)}
+                onMedia={(event) => eventMedia(event, name)}
                 onEdit={(event) => setOpen({ kind: 'event', event })}
                 onDelete={(event) => direct(api.deleteEvent(event.id))}
               />
@@ -570,6 +620,8 @@ export function PersonPageView({
                     events={family.events}
                     sourceCount={(eventId) => sourceCount('event', eventId)}
                     onSources={(event) => eventSources(event, couple(family.partner))}
+                    mediaCount={(eventId) => mediaCount('event', eventId)}
+                    onMedia={(event) => eventMedia(event, couple(family.partner))}
                     onEdit={(event) =>
                       setOpen({ kind: 'family-event', familyId: family.familyId, event })
                     }
@@ -608,6 +660,16 @@ export function PersonPageView({
                   )
                 }
                 testId="family-sources"
+              />
+              <FilesButton
+                count={mediaCount('family', family.familyId)}
+                onClick={() =>
+                  showMedia(
+                    { type: 'family', id: family.familyId },
+                    `Pictures and documents of the family of ${couple(family.partner)}`,
+                  )
+                }
+                testId="family-media"
               />
               {family.partner ? (
                 <button
@@ -708,6 +770,16 @@ export function PersonPageView({
           <span className="muted">for {name} in general, not one name or event</span>
         </div>
       </section>
+
+      <PersonMediaSection
+        items={page.media}
+        noteOf={mediaNote}
+        personId={person.id}
+        name={name}
+        revision={tree.revision}
+        onTree={onTree}
+        onSelect={onSelect}
+      />
 
       {page.keptLines.length > 0 && (
         <section data-testid="kept-section">
@@ -827,7 +899,21 @@ export function PersonPageView({
         <CitationEditDialog
           citation={editedCitation}
           shared={editedCitation.uses.length > 1}
+          revision={tree.revision}
           onTree={onTree}
+          onClose={() => setOpen(null)}
+        />
+      )}
+      {open?.kind === 'media' && (
+        <TargetMediaDialog
+          title={open.title}
+          target={open.target}
+          revision={tree.revision}
+          onTree={onTree}
+          onSelect={(id) => {
+            setOpen(null);
+            onSelect(id);
+          }}
           onClose={() => setOpen(null)}
         />
       )}

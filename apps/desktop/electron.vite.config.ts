@@ -21,7 +21,9 @@ function contentSecurityPolicy(): Plugin {
           dev ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
           // Inline style attributes are needed by React and by chart libraries.
           "style-src 'self' 'unsafe-inline'",
-          "img-src 'self' data: blob:",
+          // The pictures of the open tree come from the app's own media scheme
+          // (see MEDIA_SCHEME in src/shared/ipc.ts).
+          "img-src 'self' data: blob: rulz-media:",
           "font-src 'self'",
           dev ? "connect-src 'self' ws://localhost:* ws://127.0.0.1:*" : "connect-src 'self'",
           "object-src 'none'",

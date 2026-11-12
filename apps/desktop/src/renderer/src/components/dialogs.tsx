@@ -18,6 +18,7 @@ import {
   NAME_TYPE_LABELS,
   PERSON_EVENT_OPTIONS,
   SEX_LABELS,
+  countOf,
   formatSize,
   formatWhen,
   labelOf,
@@ -481,6 +482,14 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
         ten newest backups, and of older ones the last backup of each month for six months. They are
         in the “backups” folder inside the tree folder.
       </p>
+      {tree.media > 0 && (
+        <p className="dialog-text" data-testid="backups-media-note">
+          A backup holds the people, events and sources of this tree. Its{' '}
+          {countOf(tree.media, 'picture or document is a file', 'pictures and documents are files')}{' '}
+          in the “media” folder beside it, and backups do not copy them. To keep them safe, copy the
+          whole tree folder to another disk.
+        </p>
+      )}
 
       {message !== null && (
         <p

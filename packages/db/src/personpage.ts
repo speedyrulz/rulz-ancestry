@@ -5,6 +5,7 @@ import {
   listFamiliesAsPartner,
   requireFamily,
 } from './families';
+import { listPersonMedia, type PersonMedia } from './media';
 import { getPerson, listNames, type Person, type PersonName } from './persons';
 import { getPersonSummary, type PersonSummary } from './search';
 import { listPersonCitations, type PersonCitation } from './sources';
@@ -42,6 +43,11 @@ export interface PersonPage {
   partnerFamilies: PartnerFamily[];
   /** The citations that support anything on the page, each with the facts it supports. */
   citations: PersonCitation[];
+  /**
+   * The pictures and documents attached to anything on the page, those of its
+   * citations included, each with the things of the page it is attached to.
+   */
+  media: PersonMedia[];
 }
 
 const FIRST_IN_LIFE = new Set(['birth']);
@@ -108,6 +114,7 @@ export function getPersonPage(tree: Tree, id: string): PersonPage | null {
       };
     });
 
+    const citations = listPersonCitations(tree, id);
     return {
       person,
       summary,
@@ -115,7 +122,12 @@ export function getPersonPage(tree: Tree, id: string): PersonPage | null {
       events: sortEventsForDisplay(listPersonEvents(tree, id)),
       parentFamilies,
       partnerFamilies,
-      citations: listPersonCitations(tree, id),
+      citations,
+      media: listPersonMedia(
+        tree,
+        id,
+        citations.map((citation) => citation.id),
+      ),
     };
   })();
 }

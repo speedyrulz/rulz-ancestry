@@ -155,6 +155,13 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
             {done.livingOmitted === 1 ? 'was' : 'were'} left out.
           </p>
         )}
+        {done.mediaNotWritten > 0 && (
+          <p className="dialog-text" data-testid="export-media">
+            The file does not mention the{' '}
+            {countOf(done.mediaNotWritten, 'picture or document', 'pictures and documents')} added
+            in this app. Writing them to a GEDCOM file is not built yet. They are still in the tree.
+          </p>
+        )}
         {done.unconverted.length > 0 && (
           <div className="dialog-text" data-testid="export-unconverted">
             <p>

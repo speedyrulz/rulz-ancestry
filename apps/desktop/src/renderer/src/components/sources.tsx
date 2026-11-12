@@ -17,6 +17,7 @@ import {
   toSourceInput,
   type SourceFieldsValue,
 } from './citations';
+import { MediaStrip } from './media';
 import { ConfirmDialog, Dialog, FormDialog, TextField, useSubmit } from './ui';
 
 /** The sources of a tree: the list, one source with its citations, and adding one. */
@@ -375,6 +376,14 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
         </div>
       </form>
 
+      <h3>Pictures and documents of the source itself</h3>
+      <MediaStrip
+        target={{ type: 'source', id: sourceId }}
+        revision={tree.revision}
+        onTree={onTree}
+        emptyText="None attached. A scan of one entry belongs with the citation of that entry."
+      />
+
       <h3 data-testid="source-citation-count">
         {details.citationCount === 0
           ? 'Not cited yet'
@@ -484,6 +493,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
         <CitationEditDialog
           citation={editing}
           shared={editing.uses.length > 1}
+          revision={tree.revision}
           onTree={onTree}
           onClose={() => setOpen(null)}
         />

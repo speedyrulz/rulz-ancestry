@@ -81,36 +81,49 @@ function isCited(tree: Tree, column: 'name_id' | 'event_id', id: string): boolea
   );
 }
 
-/**
- * Moves the citations of a person or family as a whole to the one that stays.
- * A citation both already had is kept once.
- */
-function moveCitations(tree: Tree, owner: Owner, fromId: string, toId: string): void {
-  const db = tree.db;
-  const present = new Set(
-    sql(db, `SELECT citation_id FROM citation_link WHERE ${owner} = ?`)
-      .pluck()
-      .all(toId) as string[],
+/** True when an event has a picture or document attached: that too is more than a bare repeat. */
+function hasMedia(tree: Tree, eventId: string): boolean {
+  return (
+    sql(tree.db, 'SELECT 1 FROM media_link WHERE event_id = ? LIMIT 1').get(eventId) !== undefined
   );
-  let order =
-    (sql(db, `SELECT max(sort_order) FROM citation_link WHERE ${owner} = ?`).pluck().get(toId) as
-      number | null) ?? -1;
-  const links = sql(
-    db,
-    `SELECT id, citation_id FROM citation_link WHERE ${owner} = ? ORDER BY sort_order, id`,
-  ).all(fromId) as { id: string; citation_id: string }[];
-  for (const link of links) {
-    if (present.has(link.citation_id)) {
-      sql(db, 'DELETE FROM citation_link WHERE id = ?').run(link.id);
-      continue;
-    }
-    order += 1;
-    sql(db, `UPDATE citation_link SET ${owner} = ?, sort_order = ? WHERE id = ?`).run(
-      toId,
-      order,
-      link.id,
+}
+
+/** The two tables that attach something to a person or a family as a whole. */
+const LINKS = [
+  { table: 'citation_link', item: 'citation_id' },
+  { table: 'media_link', item: 'media_id' },
+] as const;
+
+/**
+ * Moves the citations and the files of a person or family as a whole to the
+ * one that stays. One that both already had is kept once.
+ */
+function moveLinks(tree: Tree, owner: Owner, fromId: string, toId: string): void {
+  const db = tree.db;
+  for (const { table, item } of LINKS) {
+    const present = new Set(
+      sql(db, `SELECT ${item} FROM ${table} WHERE ${owner} = ?`).pluck().all(toId) as string[],
     );
-    present.add(link.citation_id);
+    let order =
+      (sql(db, `SELECT max(sort_order) FROM ${table} WHERE ${owner} = ?`).pluck().get(toId) as
+        number | null) ?? -1;
+    const links = sql(
+      db,
+      `SELECT id, ${item} AS item FROM ${table} WHERE ${owner} = ? ORDER BY sort_order, id`,
+    ).all(fromId) as { id: string; item: string }[];
+    for (const link of links) {
+      if (present.has(link.item)) {
+        sql(db, `DELETE FROM ${table} WHERE id = ?`).run(link.id);
+        continue;
+      }
+      order += 1;
+      sql(db, `UPDATE ${table} SET ${owner} = ?, sort_order = ? WHERE id = ?`).run(
+        toId,
+        order,
+        link.id,
+      );
+      present.add(link.item);
+    }
   }
 }
 
@@ -138,7 +151,8 @@ function moveEvents(tree: Tree, owner: Owner, fromId: string, toId: string): num
       .get(toId) as number | null) ?? -1;
   let moved = 0;
   for (const event of eventsOf(tree, owner, fromId)) {
-    const more = sourced.has(event.id) || isCited(tree, 'event_id', event.id);
+    const more =
+      sourced.has(event.id) || isCited(tree, 'event_id', event.id) || hasMedia(tree, event.id);
     const repeat = kept.some(
       (other) => other.id === event.id || (sameEvent(other, event) && !more),
     );
@@ -278,7 +292,7 @@ function joinTwinFamilies(tree: Tree, personId: string): number {
       present.add(link.child_id);
     }
     moveEvents(tree, 'family_id', family.id, keptId);
-    moveCitations(tree, 'family_id', family.id, keptId);
+    moveLinks(tree, 'family_id', family.id, keptId);
     recordMerge(tree, 'family', family.id, keptId);
     sql(db, 'DELETE FROM family WHERE id = ?').run(family.id);
     joined += 1;
@@ -331,7 +345,7 @@ export function mergePersons(tree: Tree, keepId: string, mergeId: string): Merge
 
     const names = moveNames(tree, mergeId, keepId);
     const events = moveEvents(tree, 'person_id', mergeId, keepId);
-    moveCitations(tree, 'person_id', mergeId, keepId);
+    moveLinks(tree, 'person_id', mergeId, keepId);
 
     // Parents: the kept person joins each family the other was a child of.
     const touched = new Set<string>();

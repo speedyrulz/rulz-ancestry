@@ -1,18 +1,23 @@
+import { createReadStream } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
+  nativeImage,
+  protocol,
   session as electronSession,
   shell,
   type IpcMainInvokeEvent,
 } from 'electron';
 import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
-import { API_METHODS, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
+import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { createHandlers, toIpcError, type Platform } from './handlers';
+import { findMediaFile } from './mediafiles';
 import { TreeSession } from './session';
 
 /** Must match `appId` in electron-builder.yml so Windows groups taskbar entries correctly. */
@@ -165,6 +170,19 @@ const platform: Platform = {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   },
 
+  async chooseFilesToOpen(options) {
+    const settings = {
+      title: options.title,
+      buttonLabel: options.buttonLabel,
+      filters: options.filters,
+      properties: ['openFile', 'multiSelections'],
+    } satisfies Electron.OpenDialogOptions;
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, settings)
+      : await dialog.showOpenDialog(settings);
+    return result.canceled ? [] : result.filePaths;
+  },
+
   async chooseFileToSave(options) {
     // Windows itself asks before an existing file is replaced.
     const settings = {
@@ -183,7 +201,73 @@ const platform: Platform = {
     const problem = await shell.openPath(dir);
     if (problem !== '') throw new Error(problem);
   },
+
+  async openFile(file) {
+    const problem = await shell.openPath(file);
+    if (problem !== '') throw new Error(problem);
+  },
+
+  showFileInFolder(file) {
+    shell.showItemInFolder(file);
+  },
 };
+
+/** The longest side of the small pictures shown in lists, in pixels. */
+const THUMBNAIL_SIZE = 320;
+
+/**
+ * A file of a tree never changes once it is stored, and its address holds the
+ * id of its row, so the window may keep what it was sent.
+ */
+const MEDIA_HEADERS = {
+  'cache-control': 'private, max-age=31536000, immutable',
+  'x-content-type-options': 'nosniff',
+};
+
+/**
+ * Answers an address of the media scheme with a picture from the open tree,
+ * or with "not found". Which file an address stands for is decided in
+ * `findMediaFile`; this only reads it.
+ */
+async function serveMedia(request: Request): Promise<Response> {
+  const notFound = () => new Response(null, { status: 404 });
+  if (request.method !== 'GET' || !treeSession) return notFound();
+  let file;
+  try {
+    file = findMediaFile(treeSession, request.url);
+  } catch {
+    file = null;
+  }
+  if (file === null) return notFound();
+
+  if (file.variant === 'thumb') {
+    // Windows makes the preview and keeps it in its own cache. It can do so
+    // for more kinds of file than the window can draw, a PDF for one.
+    try {
+      const image = await nativeImage.createThumbnailFromPath(file.path, {
+        width: THUMBNAIL_SIZE,
+        height: THUMBNAIL_SIZE,
+      });
+      if (!image.isEmpty()) {
+        return new Response(new Uint8Array(image.toPNG()), {
+          headers: { ...MEDIA_HEADERS, 'content-type': 'image/png' },
+        });
+      }
+    } catch {
+      // No preview to be had; a picture is then shown from the file itself.
+    }
+    if (file.kind !== 'image') return notFound();
+  }
+
+  const stream = Readable.toWeb(createReadStream(file.path)) as ReadableStream<Uint8Array>;
+  return new Response(stream, {
+    headers: {
+      ...MEDIA_HEADERS,
+      'content-type': file.mime,
+      'content-length': String(file.size),
+    },
+  });
+}
 
 function registerIpc(session: TreeSession): void {
   const handlers = createHandlers(session, platform);
@@ -211,6 +295,12 @@ if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
 
 // Every renderer is sandboxed, including any created by mistake later.
 app.enableSandbox();
+
+// The page loads the pictures of a tree from addresses of this scheme. It
+// must be declared before the app is ready.
+protocol.registerSchemesAsPrivileged([
+  { scheme: MEDIA_SCHEME, privileges: { standard: true, secure: true, stream: true } },
+]);
 
 // Two instances writing one SQLite file would fight over locks, so allow one.
 if (!app.requestSingleInstanceLock()) {
@@ -259,6 +349,7 @@ if (!app.requestSingleInstanceLock()) {
     treeSession.start();
 
     registerIpc(treeSession);
+    protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     mainWindow.on('closed', () => {
       mainWindow = undefined;

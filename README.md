@@ -10,16 +10,20 @@ change. The app backs the tree up when it closes. You can bring in a tree from
 Ancestry or another program as a GEDCOM file, and write a tree out as one. You
 can draw four kinds of chart, ask how two people are related, and find and
 merge people who were entered twice. You can record the sources a tree rests
-on and say which names and events each one supports. The open check is to try
-the import on a real export from Ancestry. Pictures and documents (part 2b) are
-next; there is no record search yet. See
+on and say which names and events each one supports. You can attach pictures
+and documents to people, events, families, citations and sources, and look at
+a picture at full size. The open check is to try the import on a real export
+from Ancestry. Reading and writing pictures in GEDCOM files (part 2c) is next;
+there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
 
-A tree is a folder holding `tree.db` and a `backups` folder. By default it is
-made in `Documents\RulZ Ancestry`. To move a tree, move its folder and open it
-again with "Open a tree folder".
+A tree is a folder holding `tree.db`, a `backups` folder and, once a picture or
+document has been added, a `media` folder. By default it is made in
+`Documents\RulZ Ancestry`. To move a tree, move its folder and open it again
+with "Open a tree folder". To keep a tree safe, copy the whole folder: the
+backups hold the tree's data, not its pictures and documents.
 
 GEDCOM is the file format family tree programs use to pass a tree to one
 another. The app reads versions 5.5.1 and 7.0 and writes both.
@@ -64,6 +68,26 @@ Sources:
 - Where a source is kept (an archive, a website) and the web address of a
   record have no fields of their own yet.
 
+Pictures and documents:
+
+- **Adding a file copies it into the tree.** The copy goes into the tree's
+  `media` folder; the file you chose stays where it was. The same file added
+  twice is kept once.
+- **A file can be attached** to a person, a family, an event, a citation or a
+  source, and to several of them. A scan of a register page belongs with the
+  citation of that page.
+- **The viewer** shows a picture fitted to the window and zooms to its real
+  size and beyond, with the buttons, the mouse wheel or the keyboard. Drag to
+  move.
+- **"Media"** on the tree screen lists every file in the tree, including those
+  attached to nothing.
+- **Other files** (PDF, TIFF, text, sound, film) are kept in the tree and
+  opened in the program Windows uses for them.
+- **Deleting a file from the tree leaves its copy on the disk,** so that Undo
+  can bring it back. The app does not free that space yet.
+- **A GEDCOM export does not mention these files yet,** and says so. The
+  pictures named in an imported file are still kept as written and not shown.
+
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
 default, and while it is on, details of the people being researched are sent to
@@ -101,8 +125,8 @@ Run these from the repository root.
 
 ```
 apps/desktop          Electron app: main process, preload script, React UI, e2e tests
-packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring)
-packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM import and export, chart data, relationships, duplicates and merging, sources and citations
+packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
+packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
 docs/                 Plan and access checklist
 ```
@@ -140,6 +164,17 @@ docs/                 Plan and access checklist
   it supports goes, the database removes the citation in the same undo step.
   A GEDCOM file has no place for a citation that supports nothing, so it would
   otherwise be lost in an export without notice.
+- **A file in a tree's media folder is never changed or removed by an edit.**
+  It is stored under the SHA-256 of its contents. Deleting a file from the
+  tree deletes its row and leaves the copy, so undo, redo and a restored
+  backup always find the file a row names.
+- **The page names a file by its id, never by a path.** The user picks files
+  in the system dialog. Pictures reach the page through the `rulz-media:`
+  scheme, which the main process answers only from the open tree's media
+  folder (`apps/desktop/src/main/mediafiles.ts`).
+- **Opening a file never runs it.** Only kinds on a fixed list in
+  `packages/core/src/media.ts` are handed to another program; anything else
+  is shown in its folder.
 - **Schema changes are migrations.** A change to the tree database is a new
   numbered file in `packages/db/src/schema`; a migration that has shipped is
   never edited. A tree is copied to its backups folder before a migration

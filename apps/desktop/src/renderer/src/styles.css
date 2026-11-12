@@ -1195,3 +1195,254 @@ ul.plain {
 .dialog details {
   margin-top: 16px;
 }
+
+/* Pictures and documents */
+
+ul.media-grid,
+.dialog ul.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.media-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  padding: 6px;
+  text-align: left;
+}
+
+.media-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.media-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.media-thumb.large {
+  width: 240px;
+  margin: 0 auto 16px;
+}
+
+.media-none {
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.media-caption,
+.media-note {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.media-strip {
+  width: 100%;
+}
+
+.citation .media-strip {
+  margin-top: 6px;
+}
+
+/* Above a form, as in the form for a citation. */
+.dialog > .media-strip {
+  margin-bottom: 16px;
+}
+
+.citation .media-strip ul.media-grid,
+.dialog > .media-strip ul.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 132px));
+}
+
+.library-filter {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.library-filter .field {
+  flex: 1;
+}
+
+.library-filter .check {
+  padding-bottom: 6px;
+  white-space: nowrap;
+}
+
+.scroll-box.tall {
+  min-height: 180px;
+  padding: 12px;
+}
+
+/* The viewer takes nearly the whole window; the picture gets what the side panel leaves. */
+.dialog.full {
+  width: calc(100vw - 48px);
+  max-width: none;
+  height: calc(100vh - 48px);
+  padding: 16px 20px;
+}
+
+.dialog.full h2 {
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewer {
+  display: flex;
+  gap: 16px;
+  height: calc(100% - 36px);
+  min-height: 0;
+}
+
+.viewer-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.viewer-tools button {
+  min-width: 34px;
+  padding: 2px 10px;
+}
+
+.viewer-zoom {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  touch-action: none;
+  user-select: none;
+}
+
+.viewer-stage.movable {
+  cursor: grab;
+}
+
+.viewer-stage.movable:active {
+  cursor: grabbing;
+}
+
+.viewer-stage img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+}
+
+.viewer-message {
+  max-width: 520px;
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+}
+
+.viewer-side {
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.viewer-side textarea {
+  resize: vertical;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 16px 0 0;
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog ul.media-uses {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.media-uses li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.media-uses li:last-child {
+  border-bottom: none;
+}
+
+.media-uses button.small {
+  flex-shrink: 0;
+}
+
+/* The buttons stay in sight however far the panel is scrolled. */
+.dialog .viewer-buttons {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 12px 0 2px;
+  background: var(--bg);
+}

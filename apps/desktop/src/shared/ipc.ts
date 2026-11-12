@@ -54,6 +54,8 @@ export interface TreeState {
   families: number;
   events: number;
   sources: number;
+  /** Pictures and documents. */
+  media: number;
   /** Name of the change that undo would reverse, or null when there is none. */
   undo: string | null;
   /** Name of the change that redo would repeat, or null when there is none. */
@@ -167,6 +169,13 @@ export interface PersonPage {
    * families' events. Each comes once, with the facts of the page it supports.
    */
   citations: PersonCitationInfo[];
+  /**
+   * The pictures and documents attached to anything on the page: the person
+   * as a whole, their events, the families they are a partner in with those
+   * families' events, and the citations above. Each comes once, with the
+   * things of the page it is attached to.
+   */
+  media: PersonMediaInfo[];
   /**
    * For a person who came from a GEDCOM file: the lines of their record that
    * the app has no fields for (notes, media, other programs' own tags). They
@@ -293,6 +302,106 @@ export interface SourceChange {
 /** The source a new citation is of: one that exists, or one to make in the same step. */
 export type SourceRef = { sourceId: string } | { create: SourceInput };
 
+/** What a picture or document is attached to. */
+export type MediaTargetType = 'person' | 'family' | 'event' | 'citation' | 'source';
+
+export interface MediaTarget {
+  type: MediaTargetType;
+  id: string;
+}
+
+/** A picture or a document the tree holds. */
+export interface MediaInfo {
+  id: string;
+  /** `image`: the app shows it itself, with zoom. `document`: it is opened in another program. */
+  kind: 'image' | 'document';
+  /** The media type, e.g. `image/jpeg`. */
+  mime: string;
+  /** The extension the file is stored under, without a dot. May be empty. */
+  ext: string;
+  /** Size of the file in bytes. */
+  size: number;
+  /** The name the file had where it was added from. */
+  fileName: string;
+  title: string;
+  /** What the file shows. May have several lines. */
+  description: string;
+  /** False when the file is no longer in the tree's media folder. */
+  present: boolean;
+  /** True when the file may be handed to the program Windows opens its kind with. */
+  canOpen: boolean;
+}
+
+/** A file on a person's page, with the things of that page it is attached to. */
+export interface PersonMediaInfo extends MediaInfo {
+  uses: MediaTarget[];
+}
+
+/** One thing a file is attached to, as the file's own page names it. */
+export interface MediaUseInfo extends MediaTarget {
+  /** "person", "family", "citation", "source", or the type of the event, e.g. "birth". */
+  what: string;
+  /** For a citation: the title of its source and the place in it. For a source: its title. Otherwise empty. */
+  detail: string;
+  /** Who it concerns: the person, the partners of the family, or those a citation is about. */
+  persons: PersonSummary[];
+}
+
+/** Everything a file's own page shows. */
+export interface MediaDetails {
+  media: MediaInfo;
+  uses: MediaUseInfo[];
+}
+
+/** What the form for a file collects. A field that is left out is not changed. */
+export interface MediaInput {
+  title?: string;
+  description?: string;
+}
+
+export interface MediaListRequest {
+  /** What was typed in the search box; empty lists every file, the one added last first. */
+  query: string;
+  /** True lists only the files that are attached to nothing. */
+  unattached: boolean;
+  offset: number;
+  limit: number;
+}
+
+export interface MediaListPage {
+  /** How many files match in total, not just on this page. */
+  total: number;
+  media: MediaInfo[];
+}
+
+/** What adding files did. */
+export interface MediaAddResult {
+  tree: TreeState;
+  /** How many files were chosen. */
+  chosen: number;
+  /** How many of them the tree did not hold yet. */
+  added: number;
+  /** How many were attached; a file that was attached there already is not counted. */
+  attached: number;
+  /** The files, each once, in the order they were chosen. */
+  mediaIds: string[];
+}
+
+/**
+ * The scheme of the addresses the page loads pictures from. The main process
+ * answers them from the open tree's media folder; nothing else is served.
+ */
+export const MEDIA_SCHEME = 'rulz-media';
+
+/**
+ * The address of a picture for an `<img>`: the file itself, or a small
+ * version of it for a list. A file the window cannot draw has no `file`
+ * address; its `thumb` address works when Windows can make a preview of it.
+ */
+export function mediaUrl(mediaId: string, variant: 'file' | 'thumb'): string {
+  return `${MEDIA_SCHEME}://${variant}/${mediaId}`;
+}
+
 export interface PersonListRequest {
   /** What was typed in the search box; empty lists everyone by surname. */
   query: string;
@@ -399,6 +508,8 @@ export interface GedcomExportInfo {
    * written as they are. Empty when the file is in the version it was imported in.
    */
   unconverted: { what: string; count: number }[];
+  /** Pictures and documents added in the app, which the file does not mention yet. */
+  mediaNotWritten: number;
 }
 
 /** What a chart of one person is drawn from. */
@@ -515,6 +626,12 @@ export interface RulzApi {
     sourceId: string,
     citations: { offset: number; limit: number },
   ): Promise<SourceDetails | null>;
+  /** The pictures and documents attached to one thing, in the order they were attached. */
+  listMedia(target: MediaTarget): Promise<MediaInfo[]>;
+  /** The pictures and documents of the whole tree. */
+  listAllMedia(request: MediaListRequest): Promise<MediaListPage>;
+  /** A file with everything it is attached to. Null when the file is gone. */
+  getMedia(mediaId: string): Promise<MediaDetails | null>;
 
   // Changing the open tree. Each call is one undo step.
   addPerson(draft: PersonDraft): Promise<PersonChange>;
@@ -568,6 +685,17 @@ export interface RulzApi {
   unlinkCitation(citationId: string, target: CitationTarget): Promise<TreeState>;
   /** Deletes a citation, for every fact it supports. */
   deleteCitation(citationId: string): Promise<TreeState>;
+  /**
+   * Shows the system file picker and takes the files chosen into the tree,
+   * attached to `target`, or to nothing for null. A file the tree holds
+   * already is attached, not copied again. Null when cancelled.
+   */
+  addMedia(target: MediaTarget | null): Promise<MediaAddResult | null>;
+  updateMedia(mediaId: string, media: MediaInput): Promise<TreeState>;
+  /** Takes a file away from one thing. The file stays in the tree. */
+  unlinkMedia(mediaId: string, target: MediaTarget): Promise<TreeState>;
+  /** Deletes a file from the tree, wherever it is attached. Its copy stays in the tree folder for Undo. */
+  deleteMedia(mediaId: string): Promise<TreeState>;
   undo(): Promise<TreeState>;
   redo(): Promise<TreeState>;
 
@@ -579,6 +707,12 @@ export interface RulzApi {
   restoreBackup(name: string): Promise<TreeState>;
   /** Shows the tree's backups folder in File Explorer. */
   showBackupsFolder(): Promise<void>;
+
+  // The files of the open tree, outside the app.
+  /** Opens a file in the program Windows uses for its kind. Refused for kinds that could run. */
+  openMedia(mediaId: string): Promise<void>;
+  /** Shows a file in File Explorer, inside the tree's media folder. */
+  showMediaInFolder(mediaId: string): Promise<void>;
 }
 
 export type ApiMethod = keyof RulzApi;
@@ -606,6 +740,9 @@ export const API_METHODS = [
   'findDuplicates',
   'listSources',
   'getSource',
+  'listMedia',
+  'listAllMedia',
+  'getMedia',
   'addPerson',
   'updatePerson',
   'deletePerson',
@@ -633,12 +770,18 @@ export const API_METHODS = [
   'linkCitation',
   'unlinkCitation',
   'deleteCitation',
+  'addMedia',
+  'updateMedia',
+  'unlinkMedia',
+  'deleteMedia',
   'undo',
   'redo',
   'listBackups',
   'backupNow',
   'restoreBackup',
   'showBackupsFolder',
+  'openMedia',
+  'showMediaInFolder',
 ] as const satisfies readonly ApiMethod[];
 
 // Fails to compile when a function of RulzApi is missing from the list above.

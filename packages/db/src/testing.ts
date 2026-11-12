@@ -2,6 +2,7 @@ import { afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { openTree, type Tree } from './tree';
 
 /** Helpers shared by this package's unit tests. Not part of the public API. */
@@ -46,6 +47,8 @@ const TREE_TABLES = [
   'source',
   'citation',
   'citation_link',
+  'media',
+  'media_link',
 ] as const;
 
 /**
@@ -74,6 +77,43 @@ export function snapshot(tree: Tree): string {
     .pluck()
     .get();
   return JSON.stringify({ tables, search, orphanDocs }, null, 1);
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const check = Buffer.alloc(4);
+  check.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, check]);
+}
+
+/**
+ * The bytes of a real PNG picture of the given size. A different `seed`
+ * gives a different picture, and so a different file.
+ */
+export function pngBytes(width: number, height: number, seed = 0): Buffer {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bits per channel
+  header[9] = 2; // red, green, blue
+  const row = 1 + width * 3;
+  const pixels = Buffer.alloc(row * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const at = y * row + 1 + x * 3;
+      pixels[at] = (x + seed * 31) & 255;
+      pixels[at + 1] = (y + seed * 7) & 255;
+      pixels[at + 2] = (x ^ y) & 255;
+    }
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(pixels)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
 }
 
 /** Number of steps that can currently be undone. */

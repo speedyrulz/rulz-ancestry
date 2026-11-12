@@ -19,10 +19,19 @@ interface DialogProps {
   children: ReactNode;
   testId?: string;
   wide?: boolean;
+  /** Takes nearly the whole window, for something to look at, such as a picture. */
+  full?: boolean;
 }
 
 /** A modal dialog. It is mounted while it is open and removed when closed. */
-export function Dialog({ title, onClose, children, testId, wide = false }: DialogProps) {
+export function Dialog({
+  title,
+  onClose,
+  children,
+  testId,
+  wide = false,
+  full = false,
+}: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -34,7 +43,7 @@ export function Dialog({ title, onClose, children, testId, wide = false }: Dialo
   return (
     <dialog
       ref={ref}
-      className={wide ? 'dialog wide' : 'dialog'}
+      className={full ? 'dialog full' : wide ? 'dialog wide' : 'dialog'}
       aria-labelledby={titleId}
       data-testid={testId}
       onCancel={(event) => {
@@ -94,6 +103,11 @@ interface FormDialogProps {
   /** Set to stop the form being submitted, e.g. while nothing is selected. */
   disabled?: boolean;
   danger?: boolean;
+  /**
+   * Shown in the dialog above the form, and not part of it: something with
+   * buttons and dialogs of its own, which must not end up inside this form.
+   */
+  before?: ReactNode;
 }
 
 /** A dialog holding one form with Cancel and a submit button. */
@@ -107,6 +121,7 @@ export function FormDialog({
   wide = false,
   disabled = false,
   danger = false,
+  before,
 }: FormDialogProps) {
   const { busy, error, submit } = useSubmit(onSubmit);
 
@@ -120,6 +135,7 @@ export function FormDialog({
 
   return (
     <Dialog title={title} onClose={onClose} wide={wide} {...(testId ? { testId } : {})}>
+      {before}
       <form onSubmit={handleSubmit} noValidate>
         {children}
         {error !== null && (

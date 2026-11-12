@@ -1,6 +1,8 @@
+import { writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import {
   expect,
   test as base,
@@ -80,6 +82,80 @@ export async function answerFolderPicker(
  * cancelled, for null). It is the same dialog as the folder picker.
  */
 export const answerFilePicker = answerFolderPicker;
+
+/**
+ * Makes the system dialog for opening files answer with several of them (or
+ * as cancelled, for an empty list), as when pictures are added.
+ */
+export async function answerFilesPicker(app: ElectronApplication, files: string[]): Promise<void> {
+  await app.evaluate(({ dialog }, chosen) => {
+    dialog.showOpenDialog = () =>
+      Promise.resolve({ canceled: chosen.length === 0, filePaths: chosen });
+  }, files);
+}
+
+/**
+ * Stops the app from handing a file to another program or to File Explorer,
+ * and notes what it would have handed over. `handedOver` reads the notes.
+ */
+export async function catchFilesHandedOver(app: ElectronApplication): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const notes: string[] = [];
+    (globalThis as unknown as { handedOver: string[] }).handedOver = notes;
+    shell.openPath = (path) => {
+      notes.push(`open ${path}`);
+      return Promise.resolve('');
+    };
+    shell.showItemInFolder = (path) => {
+      notes.push(`show ${path}`);
+    };
+  });
+}
+
+export function handedOver(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(() => (globalThis as unknown as { handedOver: string[] }).handedOver);
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+  const check = Buffer.alloc(4);
+  check.writeUInt32BE(crc32(body));
+  return Buffer.concat([length, body, check]);
+}
+
+/**
+ * Writes a real PNG picture of the given size and returns its path. A
+ * different `seed` gives a different picture, and so a different file.
+ */
+export function writePng(file: string, width: number, height: number, seed = 0): string {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bits per channel
+  header[9] = 2; // red, green, blue
+  const row = 1 + width * 3;
+  const pixels = Buffer.alloc(row * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const at = y * row + 1 + x * 3;
+      pixels[at] = (x + seed * 31) & 255;
+      pixels[at + 1] = (y + seed * 7) & 255;
+      pixels[at + 2] = (x ^ y) & 255;
+    }
+  }
+  writeFileSync(
+    file,
+    Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk('IHDR', header),
+      pngChunk('IDAT', deflateSync(pixels)),
+      pngChunk('IEND', Buffer.alloc(0)),
+    ]),
+  );
+  return file;
+}
 
 /**
  * Makes the system dialog for saving a file answer with `file` (or as

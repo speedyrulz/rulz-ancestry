@@ -11,6 +11,10 @@ import {
   type GedcomExportInfo,
   type GedcomImportResult,
   type IpcError,
+  type MediaAddResult,
+  type MediaDetails,
+  type MediaInfo,
+  type MediaListPage,
   type MergeInfo,
   type PersonChange,
   type PersonListPage,
@@ -38,6 +42,13 @@ let savePath: string | null;
 /** Where each fake file dialog was told to start. */
 let dialogDefaults: string[];
 let openedFolders: string[];
+/** What the fake dialog for adding pictures and documents answers next; none is a cancelled dialog. */
+let pickedFiles: string[];
+/** How often that dialog was shown. */
+let filesDialogs: number;
+/** The files handed to another program, and those shown in File Explorer. */
+let openedFiles: string[];
+let shownFiles: string[];
 
 const platform: Platform = {
   appInfo: () => ({ appVersion: '1.2.3-test' }) as AppInfo,
@@ -50,9 +61,20 @@ const platform: Platform = {
     dialogDefaults.push(options.defaultPath);
     return Promise.resolve(savePath);
   },
+  chooseFilesToOpen: () => {
+    filesDialogs += 1;
+    return Promise.resolve(pickedFiles);
+  },
   openFolder: (dir) => {
     openedFolders.push(dir);
     return Promise.resolve();
+  },
+  openFile: (file) => {
+    openedFiles.push(file);
+    return Promise.resolve();
+  },
+  showFileInFolder: (file) => {
+    shownFiles.push(file);
   },
 };
 
@@ -93,6 +115,10 @@ beforeEach(() => {
   savePath = null;
   dialogDefaults = [];
   openedFolders = [];
+  pickedFiles = [];
+  filesDialogs = 0;
+  openedFiles = [];
+  shownFiles = [];
 });
 
 afterEach(() => {
@@ -150,6 +176,20 @@ describe('argument checks', () => {
       ['linkCitation', MISSING, { type: 'event' }],
       ['unlinkCitation', MISSING, MISSING],
       ['deleteCitation'],
+      ['listMedia', { type: 'name', id: MISSING }],
+      ['listAllMedia', { query: '', unattached: false, offset: 0, limit: 100_000 }],
+      ['listAllMedia', { query: '', offset: 0, limit: 10 }],
+      ['getMedia', '../../tree.db'],
+      // The page cannot name a file to add; it can only say what to attach the chosen files to.
+      ['addMedia', 'C:\\Windows\\win.ini'],
+      ['addMedia', { type: 'person', id: MISSING, file: 'C:\\Windows\\win.ini' }],
+      ['addMedia'],
+      ['updateMedia', MISSING, { title: 'x'.repeat(501) }],
+      ['updateMedia', MISSING, { fileName: 'other.png' }],
+      ['unlinkMedia', MISSING, { type: 'person' }],
+      ['deleteMedia', { id: MISSING }],
+      ['openMedia', 'C:\\Windows\\notepad.exe'],
+      ['showMediaInFolder'],
       ['createTree', { name: 'x', parentDir: '' }],
       ['undo', 'unexpected'],
     ];
@@ -616,6 +656,238 @@ describe('sources and citations', () => {
   });
 });
 
+describe('pictures and documents', () => {
+  /** The first bytes of a PNG picture, followed by something to tell two files apart. */
+  function png(name: string, mark = name): string {
+    const file = join(root, name);
+    writeFileSync(
+      file,
+      Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from(mark),
+      ]),
+    );
+    return file;
+  }
+
+  async function start(): Promise<{ tree: TreeState; personId: string; birthId: string }> {
+    const tree = await openNewTree();
+    const personId = await addPerson('John', { birthDate: '1870' });
+    const page = await call<PersonPage>('getPersonPage', personId);
+    return { tree, personId, birthId: page.events[0]?.id ?? '' };
+  }
+
+  it('adds the files the user picked, and nothing when the dialog is cancelled', async () => {
+    const { tree, personId, birthId } = await start();
+    const person = { type: 'person', id: personId };
+    expect(await call('addMedia', person)).toBeNull();
+    expect(session.state().media).toBe(0);
+
+    pickedFiles = [png('portrait.png'), png('wedding.png')];
+    const added = await call<MediaAddResult>('addMedia', person);
+    expect(added).toMatchObject({ chosen: 2, added: 2, attached: 2 });
+    expect(added.mediaIds).toHaveLength(2);
+    expect(added.tree).toMatchObject({ media: 2, undo: 'Add files' });
+
+    const listed = await call<MediaInfo[]>('listMedia', person);
+    expect(listed.map((media) => media.fileName)).toEqual(['portrait.png', 'wedding.png']);
+    expect(listed[0]).toEqual({
+      id: added.mediaIds[0],
+      kind: 'image',
+      mime: 'image/png',
+      ext: 'png',
+      size: 8 + 'portrait.png'.length,
+      fileName: 'portrait.png',
+      title: '',
+      description: '',
+      present: true,
+      canOpen: true,
+    });
+    // The page is given no path and no hash; the file is in the tree's own folder.
+    expect(JSON.stringify(listed)).not.toContain(tree.dir.replaceAll('\\', '\\\\'));
+
+    // The same file for the birth: the tree holds it already, so it is only attached.
+    pickedFiles = [png('copy.png', 'portrait.png')];
+    const again = await call<MediaAddResult>('addMedia', { type: 'event', id: birthId });
+    expect(again).toMatchObject({
+      chosen: 1,
+      added: 0,
+      attached: 1,
+      mediaIds: [added.mediaIds[0]],
+    });
+    expect(again.tree).toMatchObject({ media: 2, undo: 'Add file' });
+
+    const page = await call<PersonPage>('getPersonPage', personId);
+    expect(page.media.map((media) => [media.fileName, media.uses])).toEqual([
+      [
+        'portrait.png',
+        [
+          { type: 'person', id: personId },
+          { type: 'event', id: birthId },
+        ],
+      ],
+      ['wedding.png', [{ type: 'person', id: personId }]],
+    ]);
+
+    // Attached to nothing: only the list of all files shows it.
+    pickedFiles = [png('loose.png')];
+    expect(await call<MediaAddResult>('addMedia', null)).toMatchObject({ added: 1, attached: 0 });
+    const all = await call<MediaListPage>('listAllMedia', {
+      query: '',
+      unattached: false,
+      offset: 0,
+      limit: 2,
+    });
+    expect(all.total).toBe(3);
+    expect(all.media.map((media) => media.fileName)).toEqual(['loose.png', 'wedding.png']);
+    const loose = await call<MediaListPage>('listAllMedia', {
+      query: 'LOOSE',
+      unattached: true,
+      offset: 0,
+      limit: 10,
+    });
+    expect(loose).toMatchObject({ total: 1, media: [{ fileName: 'loose.png' }] });
+  });
+
+  it('shows a file with what it is attached to, and edits, detaches and deletes it', async () => {
+    const { personId, birthId } = await start();
+    const person = { type: 'person', id: personId };
+    const birth = { type: 'event', id: birthId };
+    await call('addCitation', birth, { create: { title: 'Parish register' } }, { page: 'p. 12' });
+    const citationId = (await call<PersonPage>('getPersonPage', personId)).citations[0]?.id ?? '';
+
+    pickedFiles = [png('scan.png')];
+    const mediaId =
+      (await call<MediaAddResult>('addMedia', { type: 'citation', id: citationId })).mediaIds[0] ??
+      '';
+    pickedFiles = [png('scan again.png', 'scan.png')];
+    await call('addMedia', person);
+
+    const details = await call<MediaDetails>('getMedia', mediaId);
+    expect(details.media).toMatchObject({ id: mediaId, fileName: 'scan.png' });
+    expect(
+      details.uses.map((use) => [use.type, use.what, use.detail, use.persons.map((p) => p.id)]),
+    ).toEqual([
+      ['citation', 'citation', 'Parish register, p. 12', [personId]],
+      ['person', 'person', '', [personId]],
+    ]);
+    // On the person's page the scan of a citation is listed too.
+    const page = await call<PersonPage>('getPersonPage', personId);
+    expect(page.media[0]?.uses).toEqual([
+      { type: 'person', id: personId },
+      { type: 'citation', id: citationId },
+    ]);
+
+    const edited = await call<TreeState>('updateMedia', mediaId, {
+      title: ' Baptism of John ',
+      description: 'Entry 4',
+    });
+    expect(edited.undo).toBe('Edit file details');
+    expect((await call<MediaDetails>('getMedia', mediaId)).media).toMatchObject({
+      title: 'Baptism of John',
+      description: 'Entry 4',
+    });
+
+    expect((await call<TreeState>('unlinkMedia', mediaId, person)).undo).toBe('Remove file');
+    expect((await call<MediaDetails>('getMedia', mediaId)).uses).toHaveLength(1);
+
+    const deleted = await call<TreeState>('deleteMedia', mediaId);
+    expect(deleted).toMatchObject({ media: 0, undo: 'Delete file' });
+    expect(await call('getMedia', mediaId)).toBeNull();
+    expect((await call<TreeState>('undo')).media).toBe(1);
+    expect((await call<MediaDetails>('getMedia', mediaId)).media.present).toBe(true);
+
+    expect((await errorOf('updateMedia', MISSING, { title: 'x' })).code).toBe('not-found');
+    expect((await errorOf('deleteMedia', MISSING)).code).toBe('not-found');
+  });
+
+  it('opens a file in another program only when its kind cannot run', async () => {
+    const { tree, personId } = await start();
+    const person = { type: 'person', id: personId };
+    const program = join(root, 'setup.exe');
+    writeFileSync(program, 'MZ this would be a program');
+    pickedFiles = [png('portrait.png'), program];
+    const [pictureId, programId] = (await call<MediaAddResult>('addMedia', person)).mediaIds;
+
+    await call('openMedia', pictureId);
+    expect(openedFiles).toHaveLength(1);
+    expect(openedFiles[0]).toMatch(/[0-9a-f]{64}\.png$/);
+    expect(openedFiles[0]?.startsWith(join(tree.dir, 'media'))).toBe(true);
+    expect(
+      readFileSync(openedFiles[0] ?? '')
+        .subarray(1, 4)
+        .toString(),
+    ).toBe('PNG');
+
+    // A program is kept like any other file, shown in its folder, and never started.
+    const listed = await call<MediaInfo[]>('listMedia', person);
+    expect(listed[1]).toMatchObject({ kind: 'document', ext: 'exe', canOpen: false });
+    const refused = await errorOf('openMedia', programId);
+    expect(refused.code).toBe('rule');
+    expect(refused.message).toMatch(/does not open files of this kind/);
+    expect(openedFiles).toHaveLength(1);
+    await call('showMediaInFolder', programId);
+    expect(shownFiles).toHaveLength(1);
+    expect(shownFiles[0]).toMatch(/[0-9a-f]{64}\.exe$/);
+
+    // A file that has gone from the folder is reported, not opened.
+    rmSync(openedFiles[0] ?? '');
+    expect((await call<MediaInfo[]>('listMedia', person))[0]?.present).toBe(false);
+    for (const method of ['openMedia', 'showMediaInFolder'] as const) {
+      const gone = await errorOf(method, pictureId);
+      expect(gone.code).toBe('rule');
+      expect(gone.message).toMatch(/portrait\.png is not in the tree's media folder any more/);
+    }
+    expect((await errorOf('openMedia', MISSING)).code).toBe('not-found');
+  });
+
+  it('explains a file that cannot be added, and adds none of the others', async () => {
+    const { personId } = await start();
+    writeFileSync(join(root, 'empty.png'), '');
+    pickedFiles = [png('good.png'), join(root, 'empty.png')];
+    const failed = await errorOf('addMedia', { type: 'person', id: personId });
+    expect(failed).toEqual({ code: 'rule', message: 'empty.png is empty' });
+    expect(session.state().media).toBe(0);
+
+    pickedFiles = [png('good.png')];
+    expect((await errorOf('addMedia', { type: 'event', id: MISSING })).code).toBe('not-found');
+    expect(session.state().media).toBe(0);
+  });
+
+  it('says in an export how many files it left out', async () => {
+    const { personId } = await start();
+    pickedFiles = [png('a.png'), png('b.png')];
+    await call('addMedia', { type: 'person', id: personId });
+    savePath = join(root, 'out.ged');
+    const info = await call<GedcomExportInfo>('exportGedcom', {
+      version: '5.5.1',
+      includeLiving: true,
+    });
+    expect(info.mediaNotWritten).toBe(2);
+    expect(readFileSync(info.file, 'utf8')).not.toContain('OBJE');
+  });
+
+  it('needs an open tree, and does not show the file dialog without one', async () => {
+    const target = { type: 'person', id: MISSING };
+    pickedFiles = [png('a.png')];
+    for (const [method, ...args] of [
+      ['listMedia', target],
+      ['listAllMedia', { query: '', unattached: false, offset: 0, limit: 10 }],
+      ['getMedia', MISSING],
+      ['addMedia', target],
+      ['addMedia', null],
+      ['updateMedia', MISSING, {}],
+      ['unlinkMedia', MISSING, target],
+      ['deleteMedia', MISSING],
+      ['openMedia', MISSING],
+      ['showMediaInFolder', MISSING],
+    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+      expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
+    }
+    expect(filesDialogs).toBe(0);
+  });
+});
+
 describe('backups', () => {
   it('backs up, lists, restores and shows the folder', async () => {
     const tree = await openNewTree();
@@ -773,6 +1045,7 @@ describe('GEDCOM files', () => {
       families: 1,
       livingOmitted: 0,
       unconverted: [],
+      mediaNotWritten: 0,
     });
     const written = readFileSync(everyone.file, 'utf8');
     expect(written).toContain('2 VERS 1.2.3-test');

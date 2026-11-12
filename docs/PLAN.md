@@ -100,6 +100,17 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - **A dialog can open another dialog over itself.** The fact's list of sources opens the form for one citation as a second `<dialog>` inside the first. Both are modal, Escape closes the top one, and no state has to be passed between them.
 - Measured on the 10,000-person sample tree, with other work running on the machine: a person's page with its citations reads in 0.3 ms, the list of sources in 0.5 ms, a page of 50 citations of one source with the facts they support in 2 ms. Upgrading the tree from schema version 3 takes about 1.1 seconds. Sources make the import slower: writing the sample to the database takes about 3.2 seconds with its 10,000 citations and 20,000 links and about 2.4 without, measured four times each. In the app the whole import, from picking the file to the tree being on screen, took 3.2 to 3.6 seconds in three runs. The export takes about 0.15 seconds longer, at about 0.95.
 
+### Findings from Phase 2b that later phases rely on
+
+- **A file of a tree is stored under the SHA-256 of its contents and is never changed or removed by an edit.** The row in `media` needs no path: the hash and the extension say where the file is (`mediaStorePath` in `packages/core/src/media.ts`), so a tree folder can be moved. Deleting a file from the tree deletes the row and leaves the copy, which is what lets Undo, Redo and a restored backup find it again. The price is that the app never frees disk space; a clean-up that removes copies no row and no undo step refers to is still to be built.
+- **The page loads pictures from a scheme of the app's own, `rulz-media:`.** `protocol.handle` in the main process answers `rulz-media://file/<id>` and `rulz-media://thumb/<id>` from the open tree. The page names a file only by the id of its row, so no address can reach a file outside the tree's media folder (`apps/desktop/src/main/mediafiles.ts`, unit-tested without Electron). The scheme is declared with `registerSchemesAsPrivileged` before the app is ready, and the content security policy allows it for images only.
+- **Windows makes the small pictures.** `nativeImage.createThumbnailFromPath` asks the Windows thumbnail cache, which also keeps them. A 2,400 by 3,200 scan came back as 240 by 320. Nothing is cached by the app. Where Windows has no preview, a picture is shown from the file itself and a document gets a tile with its extension.
+- **The kind of a file is told from its first bytes, not its name** (`sniffMediaType`). The window draws JPEG, PNG, GIF, WebP, BMP and AVIF; everything else, TIFF and PDF included, is a document that another program opens.
+- **Opening a file must never run it.** The app hands a file to Windows only when its extension is on a fixed list of pictures, documents, sound and film (`canOpenOutside`). Anything else is only shown in its folder. The same list decides which documents Windows is asked to preview.
+- **A dialog with buttons of its own cannot sit inside a form.** React passes a submit of an inner form on to the form around it, even through a second `<dialog>`. `FormDialog` therefore takes a `before` slot that is shown above its form, and the files of a citation are put there.
+- **A picture with zoom needs no library.** The viewer is one `<img>` moved and scaled with a CSS transform inside a clipped area (`ImageStage` in `apps/desktop/src/renderer/src/components/media.tsx`). The wheel needs a listener of its own, because React listens for it passively and cannot stop the dialog from scrolling.
+- Measured in the unit tests, on a solid-state disk and with the files just written (so partly from memory): 40 files of 5 MB each are taken into a tree in 0.33 seconds, one file of 200 MB in 0.22 seconds, and a person's page with 41 files reads in 0.3 ms.
+
 ## 3. Architecture
 
 ```
@@ -119,6 +130,8 @@ src/main/index.ts     Electron wiring: window, security settings, IPC registrati
 src/main/session.ts   The open tree, the recent list, reopening at start, backup on close,
                       import and export of GEDCOM files. No Electron.
 src/main/handlers.ts  What each function does, after checking its arguments. No Electron.
+src/main/mediafiles.ts  Which file of the open tree an address of the media scheme stands for.
+                      No Electron.
 src/renderer          React screens: start screen, person list, person page, charts, dialogs
 ```
 
@@ -144,6 +157,15 @@ packages/core/src/gedcom/sources.ts   Reading and writing a source record and a 
 packages/db/src/sources.ts            Sources and citations: adding, editing, citing a fact, lists.
 packages/db/src/gedcom/citations.ts   Making citations of the SOUR lines of a file, for the import
                                       and for the upgrade of trees imported earlier.
+```
+
+So do pictures and documents:
+
+```
+packages/core/src/media.ts   Telling the kind of a file from its first bytes, which kinds the app
+                             shows itself, which it may hand to another program, and where a file
+                             is kept inside the media folder.
+packages/db/src/media.ts     Copying a file into the tree, attaching it, the lists, deleting.
 ```
 
 GEDCOM is split between two packages:
@@ -211,7 +233,7 @@ IrishGenealogy.ie, Library and Archives Canada, ScotlandsPeople index.
 
 ## 5. Data model
 
-A tree is one portable folder: a SQLite file plus a content-addressed media folder.
+A tree is one portable folder: a SQLite file (`tree.db`), a `backups` folder, and since part 2b a `media` folder that holds each picture and document under the SHA-256 of its contents (`media/ab/ab12….jpg`).
 
 Built, in schema version 1 (`packages/db/src/schema/001-core-tree.ts`):
 
@@ -275,14 +297,29 @@ All three are in the change log. A source's repository, its web address and the
 date it was consulted are not columns yet: the first is kept as written from an
 imported file, and the other two wait for the clip form of Phase 3.
 
+Built, in schema version 5 (`packages/db/src/schema/005-media.ts`):
+
+```sql
+media(id, sha256, ext, mime, size, file_name, title, description, created_at, updated_at)
+  -- one file the tree holds; sha256 is unique, so the same file is one row however often it is added
+  -- sha256 may be NULL, for a file the tree knows of but does not hold; nothing makes such rows yet
+media_link(id, media_id, person_id, family_id, event_id, citation_id, source_id, sort_order)
+  -- exactly one of the five is set: what the file is attached to
+```
+
+Both are in the change log. The files themselves are not: a file in the media
+folder is never changed or removed by an edit. The plan had a `rel_path` column
+and a link by "type and id"; the path is worked out from the hash instead, and
+the link has one column per kind of owner, as `citation_link` does. A region of
+a picture (a face, one entry on a page) is not a column yet.
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
 place(id, name, parent_id, geonames_id, lat, lon)            -- Phase 2; event gains place_id
 source gains: repository_id, connector_id, url
 citation gains: url, accessed_at, external_record_id
-media(id, sha256, rel_path, mime, title)
-media_link(media_id, entity_type, entity_id, region_json)
+media gains: the file reference of an imported record; media_link gains: a region of the picture
 external_id(person_id, connector_id, external_key)
 external_record(id, connector_id, external_key, record_type, payload_json, fetched_at, expires_at)
 hint(id, person_id, external_record_id, origin, score, features_json, rationale_json,
@@ -299,8 +336,10 @@ codes were planned as columns on `person_name`; part 1d works them out in memory
 during a scan instead, which needed no schema change. They become columns only
 if the hints of Phase 4 need to look names up by sound in the database. Sources
 and citations got their tables in part 2a, and a migration made their rows for
-trees imported earlier. Notes and media are still kept as written; when they
-get their tables, a migration does the same for them.
+trees imported earlier. Notes are still kept as written, and so are the media
+records of an imported file: part 2b made the tables for files added in the
+app, and part 2c fills them from imported files, with a migration for trees
+imported earlier.
 
 The application database (`app.db` in the profile folder, schema in
 `packages/db/src/appdb.ts`) is separate from any tree. Built, in its schema
@@ -321,6 +360,11 @@ Rules:
 - **A citation exists only while it supports something.** When its last link goes, the citation goes too, whether the user removed the link or deleted the event, name, person or family. GEDCOM has no place to write a citation that supports nothing, so such a citation would be lost in an export without anyone being told. The source stays, and Undo brings the citation back.
 - **Deleting a source deletes its citations.** The app says how many before it does.
 - **Not every SOUR line becomes a citation.** A source described in place with no record of its own (GEDCOM 5.5.1 allows this), a line that points at no record of the file, the second of two equal citations of one fact, and a citation under something other than a person, family, name or event stay as lines kept as written.
+- **A file is copied into the tree, and the copy is never touched again.** Adding a picture or document copies it into the tree's media folder; the file that was chosen stays where it was. The copy is named after the SHA-256 of its contents, so adding the same file twice gives one file with one more attachment. No edit changes or removes a copy: deleting a file from the tree deletes its row only, so that Undo brings it back. Disk space is therefore not freed by the app yet.
+- **A file can be attached to several things, and stays when it is attached to none.** A person or a family as a whole, an event, a citation and a source can each have files. Unlike a citation, a file that is attached to nothing is kept: it is worth keeping on its own, and "Media" on the tree screen lists it.
+- **The page never names a file by its path.** The user picks files in the system dialog; from then on a file is known to the page by the id of its row. The main process works out the path from the row, and serves a picture only from the open tree's media folder.
+- **Opening a file never runs it.** Only kinds on a fixed list (pictures, documents, sound, film) are handed to the program Windows opens them with. Any other file is shown in its folder.
+- **An export says what it leaves out.** Until media records are written (part 2c), the export counts the files added in the app and says that the GEDCOM file does not mention them.
 - **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it. The duplicate detection that needs exists since part 1d; bringing a file into an existing tree is still to be built.
 - **Nothing is merged automatically.** The app lists pairs of people who may be one person, with a score and its reasons. Two records become one only when the user compares them and says so, and a pair the user marks as different people is not offered again.
 - **A merge loses nothing but exact repeats.** The person kept receives the other record's names, events, parents, partners and children. A name or event is dropped only when the person kept already has it word for word and the imported file says nothing more about it. Two families with the same two partners become one. The whole merge is one undo step.
@@ -330,6 +374,7 @@ Rules:
 - **The primary name** is a flag on `person_name` with a unique index, not a column on `person`, which avoids two tables pointing at each other.
 - **A person cannot be their own ancestor.** `addChild` and `setPartners` refuse a link that would create a loop, so charts can walk the tree without guarding against one.
 - **A family that links nobody is removed.** When a person is deleted or unlinked, a family with nobody left in it goes, and a family with one person left goes unless it has events of its own.
+- **Backups do not hold the pictures and documents.** A backup is a copy of `tree.db`. The media folder is not copied, because its files never change; a restored backup finds every file it names still in place. A file that is lost from the media folder is lost, so the whole tree folder has to be copied somewhere else to be safe.
 - **Backups** are complete copies of `tree.db` in the `backups` folder inside the tree folder. One is written with SQLite's `VACUUM INTO` when a tree is closed or the app quits, if the tree changed since the newest backup. A copy is written under a temporary name, checked, and only then given its final name. Kept: the ten newest, then the last backup of each month for six months. Restoring a backup first backs up the present state.
 - **Search** uses the FTS5 tokenizer `unicode61 remove_diacritics 2`, so "muller" finds "Müller". Triggers keep the index in step with the names, including during undo and redo.
 
@@ -337,7 +382,7 @@ Rules:
 
 1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge. Built in parts 1b and 1d.
 2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c, apart from GEDZip (a 7.0 file zipped together with its media), which waits for the media store in Phase 2.
-3. **Sources and media:** citation management, IIIF deep-zoom viewer, face-region tags, optional local OCR with `tesseract.js`. Sources and citations were built in part 2a; media is part 2b.
+3. **Sources and media:** citation management, a viewer with zoom, face-region tags, optional local OCR with `tesseract.js`. Sources and citations were built in part 2a, and the media store with its viewer in part 2b. The viewer shows files of the tree; record images served by an archive (IIIF) come with the search of Phase 3. Face regions and OCR are not built.
 4. **Search:** one query form sent to Tier A connectors and installed packs, results grouped by source with attribution, plus a row of Tier C links.
 5. **Hints:** background jobs query sources for each person, direct ancestors first. Scoring is Fellegi-Sunter style over name similarity, phonetic codes, date gaps, place hierarchy overlap and relatives' names. Results go to a hints inbox with a side-by-side compare. Accepted facts get a citation, rejected hints never resurface, and nothing merges automatically.
 6. **Places and timeline:** local gazetteer autocomplete, map of a person's events, life timeline.
@@ -442,7 +487,7 @@ Durations are rough estimates for one developer working with AI assistance.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | 0. Foundations              | Repo, monorepo, CI, packaging; connector manifests; access checklist                                                                                                                                                      | An installer builds and the packaged app opens a window. **Done 2026-11-11**                                                                                                          | 1 week    |
 | 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff. Met in part 1c on a file written in Ancestry's style; a real export is still to be tried    | 3–4 weeks |
-| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom. Part 2a (sources and citations) **done 2026-11-12**; see "Phase 2 breakdown"                                         | 2–3 weeks |
+| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom. Met in part 2b on 2026-11-12, for a scan added in the app; three parts are still to do, see "Phase 2 breakdown"      | 2–3 weeks |
 | 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                        | 3–4 weeks |
 | 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                    | 2–3 weeks |
 | 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set | 2–3 weeks |
@@ -603,18 +648,24 @@ Not done, and why:
 
 ### Phase 2 breakdown
 
-| Part | Scope                                                                                                                                              | Status              |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier         | **Done 2026-11-12** |
-| 2b   | Media: a store inside the tree folder, attaching a file to a person, an event or a citation, a viewer with deep zoom, GEDCOM media records, GEDZip | Next                |
-| 2c   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                                 | Planned             |
-| 2d   | Map of a person's events, and the life timeline                                                                                                    | Planned             |
+| Part | Scope                                                                                                                                      | Status              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12** |
+| 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12** |
+| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | Next                |
+| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Planned             |
+| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned             |
 
 The phase's test ("a scanned record can be attached, cited and viewed at full
-zoom") needs parts 2a and 2b. Two things decide how 2c is built and need the
-owner: whether the GeoNames gazetteer may be bundled or downloaded (its licence
-is still on the "to confirm" list in section 4), and where map tiles come from,
-since free tile servers limit how an app may use them.
+zoom") is met by parts 2a and 2b for a scan added in the app. Part 2b was first
+planned to include GEDCOM media records and GEDZip. They became part 2c: the
+store, the screens and the viewer are useful on their own, and reading media
+records needs the same three things together as sources did (an import, a
+migration for trees imported earlier, and a test that the two agree). Two
+things decide how 2d and 2e are built and need the owner: whether the GeoNames
+gazetteer may be bundled or downloaded (its licence is still on the "to
+confirm" list in section 4), and where map tiles come from, since free tile
+servers limit how an app may use them.
 
 ### Phase 2a outcome
 
@@ -653,6 +704,47 @@ Not done, and why:
 - **The new screens were checked by eye in light colours only,** at one window size.
 - **Still no real export from Ancestry or any other program has been tried.** Source records are where programs differ most, so this matters more than it did.
 
+### Phase 2b outcome
+
+Delivered:
+
+- **A media folder in every tree.** A picture or document that is added is copied into the `media` folder of the tree, under the SHA-256 of its contents. The file that was chosen stays where it was. The same file added again is not copied again; it is attached once more.
+- **Files on a person's page.** A "Pictures and documents" section shows everything attached on the page as small pictures: the files of the person, of their events, of their families, and the scans of the citations on the page, each with a line saying what it belongs to. "Add pictures or documents" takes one or many files from the system dialog.
+- **Files of an event, a family, a citation and a source.** "Files" beside every event and for a family lists and adds them. A citation shows its scans where it is listed for a fact and in its own form; a source has files of its own on its page.
+- **A viewer with zoom.** A picture opens fitted to the window. It zooms with the buttons, the mouse wheel (at the pointer), the keyboard and a double-click, up to its real size and on to eight times that, and is moved by dragging. The viewer also holds the file's title and description, what it is attached to (with a "Remove" for each), and the buttons to open it in another program, show it in its folder, and delete it from the tree.
+- **The list of every file.** "Media" on the tree screen lists the files of the whole tree, the one added last first, finds them by title, description or file name, and can show only those attached to nothing. Files can be added there without attaching them.
+- **Documents.** Any kind of file can be added, up to 500 MB each and 100 at a time. The app draws JPEG, PNG, GIF, WebP, BMP and AVIF itself. Other files, PDF and TIFF included, get a small preview where Windows can make one, and are opened in the program Windows uses for them. A file whose kind could run is kept and shown in its folder, and never opened.
+- **Undo, merging and deleting.** Adding, attaching, removing and deleting files and editing their details are undo steps; several files added in one go are one step. A merge moves the files of the record that goes to the one that is left, and an event with a file attached is never dropped as a repeat. Deleting a person, event, citation or source leaves its files in the tree, attached to nothing.
+- **A file that has gone** from the media folder is shown as missing, and adding the same file again puts it back with its title and attachments.
+- **Tests.** Unit tests went from 552 to 599 and end-to-end tests from 28 to 31.
+
+Changed from earlier parts:
+
+- **The tree schema is at version 5.** An earlier build cannot open a tree once this build has opened it; a copy is put in the backups folder first, as since part 2a.
+- **A tree folder holds a `media` folder** beside `tree.db` and `backups`.
+- **The content security policy allows pictures from the `rulz-media:` scheme,** and nothing else new.
+- **An export says how many files it left out.** A GEDCOM file written by this build does not mention files added in the app.
+- **The contract between the page and the main process has 60 functions,** nine more than before.
+- **Part 2b is smaller than planned,** and Phase 2 has five parts instead of four; see the breakdown above.
+
+Not done, and why:
+
+- **GEDCOM files know nothing of the files added in the app,** and the media records of an imported file are still lines kept as written, shown nowhere in the app. Both are part 2c, with GEDZip.
+- **Disk space is never freed.** A file deleted from the tree stays in the media folder, so that Undo can bring it back, and the undo history has no end yet. A clean-up needs the pruning rule for the change log first.
+- **Backups do not include the media folder.** They protect the tree's data, not its pictures. The Backups dialog says so once a tree has files, and says to copy the whole tree folder.
+- **A file already in the tree can be attached to something else only by choosing the same file again** in the system dialog. There is no "choose from this tree" yet.
+- **Files cannot be dragged into the window or pasted.**
+- **No picture stands for a person.** Lists and charts show no portraits, and the order of the files on a page cannot be changed.
+- **No regions.** A face in a group photograph or one entry on a page cannot be marked.
+- **No text is read out of a picture** (OCR), and a file has no date or place of its own.
+- **PDF, TIFF, HEIC, sound and film are not shown in the app.** They open in another program.
+- **Very large pictures are drawn whole.** There are no tiles, so a scan of several hundred megapixels may be slow or fail to draw. The largest picture tried was 2,400 by 3,200.
+- **The small pictures depend on Windows.** They were checked on the development PC only. On a PC where Windows returns none, lists fall back to the full files and get slow; the end-to-end tests accept either.
+- **Copying a file blocks the window,** like an import. That was 0.2 seconds for 200 MB on a solid-state disk, measured with the file just written; a slow or network disk was not tried.
+- **The upgrade from version 4 was tested on a tree built by the tests,** not on a file saved by the earlier build.
+- **The new screens were checked by eye in light colours only,** in one window of about 1,100 by 570 points.
+- **Real photographs and scans were not tried.** The test pictures are generated patterns, and no JPEG from a camera or scanner went through the viewer.
+
 ## 9. Risks
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
@@ -666,6 +758,8 @@ Not done, and why:
 - **A wrong merge damages a tree,** and a list of suggested duplicates invites one. The app never merges on its own, shows both records before a merge, keeps everything both had, and makes the merge one undo step. The undo history is kept in the tree file, and backups hold earlier states.
 - **An upgrade rewrites a tree in place.** From part 2a a migration can change what a tree holds, not only add tables. The tree is copied to its backups folder first, each migration is one transaction that is applied whole or not at all, and the tests compare an upgraded tree with a fresh import. A mistake in a migration would still reach every tree the build opens, so each one needs that comparison.
 - **One citation for several facts is not how every program thinks.** A user who edits a citation under a birth may not expect the name's citation to change with it. The edit form says when a citation supports more than one fact; whether that is enough has not been tried with a user.
+- **A tree is now more than one file.** The pictures and documents are in the media folder, not in `tree.db`, and backups do not hold them. A user who copies only `tree.db`, or relies on the backups folder alone, loses the files. The app shows a lost file as missing and takes it back when it is added again, and the Backups dialog and the README say to copy the whole folder. A backup that includes the media folder is still to be designed.
+- **The media folder only grows.** Nothing is removed from it, so a tree can become much larger than what it shows. See "Disk space is never freed" under part 2b.
 - **A test that fails now and then hides real failures.** The 10,000-person GEDCOM unit test has stopped with a native crash twice in about 35 full runs, with no cause found. If it becomes more frequent, find the cause before adding more tests around it.
 - **Coverage.** Users with mostly US ancestors before 1940 will do much of their record searching through links to FamilySearch's own site.
 

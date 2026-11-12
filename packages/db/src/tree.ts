@@ -76,6 +76,8 @@ export interface TreeInfo {
   families: number;
   events: number;
   sources: number;
+  /** Pictures and documents. */
+  media: number;
 }
 
 /** An open family tree. */
@@ -204,6 +206,7 @@ export class Tree {
       families: count('family'),
       events: count('event'),
       sources: count('source'),
+      media: count('media'),
     };
   }
 

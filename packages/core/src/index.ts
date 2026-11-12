@@ -53,6 +53,21 @@ export {
   type MatchScore,
 } from './match';
 export {
+  MEDIA_LIMITS,
+  MEDIA_SNIFF_BYTES,
+  canOpenOutside,
+  cleanMediaFields,
+  fileExtension,
+  isSha256,
+  mediaKind,
+  mediaStorePath,
+  mediaTypeOf,
+  sniffMediaType,
+  type MediaFields,
+  type MediaKind,
+  type MediaType,
+} from './media';
+export {
   FAMILY_EVENT_TYPES,
   NAME_TYPES,
   PEDIGREES,
