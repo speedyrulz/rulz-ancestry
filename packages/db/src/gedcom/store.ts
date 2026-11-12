@@ -75,15 +75,32 @@ export function getStoredRecord(tree: Tree, id: string): StoredRecord | null {
   return { ...row, parts: row.parts === null ? null : (JSON.parse(row.parts) as StoredPart[]) };
 }
 
+/** Which person or family each merged one went into: the id it had, and the id of the one left. */
+export function listMergedRecords(tree: Tree): { id: string; intoId: string }[] {
+  return sql(
+    tree.db,
+    'SELECT id, into_id AS intoId FROM merged_record ORDER BY merged_at, id',
+  ).all() as { id: string; intoId: string }[];
+}
+
 /**
  * The lines of a person's or family's imported record that the app has no
- * fields for, each with what is under it, as written in the file. Empty for a
+ * fields for, each with what is under it, as written in the file. The lines
+ * of records that were merged into this one follow its own. Empty for a
  * person or family that was added in the app.
  */
 export function keptLinesOf(tree: Tree, id: string): string[] {
-  return (getStoredRecord(tree, id)?.parts ?? [])
-    .filter((part) => part.k === undefined)
-    .map((part) => part.t);
+  const merged = sql(
+    tree.db,
+    'SELECT id FROM merged_record WHERE into_id = ? ORDER BY merged_at, id',
+  )
+    .pluck()
+    .all(id) as string[];
+  return [id, ...merged].flatMap((recordId) =>
+    (getStoredRecord(tree, recordId)?.parts ?? [])
+      .filter((part) => part.k === undefined)
+      .map((part) => part.t),
+  );
 }
 
 /** `tree_meta` keys that describe the file a tree was imported from. */

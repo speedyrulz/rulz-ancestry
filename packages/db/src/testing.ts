@@ -41,6 +41,8 @@ const TREE_TABLES = [
   'family_child',
   'event',
   'event_participant',
+  'not_duplicate',
+  'merged_record',
 ] as const;
 
 /**

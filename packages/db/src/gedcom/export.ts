@@ -14,6 +14,7 @@ import {
   pointerTarget,
   pointerTo,
   readPedigree,
+  touch,
   writeGedcom,
   type EventFields,
   type EventOwner,
@@ -25,7 +26,13 @@ import {
 import { sql } from '../connection';
 import { presumedLivingIds } from '../living';
 import type { Tree } from '../tree';
-import { getGedcomSource, listStoredRecords, type PartKind, type StoredRecord } from './store';
+import {
+  getGedcomSource,
+  listMergedRecords,
+  listStoredRecords,
+  type PartKind,
+  type StoredRecord,
+} from './store';
 
 /**
  * Writes a tree as a GEDCOM file.
@@ -229,6 +236,11 @@ class Layout {
     this.items.push({ key: [anchor, 1, section, order], node });
   }
 
+  /** Puts a line after everything else: a line carried over from a record merged into this one. */
+  end(node: GedcomNode): void {
+    this.items.push({ key: [Number.MAX_SAFE_INTEGER, 0, 0, this.items.length], node });
+  }
+
   nodes(): GedcomNode[] {
     return this.items.sort(compareItems).map((item) => item.node);
   }
@@ -313,6 +325,18 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       nodes: record.parts.map((part) => parseFragment(part.t, sourceVersion)[0] ?? null),
     });
   }
+  // Records that were merged into another person or family since the import.
+  // Their lines are written with the one that is left.
+  const mergedRecords = listMergedRecords(tree);
+  const absorbedBy = new Map<string, ParsedRecord[]>();
+  for (const merged of mergedRecords) {
+    const parsed = parsedById.get(merged.id);
+    if (!parsed) continue;
+    const list = absorbedBy.get(merged.intoId);
+    if (list) list.push(parsed);
+    else absorbedBy.set(merged.intoId, [parsed]);
+  }
+
   /** The original line of one kind, by "record id/linked id". */
   const originalLine = (kind: PartKind) => {
     const lines = new Map<string, GedcomNode>();
@@ -374,6 +398,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     kind: PartKind,
     rows: readonly T[],
     build: (row: T, original: GedcomNode | null) => GedcomNode,
+    absorbed: readonly ParsedRecord[] = [],
   ): void => {
     const alive = new Set(rows.map((row) => row.id));
     const originals = new Map<string, GedcomNode>();
@@ -384,6 +409,15 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       originals.set(part.r, node);
       places.push(index);
     });
+    // A name or event that came over in a merge keeps the lines it had in its
+    // own record (a source under it, say), but has no place in this one.
+    for (const other of absorbed) {
+      other.stored.parts?.forEach((part, index) => {
+        const node = other.nodes[index];
+        if (part.k !== kind || part.r === undefined || !node || !alive.has(part.r)) return;
+        if (!originals.has(part.r)) originals.set(part.r, node);
+      });
+    }
     // The tree's order decides which comes first (the main name, say); the
     // places are the ones those lines had in the file.
     rows.forEach((row, index) => {
@@ -405,10 +439,26 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     parsed: ParsedRecord | null,
     rows: readonly EventRow[],
     owner: EventOwner,
+    absorbed: readonly ParsedRecord[],
   ): void => {
-    placeInOrder(layout, parsed, 'event', rows, (row, original) =>
-      patchEvent(original, eventFields(row), owner, target),
+    placeInOrder(
+      layout,
+      parsed,
+      'event',
+      rows,
+      (row, original) => patchEvent(original, eventFields(row), owner, target),
+      absorbed,
     );
+  };
+
+  /** Puts the kept lines of records merged into this one after its own lines. */
+  const placeAbsorbed = (layout: Layout, absorbed: readonly ParsedRecord[]): void => {
+    for (const other of absorbed) {
+      other.stored.parts?.forEach((part, index) => {
+        const node = other.nodes[index];
+        if (part.k === undefined && node) layout.end(node);
+      });
+    }
   };
 
   /** Puts back the lines the app keeps as written, and returns the places of the bound ones. */
@@ -423,12 +473,19 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     const parsed = parsedById.get(person.id) ?? null;
     const record = recordNode(person.id, 'INDI');
     const layout = new Layout(PERSON_SECTIONS, parsed);
+    const absorbed = absorbedBy.get(person.id) ?? [];
     placeKept(layout, parsed);
+    placeAbsorbed(layout, absorbed);
 
-    placeInOrder(layout, parsed, 'name', namesOf.get(person.id) ?? [], (row, original) =>
-      patchName(original, row, target),
+    placeInOrder(
+      layout,
+      parsed,
+      'name',
+      namesOf.get(person.id) ?? [],
+      (row, original) => patchName(original, row, target),
+      absorbed,
     );
-    placeEvents(layout, parsed, personEvents.get(person.id) ?? [], 'person');
+    placeEvents(layout, parsed, personEvents.get(person.id) ?? [], 'person', absorbed);
 
     const single = (
       kind: 'sex' | 'living',
@@ -495,8 +552,10 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     const partners = [family.partner1_id, family.partner2_id].filter((id) => id !== null);
     const whole = partners.every((id) => shown(id));
     if (whole) {
+      const absorbed = absorbedBy.get(family.id) ?? [];
       placeKept(layout, parsed);
-      placeEvents(layout, parsed, familyEvents.get(family.id) ?? [], 'family');
+      placeAbsorbed(layout, absorbed);
+      placeEvents(layout, parsed, familyEvents.get(family.id) ?? [], 'family', absorbed);
     }
 
     // Partners: the original lines, then HUSB and WIFE for partners added since.
@@ -574,10 +633,38 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   records.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2]);
   let body = records.map((record) => record.node);
 
-  // Nothing may point at a person or family that was left out.
+  // A line that pointed at a record merged into another now points at the one that is left.
+  const familyExists = new Set(families.map((family) => family.id));
+  const movedTo = new Map<string, string>();
+  for (const merged of mergedRecords) {
+    const old = parsedById.get(merged.id)?.stored.xref ?? null;
+    const exists = personById.has(merged.intoId) || familyExists.has(merged.intoId);
+    if (old !== null && exists) movedTo.set(old, xref(merged.intoId));
+  }
+  if (movedTo.size > 0) {
+    const repoint = (node: GedcomNode): void => {
+      const next = movedTo.get(pointerTarget(node.value) ?? '');
+      if (next !== undefined) {
+        node.value = pointerTo(next);
+        touch(node);
+      }
+      node.children.forEach(repoint);
+    };
+    body.forEach(repoint);
+  }
+
+  // Nothing may point at a person or family that was left out, or that has
+  // been deleted since the import.
   const gone = new Set<string>();
   for (const person of persons) if (!shown(person.id)) gone.add(xref(person.id));
   for (const family of families) if (!familyShown.has(family.id)) gone.add(xref(family.id));
+  for (const record of stored) {
+    if (record.xref === null || movedTo.has(record.xref)) continue;
+    const deleted =
+      (record.kind === 'person' && !personById.has(record.id)) ||
+      (record.kind === 'family' && !familyExists.has(record.id));
+    if (deleted) gone.add(record.xref);
+  }
   if (gone.size > 0) {
     const prune = (node: GedcomNode): void => {
       if (node.children.some((child) => gone.has(pointerTarget(child.value) ?? ''))) {

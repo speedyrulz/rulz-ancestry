@@ -2,6 +2,7 @@ import { PEDIGREES, SEXES, describeDate, type Pedigree, type Sex } from '@rulz/c
 import { useEffect, useState } from 'react';
 import type {
   EventInfo,
+  MergeInfo,
   PersonChange,
   PersonNameInfo,
   PersonPage,
@@ -20,6 +21,8 @@ import {
   type PersonFieldsValue,
 } from '../format';
 import { EventDialog, NameDialog, RelativeDialog } from './dialogs';
+import { MergeDialog } from './duplicates';
+import { RelationshipDialog } from './relationship';
 import { ConfirmDialog, SelectField } from './ui';
 
 const SEX_OPTIONS = SEXES.map((sex) => [sex, SEX_LABELS[sex]] as const);
@@ -44,6 +47,8 @@ type Open =
   | { kind: 'parent'; familyId?: string }
   | { kind: 'partner'; familyId?: string }
   | { kind: 'child'; familyId?: string; surname: string }
+  | { kind: 'relationship' }
+  | { kind: 'merge' }
   | { kind: 'delete' };
 
 interface PersonPageProps {
@@ -55,6 +60,10 @@ interface PersonPageProps {
   onSelect: (personId: string | null) => void;
   /** Called with a message when an edit made straight from the page fails. */
   onProblem: (message: string) => void;
+  /** Called to show a chart of this person's relatives. */
+  onChart: () => void;
+  /** Called after this person was merged with another record, with the name of the one left. */
+  onMerged: (info: MergeInfo, name: string) => void;
 }
 
 interface PersonLinkProps {
@@ -140,7 +149,15 @@ const EVENT_HEAD = (
 );
 
 /** One person: their details, names, events, parents, partners and children, all editable. */
-export function PersonPageView({ personId, tree, onTree, onSelect, onProblem }: PersonPageProps) {
+export function PersonPageView({
+  personId,
+  tree,
+  onTree,
+  onSelect,
+  onProblem,
+  onChart,
+  onMerged,
+}: PersonPageProps) {
   const key = `${personId}|${tree.revision}`;
   const [loaded, setLoaded] = useState<{
     key: string;
@@ -218,14 +235,40 @@ export function PersonPageView({ personId, tree, onTree, onSelect, onProblem }: 
             {lifespan(summary) || 'No birth or death recorded'}
           </p>
         </div>
-        <button
-          type="button"
-          className="danger"
-          onClick={() => setOpen({ kind: 'delete' })}
-          data-testid="delete-person"
-        >
-          Delete person
-        </button>
+        <div className="person-actions">
+          <button
+            type="button"
+            title="Draw this person's ancestors and descendants"
+            onClick={onChart}
+            data-testid="open-chart"
+          >
+            Chart
+          </button>
+          <button
+            type="button"
+            title="See how someone else in the tree is related to this person"
+            onClick={() => setOpen({ kind: 'relationship' })}
+            data-testid="open-relationship"
+          >
+            Relationship
+          </button>
+          <button
+            type="button"
+            title="Use this when the same person is in the tree twice"
+            onClick={() => setOpen({ kind: 'merge' })}
+            data-testid="open-merge"
+          >
+            Merge
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => setOpen({ kind: 'delete' })}
+            data-testid="delete-person"
+          >
+            Delete person
+          </button>
+        </div>
       </header>
 
       <section>
@@ -612,6 +655,17 @@ export function PersonPageView({ personId, tree, onTree, onSelect, onProblem }: 
           onSubmit={(ref) =>
             apply(api.addChild(person.id, ref, open.familyId ? { familyId: open.familyId } : {}))
           }
+        />
+      )}
+      {open?.kind === 'relationship' && (
+        <RelationshipDialog person={summary} onClose={() => setOpen(null)} onSelect={onSelect} />
+      )}
+      {open?.kind === 'merge' && (
+        <MergeDialog
+          personId={person.id}
+          revision={tree.revision}
+          onMerged={onMerged}
+          onClose={() => setOpen(null)}
         />
       )}
       {open?.kind === 'delete' && (

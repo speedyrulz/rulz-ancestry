@@ -75,6 +75,19 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - **A file dialog cannot be driven from a test,** like the folder dialog. The end-to-end tests replace `dialog.showOpenDialog` and `dialog.showSaveDialog` in the main process (`answerFilePicker` and `answerSaveDialog` in `e2e/fixtures.ts`).
 - Measured on a 10,000-person file of 261,000 lines: import 2.7 seconds in the app, from picking the file to the tree being on screen; export 0.8 seconds. Import time grows in step with the file: 50,000 people took 16 seconds before the two speed-ups above.
 
+### Findings from Phase 1d that later phases rely on
+
+- **Chart layout is plain arithmetic in `packages/core/src/chart.ts`.** It takes who is related to whom and gives back positions, with no knowledge of names or the screen, so it is unit-tested without a window. No chart library was added: the four charts need about 400 lines, and a library would have been one more dependency inside the content security policy.
+- **Box charts are HTML buttons over an SVG of lines; the fan is SVG throughout.** Buttons give keyboard focus, a readable name and text that is cut off with an ellipsis for free. Zoom is a CSS scale on the whole chart.
+- **The name of a relationship comes from two counts**: generations up from the first person to the nearest shared ancestor, and generations down to the second (`kinshipTerm` in `packages/core/src/kinship.ts`). Reports and the AI assistant can use the same function.
+- **Duplicate scoring is `scoreDuplicate` in `packages/core/src/match.ts`**, with the name comparisons the hints of Phase 4 need: normalised names, Soundex and Jaro-Winkler. Its weights are hand-set and have not been checked against labelled data; Phase 4 plans that check.
+- **Comparing everyone with everyone is too slow**, so records are compared only within groups that share a surname key (by sound, by first four letters, or without the first letter). A group of more than 300 people is split by the first letter of the given name. The scan stops after four million comparisons and says so.
+- **A merge moves rows; it does not copy them.** Names, events and family links keep their ids, so undo is exact and the lines an imported file had under a name or event are still found by that id.
+- **A merged person's kept GEDCOM lines would be lost without a record of the merge**, because those lines are stored under the id of the record that is gone. `merged_record` keeps that link, and the export and the person page follow it.
+- **Dropping an exact repeat in a merge must look at the imported lines too.** Two births with the same date and place are repeats, unless the file gave one of them a source. Such a name or event is kept.
+- **A result list must not offer stale answers.** The first version of the person picker showed the results of the previous spelling for a moment after each keystroke, and a click could land on the wrong person. It now shows results only for the text that is in the box.
+- Measured on the 10,000-person sample tree: reading a chart of seven generations each way takes about 1 ms for an ordinary family, and about 70 ms with layout for the largest one shown (1,000 descendants and their partners); a relationship takes under 1 ms; a merge takes 6 ms. The duplicate scan takes 2.2 seconds there and stops at its limit of four million comparisons, because the sample repeats a small set of names. No tree with realistic names was measured.
+
 ## 3. Architecture
 
 ```
@@ -94,7 +107,21 @@ src/main/index.ts     Electron wiring: window, security settings, IPC registrati
 src/main/session.ts   The open tree, the recent list, reopening at start, backup on close,
                       import and export of GEDCOM files. No Electron.
 src/main/handlers.ts  What each function does, after checking its arguments. No Electron.
-src/renderer          React screens: start screen, person list, person page, dialogs
+src/renderer          React screens: start screen, person list, person page, charts, dialogs
+```
+
+Charts, relationships and duplicates are split between the packages in the same
+way as GEDCOM: what can be worked out from plain values is in `core`, and what
+needs the tree is in `db`.
+
+```
+packages/core/src/chart.ts        Where each box, line and fan segment goes.
+packages/core/src/kinship.ts      The name of a relationship ("second cousin once removed").
+packages/core/src/match.ts        How likely two person records are one person.
+packages/db/src/charts.ts         Reading a person's ancestors and descendants.
+packages/db/src/relationship.ts   Finding how two people are related.
+packages/db/src/duplicates.ts     Scanning a tree for likely duplicates.
+packages/db/src/merge.ts          Merging two records of one person.
 ```
 
 GEDCOM is split between two packages:
@@ -199,6 +226,18 @@ tree_meta also holds: gedcom_version, gedcom_encoding, gedcom_line_ending, gedco
 it is not in the change log. A row whose person has been deleted is ignored by
 the export, and is used again if the deletion is undone.
 
+Built, in schema version 3 (`packages/db/src/schema/003-merge.ts`):
+
+```sql
+not_duplicate(id, person_a, person_b, created_at)            -- a pair the user said are two people
+merged_record(id, kind, into_id, merged_at)                  -- id: the person or family that was
+                                                             --   merged; into_id: the one left
+```
+
+Both are in the change log, so marking a pair and merging two people can be
+undone. `merged_record` is how the export and the person page find the kept
+lines of a record that was merged into another.
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
@@ -219,8 +258,10 @@ The AI assistant's activity log (`ai_run`, `ai_tool_call`) is planned for the ap
 database, not the tree, so a tree folder that is copied or shared carries no AI
 logs.
 
-Also planned: phonetic codes on `person_name` (with duplicate detection), and
-places, notes and transcriptions in the search index. When sources, notes and
+Also planned: places, notes and transcriptions in the search index. Phonetic
+codes were planned as columns on `person_name`; part 1d works them out in memory
+during a scan instead, which needed no schema change. They become columns only
+if the hints of Phase 4 need to look names up by sound in the database. When sources, notes and
 media get their tables (Phase 2), a migration moves them out of the `kept` rows
 and the kept lines of `gedcom_record`.
 
@@ -239,7 +280,10 @@ Rules:
 - **Dates** keep the text as typed, plus a normalized day-number range, a qualifier (about, before, between) and a calendar. `parseDate()` in `packages/core` reads GEDCOM 5.5.1 and 7.0 dates and common English forms. Text it cannot read is kept as a phrase with no range.
 - **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten.
 - **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event or a family link together with the id of what it became, and every other line (sources, notes, media, other programs' own tags) exactly as it was. The export puts each line back in its place. A name or event that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
-- **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it; that needs duplicate detection (part 1d).
+- **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it. The duplicate detection that needs exists since part 1d; bringing a file into an existing tree is still to be built.
+- **Nothing is merged automatically.** The app lists pairs of people who may be one person, with a score and its reasons. Two records become one only when the user compares them and says so, and a pair the user marks as different people is not offered again.
+- **A merge loses nothing but exact repeats.** The person kept receives the other record's names, events, parents, partners and children. A name or event is dropped only when the person kept already has it word for word and the imported file says nothing more about it. Two families with the same two partners become one. The whole merge is one undo step.
+- **Some merges are refused**: a person with their own ancestor or descendant (they would become their own ancestor), and two people who are partners of each other.
 - **Every write** goes through `change_log`, which provides undo and a per-person history. Database triggers do the recording, and they reject any write to a tree table that is not inside a change transaction (`Tree.transact`), so no code path can skip the log. The one exception is `Tree.load`, which fills a tree that has nobody in it (an import) without logging; what it loads is the tree's starting point and cannot be undone.
 - **Exports leave out living people unless asked.** The export dialog starts on "leave out people who may be living". A person may be living unless they are marked deceased, have a death, burial, cremation or probate recorded, or took part in an event that certainly happened more than 110 years ago (`presumedLivingIds` in `packages/db/src/living.ts`). Someone with no dates at all counts as possibly living. A family with a living partner is written without its events and notes.
 - **The primary name** is a flag on `person_name` with a unique index, not a column on `person`, which avoids two tables pointing at each other.
@@ -250,7 +294,7 @@ Rules:
 
 ## 6. Features by module
 
-1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge.
+1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge. Built in parts 1b and 1d.
 2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c, apart from GEDZip (a 7.0 file zipped together with its media), which waits for the media store in Phase 2.
 3. **Sources and media:** citation management, IIIF deep-zoom viewer, face-region tags, optional local OCR with `tesseract.js`.
 4. **Search:** one query form sent to Tier A connectors and installed packs, results grouped by source with attribution, plus a row of Tier C links.
@@ -386,7 +430,10 @@ Not done, and why:
 | 1a   | Tree database layer: migrations, schema, people, names, families, events, dates, undo and redo, own-tree search | **Done 2026-11-11** |
 | 1b   | Tree screens: create and open a tree folder, person list and page, editing, undo and redo, search box, backups  | **Done 2026-11-11** |
 | 1c   | GEDCOM 5.5.1 and 7.0 import and export, with the cross-reference ids, notes and unknown tags a round trip needs | **Done 2026-11-11** |
-| 1d   | Charts (pedigree, descendant, hourglass, fan), relationship calculator, duplicate detection and merge           | Next                |
+| 1d   | Charts (pedigree, descendant, hourglass, fan), relationship calculator, duplicate detection and merge           | **Done 2026-11-11** |
+
+All four parts are built. Phase 1 is not closed until its test has been run on
+a real export from Ancestry; see "Phase 1c outcome".
 
 ### Phase 1a outcome
 
@@ -476,6 +523,43 @@ Not done, and why:
 - **The real Windows file dialogs were not exercised,** like the folder dialog in part 1b: the tests replace them.
 - **One unexplained crash.** During one run of the unit tests the worker running the 10,000-person test stopped with a Windows access violation. It did not happen again in ten further full runs or in any other run, and no cause was found.
 
+### Phase 1d outcome
+
+Delivered:
+
+- **Four charts,** opened with "Chart" on a person's page: ancestors (a pedigree), descendants, an hourglass of both, and a fan of ancestors. Each has a choice of 2 to 8 generations (7 for the fan), zoom, "Fit", and dragging to move. Clicking a person puts them at the centre; clicking the person at the centre opens their details; choosing someone in the list of people redraws the chart for them. A box shows "more…" where the tree goes on beyond the chart.
+- **How the charts treat awkward families.** A person with two sets of parents is drawn with their birth parents. An unknown parent leaves an empty place, so the father's side stays above and the mother's below. Each partner is drawn under the person, and the children of each partnership hang from that partner on a line of their own. An ancestor who appears on two lines is drawn twice.
+- **A relationship calculator,** opened with "Relationship" on a person's page. It names blood relationships of any distance ("second cousin once removed", "3rd great-grandmother", "half-sister"), lists the people in between and the ancestors shared, and says when two people are related in more than one way. It also names partners, and relatives through one partnership ("father-in-law", "stepson", "wife of an uncle").
+- **Duplicate detection,** opened with "Duplicates" on the tree screen. It compares everyone in the tree and lists the pairs most likely to be one person, each with a score from 50 to 100 and the reasons for it: names (including spelling variants, initials and every name a person has), years of birth and death, places, and parents and partners who are the same or have the same names. Two children of one family born in different years are not offered, nor are a parent and child or two partners.
+- **Merge,** from that list or with "Merge" on a person's page. The two records are shown side by side and the user chooses which to keep. See the rules in section 5. A pair can instead be marked as different people.
+- **Merges and GEDCOM.** After a merge, an export writes one record that carries the kept lines of both, moves the lines under a name or event with it, and makes every line that pointed at the merged record point at the one that is left. Undoing the merge gives the original file back.
+- **Tests.** Unit tests went from 385 to 488 and end-to-end tests from 22 to 25. The end-to-end tests draw all four charts, ask for relationships, and find, merge, undo and dismiss a duplicate in the real window.
+
+Changed from earlier parts:
+
+- **The tree schema is at version 3.** As in part 1c, a tree is upgraded when this build opens it, and an earlier build can then no longer open it.
+- **An export no longer leaves a line pointing at a person who was deleted since the import.** Part 1c dropped the deleted person's record but left lines elsewhere that pointed at it, such as an association. Those lines are now dropped too.
+- **The contract between the page and the main process has 41 functions,** five more than before.
+- **The person page has three more buttons** (Chart, Relationship, Merge) and the tree screen one more (Duplicates).
+
+Not done, and why:
+
+- **The duplicate scores are not validated.** The weights were set by hand and tried on made-up people. Nobody has checked on a real tree how many of the listed pairs are true duplicates, or how many true duplicates are missed. Phase 4 plans a labelled test set; until then the list is a suggestion and the comparison screen is the safeguard.
+- **Some duplicates are not found.** Two records are compared only when their surnames sound alike, start with the same four letters, or differ only in the first letter. A woman entered once under her maiden name and once under her married name is found only if one record lists both names. In a group of more than 300 people with one surname, given names that start with different letters (Catherine, Katherine) are not compared.
+- **A file still cannot be imported into an existing tree.** The parts are there (import, duplicate detection, merge), but not the step that joins them.
+- **A merge cannot choose between two values.** It keeps both versions of every fact; the user deletes the wrong one afterwards. Only sex and living status are single values, and the record kept wins where it states them.
+- **Families are joined only when both partners are the same.** Two families of one person with an unknown partner each are left as two, because the unknown partners may differ.
+- **Relationships through more than one partnership are not found,** for example the brother of a sister-in-law. Step-brothers and step-sisters are reported as no relationship.
+- **"Husband" and "wife" are used only when a marriage event is recorded**; otherwise the word is "partner". Adoptive, foster and step links count like birth links when a relationship is worked out, and the answer does not say which kind was followed.
+- **When two people are related in several ways, a "half" relationship can be reported as full or the reverse** in rare trees where the same ancestors are reached by two routes. The first route found decides.
+- **There is no home person.** Other programs show how everyone is related to one chosen person; here the question is asked for one pair at a time.
+- **Charts cannot be printed or saved** as a picture or PDF. That is part of the reports in Phase 6.
+- **The fan shows at most six generations of ancestors and the other charts at most seven**; a descendant chart stops at 1,000 descendants. Long names are cut off; the full name is in the tooltip.
+- **A very large descendant chart is slow to draw.** Every box is an element on the page; 1,000 descendants with their partners make 2,000 of them.
+- **The duplicate scan blocks the window while it runs,** about 2 seconds on the 10,000-person sample tree, and stops after four million comparisons.
+- **The charts were checked by eye in light colours only,** and at one window size. Dragging was not tried on a touch screen.
+- **The unexplained crash of part 1c happened again, once.** In one of about twelve full runs of the unit tests in this part, the worker running the 10,000-person GEDCOM test stopped before reporting its three tests. Eight further full runs in a row passed. It is the same test file as before, which this part did not change. The cause is still unknown; the next step is to capture a crash dump. Until then a run of the unit tests, locally or in CI, can fail for this reason and pass when repeated.
+
 ## 9. Risks
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
@@ -486,6 +570,8 @@ Not done, and why:
 - **Data quality.** Community trees and machine-read indexes contain errors, so every fact shows its source and nothing is accepted without the user.
 - **Privacy.** Living people and DNA stay on the PC. Exports hide living people by default. No telemetry. The one exception is the optional AI assistant: while it is on, details of the people being researched and the records read for them are sent to Anthropic. Living people are masked unless the user opts in, and DNA is never sent.
 - **GEDCOM files in the wild do not follow the standard closely,** and each program bends it in its own way. The import was built from the two standards and from what is known of Ancestry's files, not from a collection of real exports. It keeps every line it does not understand and reports what it could not place, so a surprise in a real file should cost a misread field, not lost data. Real exports from each program need to be tried before a release.
+- **A wrong merge damages a tree,** and a list of suggested duplicates invites one. The app never merges on its own, shows both records before a merge, keeps everything both had, and makes the merge one undo step. The undo history is kept in the tree file, and backups hold earlier states.
+- **A test that fails now and then hides real failures.** The 10,000-person GEDCOM unit test has stopped with a native crash twice in about 35 full runs, with no cause found. If it becomes more frequent, find the cause before adding more tests around it.
 - **Coverage.** Users with mostly US ancestors before 1940 will do much of their record searching through links to FamilySearch's own site.
 
 ## 10. Open decisions

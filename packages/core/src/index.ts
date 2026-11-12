@@ -15,6 +15,44 @@ export {
 } from './date';
 export * from './gedcom';
 export {
+  CHART_METRICS,
+  FAN_MAX_GENERATIONS,
+  layoutDescendants,
+  layoutFan,
+  layoutHourglass,
+  layoutPedigree,
+  slotGeneration,
+  type AncestorSlot,
+  type BoxChart,
+  type ChartBox,
+  type ChartLine,
+  type ChartMetrics,
+  type ChartRole,
+  type DescendantNode,
+  type DescendantUnion,
+  type FanChart,
+  type FanSegment,
+} from './chart';
+export {
+  compareCloseness,
+  kinshipTerm,
+  ordinal,
+  relationshipTerm,
+  type BloodRelation,
+  type Relationship,
+} from './kinship';
+export {
+  DUPLICATE_THRESHOLD,
+  blockingKeys,
+  jaroWinkler,
+  normalizeName,
+  scoreDuplicate,
+  soundex,
+  type MatchCandidate,
+  type MatchName,
+  type MatchScore,
+} from './match';
+export {
   FAMILY_EVENT_TYPES,
   NAME_TYPES,
   PEDIGREES,

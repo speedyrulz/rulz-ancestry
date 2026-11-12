@@ -763,3 +763,356 @@ details > .hint {
   line-height: 1.5;
   white-space: pre;
 }
+
+/* Charts */
+
+:root {
+  --male: #3b6ea5;
+  --female: #b0567a;
+  --line: #9a9388;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --male: #7fb0e6;
+    --female: #e69bb8;
+    --line: #6f6a62;
+  }
+}
+
+.person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chart-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.chart-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 16px 24px 8px;
+}
+
+.chart-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chart-title h2 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.segmented {
+  display: flex;
+}
+
+.segmented button {
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.segmented button:first-child {
+  margin-left: 0;
+  border-radius: 6px 0 0 6px;
+}
+
+.segmented button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+
+.segmented button.selected {
+  position: relative;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoom span {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-hint {
+  margin: 0;
+  padding: 0 24px 8px;
+}
+
+.chart-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  cursor: grab;
+  touch-action: none;
+}
+
+.chart-scroll:active {
+  cursor: grabbing;
+}
+
+.chart-message {
+  padding: 24px;
+}
+
+.chart-sizer {
+  position: relative;
+  margin: 0 auto;
+}
+
+.chart-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.chart-lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.chart-lines path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.chart-box {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2px 8px 2px 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  text-align: left;
+  line-height: 1.3;
+}
+
+.chart-box.sex-M {
+  border-left-color: var(--male);
+}
+
+.chart-box.sex-F {
+  border-left-color: var(--female);
+}
+
+.chart-box.root {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.chart-box.partner {
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.chart-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-years {
+  overflow: hidden;
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-more {
+  font-style: italic;
+}
+
+.fan {
+  display: block;
+}
+
+.fan-empty {
+  fill: none;
+  stroke: var(--border);
+  stroke-dasharray: 3 4;
+}
+
+.fan-segment {
+  cursor: pointer;
+}
+
+.fan-segment path,
+.fan-segment circle {
+  fill: var(--bg);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.fan-segment.sex-M path {
+  fill: color-mix(in srgb, var(--male) 14%, var(--bg));
+}
+
+.fan-segment.sex-F path {
+  fill: color-mix(in srgb, var(--female) 14%, var(--bg));
+}
+
+.fan-segment:hover path,
+.fan-segment:hover circle {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.fan-segment:focus-visible {
+  outline: none;
+}
+
+.fan-segment:focus-visible path,
+.fan-segment:focus-visible circle {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+.fan-root circle {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.fan text {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.fan .fan-years {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+/* Relationships, duplicates and merging */
+
+.dialog.wide:has(.compare),
+.dialog.wide:has(.scroll-box) {
+  width: min(960px, calc(100vw - 48px));
+}
+
+.relationship {
+  min-height: 72px;
+  margin-top: 16px;
+}
+
+.relationship-answer {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.relationship-path {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.relationship-path li {
+  padding: 2px 0;
+}
+
+.relationship-path .muted {
+  margin-left: 8px;
+}
+
+.scroll-box {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.scroll-box .table {
+  margin: 0;
+}
+
+.scroll-box thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+}
+
+.compare {
+  table-layout: fixed;
+}
+
+.compare thead td,
+.compare tbody th {
+  width: 22%;
+}
+
+.compare td,
+.compare th {
+  vertical-align: top;
+}
+
+.compare thead th label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.compare thead th .muted {
+  display: block;
+  margin-left: 24px;
+  font-weight: 400;
+}
+
+.dialog ul.plain,
+ul.plain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

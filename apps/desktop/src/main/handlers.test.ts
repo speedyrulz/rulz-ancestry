@@ -6,12 +6,16 @@ import { BACKUP_DIR_NAME, openAppDatabase, type Db } from '@rulz/db';
 import {
   API_METHODS,
   type AppInfo,
+  type ChartInfo,
+  type DuplicateList,
   type GedcomExportInfo,
   type GedcomImportResult,
   type IpcError,
+  type MergeInfo,
   type PersonChange,
   type PersonListPage,
   type PersonPage,
+  type RelationshipInfo,
   type TreeState,
 } from '../shared/ipc';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
@@ -119,6 +123,14 @@ describe('argument checks', () => {
       ['addParent', MISSING, { existingId: MISSING, create: { given: 'Both' } }, {}],
       ['setPedigree', MISSING, MISSING, 'cloned'],
       ['restoreBackup', 42],
+      ['getChart', { personId: MISSING, ancestors: 11, descendants: 0 }],
+      ['getChart', { personId: MISSING, ancestors: 1.5, descendants: 0 }],
+      ['getChart', { personId: MISSING, ancestors: 1 }],
+      ['getRelationship', MISSING],
+      ['getRelationship', MISSING, 'not-an-id'],
+      ['findDuplicates', { limit: 5 }],
+      ['mergePersons', MISSING, { id: MISSING }],
+      ['markNotDuplicate', MISSING],
       ['createTree', { name: 'x', parentDir: '' }],
       ['undo', 'unexpected'],
     ];
@@ -298,6 +310,145 @@ describe('reading and editing the open tree', () => {
     const deleted = await call<TreeState>('deletePerson', mary);
     expect(deleted.persons).toBe(3);
     expect(await call('getPersonPage', mary)).toBeNull();
+  });
+});
+
+describe('charts, relationships and duplicates', () => {
+  /** A father and mother with a daughter and a son. Returns their ids. */
+  async function smallFamily() {
+    const father = await addPerson('Frank', { sex: 'M', birthDate: '1850' });
+    const mother = (
+      await call<PersonChange>('addPartner', father, { create: { given: 'Mary', sex: 'F' } }, {})
+    ).personId;
+    const page = await call<PersonPage>('getPersonPage', father);
+    const familyId = page.partnerFamilies[0]?.familyId ?? '';
+    const child = async (given: string, sex: string) =>
+      (
+        await call<PersonChange>(
+          'addChild',
+          father,
+          { create: { given, surname: 'Test', sex } },
+          { familyId },
+        )
+      ).personId;
+    return { father, mother, daughter: await child('Dora', 'F'), son: await child('Sam', 'M') };
+  }
+
+  it('reads what a chart shows, in the directions asked for', async () => {
+    await openNewTree();
+    const { father, mother, daughter, son } = await smallFamily();
+
+    const up = await call<ChartInfo>('getChart', { personId: son, ancestors: 3, descendants: 0 });
+    expect(up.rootId).toBe(son);
+    expect(up.ancestors.map((entry) => [entry.slot, entry.personId])).toEqual([
+      [1, son],
+      [2, father],
+      [3, mother],
+    ]);
+    expect(up.descendants).toEqual({ personId: son, unions: [], more: false });
+    expect(up.persons.map((person) => person.name?.given).sort()).toEqual(['Frank', 'Mary', 'Sam']);
+
+    const down = await call<ChartInfo>('getChart', {
+      personId: father,
+      ancestors: 0,
+      descendants: 2,
+    });
+    expect(down.ancestors).toEqual([]);
+    expect(down.descendants.unions).toEqual([
+      {
+        partnerId: mother,
+        children: [
+          { personId: daughter, unions: [], more: false },
+          { personId: son, unions: [], more: false },
+        ],
+      },
+    ]);
+    expect(down.truncated).toBe(false);
+
+    expect(await call('getChart', { personId: MISSING, ancestors: 2, descendants: 2 })).toBeNull();
+  });
+
+  it('says how two people are related, in words', async () => {
+    await openNewTree();
+    const { father, mother, daughter, son } = await smallFamily();
+
+    const sister = await call<RelationshipInfo>('getRelationship', son, daughter);
+    expect(sister).toMatchObject({ kind: 'blood', term: 'sister', via: null, others: [] });
+    expect(sister.person.name?.given).toBe('Sam');
+    expect(sister.other.name?.given).toBe('Dora');
+    expect(sister.commonAncestors.map((person) => person.id).sort()).toEqual(
+      [father, mother].sort(),
+    );
+    expect(sister.path.map((person) => person.name?.given)).toHaveLength(3);
+
+    expect((await call<RelationshipInfo>('getRelationship', daughter, father)).term).toBe('father');
+    expect((await call<RelationshipInfo>('getRelationship', father, mother)).term).toBe('partner');
+    const stranger = await addPerson('Stranger');
+    expect(await call<RelationshipInfo>('getRelationship', son, stranger)).toMatchObject({
+      kind: 'none',
+      term: '',
+      path: [],
+    });
+    expect((await errorOf('getRelationship', son, MISSING)).code).toBe('not-found');
+  });
+
+  it('finds duplicates, merges them in one undo step and remembers a "different people"', async () => {
+    await openNewTree();
+    const first = await addPerson('Eliza', { birthDate: '1840', birthPlace: 'York' });
+    const second = await addPerson('Eliza', { birthDate: '1840', deathDate: '1901' });
+    const third = await addPerson('Eliza');
+
+    const list = await call<DuplicateList>('findDuplicates');
+    expect(list.persons).toBe(3);
+    expect(list.total).toBe(3);
+    expect(list.truncated).toBe(false);
+    expect(list.pairs[0]).toMatchObject({
+      score: 75,
+      reasons: ['Same name', 'Born in the same year'],
+    });
+    expect([list.pairs[0]?.a.id, list.pairs[0]?.b.id].sort()).toEqual([first, second].sort());
+
+    const marked = await call<TreeState>('markNotDuplicate', first, third);
+    expect(marked.undo).toBe('Mark as different people');
+    expect((await call<DuplicateList>('findDuplicates')).total).toBe(2);
+
+    const merged = await call<MergeInfo>('mergePersons', first, second);
+    // The second birth has no place, so it is not an exact repeat of the first and is kept.
+    expect(merged).toMatchObject({ personId: first, names: 0, events: 2, families: 0 });
+    expect(merged.tree).toMatchObject({ persons: 2, undo: 'Merge people' });
+    expect(await call('getPersonPage', second)).toBeNull();
+    const page = await call<PersonPage>('getPersonPage', first);
+    expect(page.events.map((event) => event.type)).toEqual(['birth', 'birth', 'death']);
+
+    expect((await call<TreeState>('undo')).persons).toBe(3);
+    expect(await call('getPersonPage', second)).not.toBeNull();
+  });
+
+  it('explains a merge that is not allowed', async () => {
+    await openNewTree();
+    const { father, mother, son } = await smallFamily();
+    expect(await errorOf('mergePersons', son, father)).toEqual({
+      code: 'rule',
+      message: 'a person cannot be merged with their own ancestor or descendant',
+    });
+    expect((await errorOf('mergePersons', father, mother)).message).toMatch(
+      /partners of each other/,
+    );
+    expect((await errorOf('mergePersons', son, son)).code).toBe('rule');
+    expect((await errorOf('mergePersons', son, MISSING)).code).toBe('not-found');
+    expect((await errorOf('markNotDuplicate', son, son)).code).toBe('rule');
+  });
+
+  it('needs an open tree', async () => {
+    for (const [method, ...args] of [
+      ['getChart', { personId: MISSING, ancestors: 1, descendants: 1 }],
+      ['getRelationship', MISSING, MISSING],
+      ['findDuplicates'],
+      ['mergePersons', MISSING, MISSING],
+      ['markNotDuplicate', MISSING, MISSING],
+    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+      expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
+    }
   });
 });
 

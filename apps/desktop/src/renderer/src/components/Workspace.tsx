@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GedcomImportInfo, TreeState } from '../../../shared/ipc';
+import type { GedcomImportInfo, MergeInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { countOf, formatWhen } from '../format';
+import { ChartView } from './ChartView';
 import { AddPersonDialog, BackupsDialog } from './dialogs';
+import { DuplicatesDialog, mergeSummary } from './duplicates';
 import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
@@ -38,8 +40,10 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   /** The message about the import stays until it is dismissed; other messages come and go above it. */
   const [importNotice, setImportNotice] = useState(imported !== null);
   const [dialog, setDialog] = useState<
-    'add-person' | 'backups' | 'export' | 'import-report' | null
+    'add-person' | 'backups' | 'duplicates' | 'export' | 'import-report' | null
   >(null);
+  /** What the right-hand side shows for the person selected: their details, or a chart. */
+  const [view, setView] = useState<'person' | 'chart'>('person');
   const [busy, setBusy] = useState(false);
   const searchBox = useRef<HTMLInputElement>(null);
 
@@ -123,6 +127,16 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undo, redo]);
 
+  /** After a merge: show the person who is left, and say what happened. */
+  const showMerged = useCallback(
+    (info: MergeInfo, name: string) => {
+      onTree(info.tree);
+      setSelectedId(info.personId);
+      setNotice({ text: mergeSummary(info, name), error: false });
+    },
+    [onTree],
+  );
+
   const closeTree = () =>
     run(async () => {
       const result = await api.closeTree();
@@ -183,6 +197,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button type="button" onClick={() => setDialog('backups')} data-testid="open-backups">
             Backups
+          </button>
+          <button
+            type="button"
+            title="Look for people who are in the tree twice"
+            onClick={() => setDialog('duplicates')}
+            data-testid="open-duplicates"
+          >
+            Duplicates
           </button>
           <button
             type="button"
@@ -268,6 +290,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
                   : 'Choose a person from the list to see and edit their details.'}
               </p>
             </div>
+          ) : view === 'chart' ? (
+            <ChartView
+              personId={selectedId}
+              revision={tree.revision}
+              onSelect={setSelectedId}
+              onDetails={() => setView('person')}
+              onProblem={showProblem}
+            />
           ) : (
             <PersonPageView
               personId={selectedId}
@@ -275,6 +305,8 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
               onTree={onTree}
               onSelect={setSelectedId}
               onProblem={showProblem}
+              onChart={() => setView('chart')}
+              onMerged={showMerged}
             />
           )}
         </main>
@@ -292,6 +324,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
         />
       )}
       {dialog === 'export' && <ExportDialog tree={tree} onClose={() => setDialog(null)} />}
+      {dialog === 'duplicates' && (
+        <DuplicatesDialog
+          tree={tree}
+          onTree={onTree}
+          onMerged={showMerged}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'import-report' && imported !== null && (
         <ImportReportDialog report={imported} onClose={() => setDialog(null)} />
       )}

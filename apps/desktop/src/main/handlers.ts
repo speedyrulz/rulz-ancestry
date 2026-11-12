@@ -1,4 +1,4 @@
-import { NAME_TYPES, PEDIGREES, SEXES } from '@rulz/core';
+import { NAME_TYPES, PEDIGREES, SEXES, kinshipTerm, relationshipTerm } from '@rulz/core';
 import {
   BackupError,
   GedcomFileError,
@@ -20,9 +20,15 @@ import {
   deleteEvent,
   deleteName,
   deletePerson,
+  findDuplicates,
+  findRelationship,
+  getChartData,
   getPersonPage,
+  getPersonSummary,
   keptLinesOf,
   listPersons,
+  markNotDuplicate,
+  mergePersons,
   presumedLivingIds,
   searchPersons,
   setChildPedigree,
@@ -35,7 +41,15 @@ import {
   type Tree,
 } from '@rulz/db';
 import { z } from 'zod';
-import type { ApiMethod, AppInfo, IpcError, PersonChange, RulzApi, TreeState } from '../shared/ipc';
+import type {
+  ApiMethod,
+  AppInfo,
+  IpcError,
+  PersonChange,
+  PersonSummary,
+  RulzApi,
+  TreeState,
+} from '../shared/ipc';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
 
 /**
@@ -161,6 +175,12 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     const { personId } = session.change(run);
     return { tree: session.state(), personId };
   };
+  /** A person as a list shows them. They were just read, so a miss means they have gone since. */
+  const summaryOf = (personId: string): PersonSummary => {
+    const summary = getPersonSummary(session.tree, personId);
+    if (!summary) throw new NotFoundError('person', personId);
+    return summary;
+  };
 
   return {
     getAppInfo: define<'getAppInfo'>(none, () => platform.appInfo()),
@@ -285,6 +305,48 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       return page === null ? null : { ...page, keptLines: keptLinesOf(session.tree, personId) };
     }),
 
+    getChart: define<'getChart'>(
+      z.tuple([
+        z.strictObject({
+          personId: id,
+          ancestors: z.number().int().min(0).max(10),
+          descendants: z.number().int().min(0).max(10),
+        }),
+      ]),
+      ({ personId, ancestors, descendants }) =>
+        getChartData(session.tree, personId, { ancestors, descendants }),
+    ),
+
+    getRelationship: define<'getRelationship'>(z.tuple([id, id]), (personId, otherId) => {
+      const found = findRelationship(session.tree, personId, otherId);
+      const other = summaryOf(otherId);
+      return {
+        person: summaryOf(personId),
+        other,
+        kind: found.relationship.kind,
+        term: relationshipTerm(found.relationship, other.sex),
+        path: found.path.map(summaryOf),
+        commonAncestors: found.commonAncestorIds.map(summaryOf),
+        via: found.viaId === null ? null : summaryOf(found.viaId),
+        others: found.others.map((relation) => kinshipTerm(relation, other.sex)),
+      };
+    }),
+
+    findDuplicates: define<'findDuplicates'>(none, () => {
+      const scan = findDuplicates(session.tree);
+      return {
+        pairs: scan.pairs.map((pair) => ({
+          a: summaryOf(pair.aId),
+          b: summaryOf(pair.bId),
+          score: pair.score,
+          reasons: pair.reasons,
+        })),
+        total: scan.total,
+        persons: scan.persons,
+        truncated: scan.truncated,
+      };
+    }),
+
     addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
       link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
     ),
@@ -356,6 +418,15 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
 
     setPedigree: define<'setPedigree'>(z.tuple([id, id, pedigree]), (familyId, childId, value) =>
       edit((tree) => setChildPedigree(tree, familyId, childId, value)),
+    ),
+
+    mergePersons: define<'mergePersons'>(z.tuple([id, id]), (keepId, mergeId) => {
+      const result = session.change((tree) => mergePersons(tree, keepId, mergeId));
+      return { tree: session.state(), ...result };
+    }),
+
+    markNotDuplicate: define<'markNotDuplicate'>(z.tuple([id, id]), (personId, otherId) =>
+      edit((tree) => markNotDuplicate(tree, personId, otherId)),
     ),
 
     undo: define<'undo'>(none, () => session.undo()),

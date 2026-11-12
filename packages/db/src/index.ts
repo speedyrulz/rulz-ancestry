@@ -130,6 +130,25 @@ export {
 export { checkTreeEngine, type TreeEngineCheck } from './selfcheck';
 export { PRESUMED_LIVING_YEARS, presumedLivingIds } from './living';
 export {
+  MAX_CHART_DESCENDANTS,
+  MAX_CHART_GENERATIONS,
+  getAncestorSlots,
+  getChartData,
+  getDescendantTree,
+  type ChartData,
+  type ChartRequest,
+} from './charts';
+export { findRelationship, type RelationshipResult } from './relationship';
+export {
+  findDuplicates,
+  isMarkedNotDuplicate,
+  markNotDuplicate,
+  type DuplicateOptions,
+  type DuplicatePair,
+  type DuplicateScan,
+} from './duplicates';
+export { mergeObstacle, mergePersons, mergedInto, type MergeResult } from './merge';
+export {
   GedcomFileError,
   MAX_GEDCOM_BYTES,
   importGedcom,
@@ -148,6 +167,7 @@ export {
   getGedcomSource,
   getStoredRecord,
   keptLinesOf,
+  listMergedRecords,
   listStoredRecords,
   type GedcomSource,
   type PartKind,

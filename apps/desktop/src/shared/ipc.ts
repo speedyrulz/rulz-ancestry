@@ -7,8 +7,10 @@
  * returns database records that fit these shapes; the compiler checks that.
  */
 import type {
+  AncestorSlot,
   DateCalendar,
   DateQualifier,
+  DescendantNode,
   GedcomVersion,
   NameType,
   Pedigree,
@@ -271,6 +273,76 @@ export interface GedcomExportInfo {
   unconverted: { what: string; count: number }[];
 }
 
+/** What a chart of one person is drawn from. */
+export interface ChartRequest {
+  personId: string;
+  /** Generations of ancestors: 0 for none, 1 for parents, 2 for grandparents, up to 10. */
+  ancestors: number;
+  /** Generations of descendants: 0 for none, 1 for children, up to 10. */
+  descendants: number;
+}
+
+export interface ChartInfo {
+  rootId: string;
+  /** The person and their ancestors by Ahnentafel slot. Empty when none were asked for. */
+  ancestors: AncestorSlot[];
+  descendants: DescendantNode;
+  /** Everyone the chart names, each once. */
+  persons: PersonSummary[];
+  /** True when the family is too large to show whole and the descendants were cut off. */
+  truncated: boolean;
+}
+
+/** How one person is related to another: `other` is `person`'s `term`. */
+export interface RelationshipInfo {
+  person: PersonSummary;
+  other: PersonSummary;
+  kind: 'self' | 'blood' | 'partner' | 'partner-of-relative' | 'relative-of-partner' | 'none';
+  /** For example "second cousin once removed" or "sister-in-law". Empty when none was found. */
+  term: string;
+  /** For a blood relationship: the people who link the two, from `person` to `other`. */
+  path: PersonSummary[];
+  /** The nearest ancestors the two share: one, or a couple. */
+  commonAncestors: PersonSummary[];
+  /** For a relationship through a partnership: the relative or partner in between. */
+  via: PersonSummary | null;
+  /** Other ways the two are related by blood, closest first. */
+  others: string[];
+}
+
+/** Two people who may be one person entered twice. */
+export interface DuplicatePairInfo {
+  a: PersonSummary;
+  b: PersonSummary;
+  /** 50 to 100. From 80 the two are very likely one person. */
+  score: number;
+  /** What the score rests on. */
+  reasons: string[];
+}
+
+export interface DuplicateList {
+  /** The likeliest pairs, best first. */
+  pairs: DuplicatePairInfo[];
+  /** How many pairs were found in all; only the likeliest are listed. */
+  total: number;
+  /** How many people were compared. */
+  persons: number;
+  /** True when the comparison stopped early because the tree is very large. */
+  truncated: boolean;
+}
+
+/** What a merge of two people did. */
+export interface MergeInfo {
+  tree: TreeState;
+  /** The person who is left. */
+  personId: string;
+  /** Names and events that came over from the other record. */
+  names: number;
+  events: number;
+  /** Families that became one because both records had the same partner. */
+  families: number;
+}
+
 export interface RulzApi {
   getAppInfo(): Promise<AppInfo>;
 
@@ -303,6 +375,12 @@ export interface RulzApi {
   // Reading the open tree.
   listPersons(request: PersonListRequest): Promise<PersonListPage>;
   getPersonPage(personId: string): Promise<PersonPage | null>;
+  /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
+  getChart(request: ChartRequest): Promise<ChartInfo | null>;
+  /** How `otherId` is related to `personId`. */
+  getRelationship(personId: string, otherId: string): Promise<RelationshipInfo>;
+  /** Looks through the whole tree for people who may have been entered twice. */
+  findDuplicates(): Promise<DuplicateList>;
 
   // Changing the open tree. Each call is one undo step.
   addPerson(draft: PersonDraft): Promise<PersonChange>;
@@ -334,6 +412,10 @@ export interface RulzApi {
   removeChild(familyId: string, childId: string): Promise<TreeState>;
   removePartner(familyId: string, personId: string): Promise<TreeState>;
   setPedigree(familyId: string, childId: string, pedigree: Pedigree): Promise<TreeState>;
+  /** Merges `mergeId` into `keepId`: one person is left, with everything both records had. */
+  mergePersons(keepId: string, mergeId: string): Promise<MergeInfo>;
+  /** Records that two people are not the same person, so they are not offered as duplicates again. */
+  markNotDuplicate(personId: string, otherId: string): Promise<TreeState>;
   undo(): Promise<TreeState>;
   redo(): Promise<TreeState>;
 
@@ -367,6 +449,9 @@ export const API_METHODS = [
   'countPresumedLiving',
   'listPersons',
   'getPersonPage',
+  'getChart',
+  'getRelationship',
+  'findDuplicates',
   'addPerson',
   'updatePerson',
   'deletePerson',
@@ -384,6 +469,8 @@ export const API_METHODS = [
   'removeChild',
   'removePartner',
   'setPedigree',
+  'mergePersons',
+  'markNotDuplicate',
   'undo',
   'redo',
   'listBackups',
