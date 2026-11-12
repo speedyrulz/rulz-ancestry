@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+# electron-builder collects production dependencies most reliably from a flat
+# node_modules tree, so use the hoisted linker instead of pnpm's symlinked one.
+nodeLinker: hoisted
+
+# Install scripts are denied unless listed here. electron-winstaller builds the
+# Squirrel installer, which this project does not use (it ships NSIS and MSIX).
+allowBuilds:
+  electron-winstaller: false

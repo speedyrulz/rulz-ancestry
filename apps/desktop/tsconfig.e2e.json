@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    // Tests run in Node but pass functions into the page, so they need both.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["e2e", "playwright.config.ts"]
+}

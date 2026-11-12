@@ -1,0 +1,36 @@
+appId: com.rulz.ancestry
+productName: RulZ Ancestry
+copyright: Copyright © 2026 RulZ Ancestry contributors
+
+directories:
+  output: release
+
+files:
+  - out/**
+  - package.json
+  # better-sqlite3 ships prebuilt binaries for every platform plus its C
+  # sources. Only the Windows x64 binary is needed at runtime.
+  - '!node_modules/better-sqlite3/{deps,src,binding.gyp}'
+  - '!node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*'
+  - '!node_modules/better-sqlite3/prebuilds/win32-arm64.node'
+  - '!node_modules/node-addon-api/**'
+
+# Native binaries cannot be loaded from inside the asar archive.
+asarUnpack:
+  - '**/*.node'
+
+# better-sqlite3 13 uses N-API prebuilt binaries that work in Electron as-is,
+# so there is nothing to recompile against Electron's headers.
+npmRebuild: false
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: RulZ-Ancestry-Setup-${version}.${ext}
