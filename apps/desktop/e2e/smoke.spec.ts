@@ -14,6 +14,13 @@ test('reports a working database with full-text search', async ({ window }) => {
   await expect(window.getByTestId('app-version')).toHaveText(/^\d+\.\d+\.\d+/);
 });
 
+test('can build, search and undo a family tree with the shipped database engine', async ({
+  window,
+}) => {
+  // The main process runs this check at start-up against an in-memory tree.
+  await expect(window.getByTestId('tree-engine')).toHaveText(/^Ready \(schema version [1-9]\d*\)$/);
+});
+
 test('creates its database inside the profile folder', async ({ window, userDataDir }) => {
   const shown = await window.getByTestId('database-path').innerText();
   expect(resolve(shown)).toBe(resolve(userDataDir, 'app.db'));

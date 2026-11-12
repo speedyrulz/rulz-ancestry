@@ -29,6 +29,18 @@ describe('newId', () => {
     expect(ids.size).toBe(5000);
   });
 
+  it('makes ids that sort in the order they were made', () => {
+    // Far more than one millisecond can hold, so the counter and its overflow are both used.
+    const ids = Array.from({ length: 20_000 }, () => newId());
+    for (let i = 1; i < ids.length; i++) {
+      if (!(ids[i - 1]! < ids[i]!)) throw new Error(`id ${i} does not sort after id ${i - 1}`);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.every((id) => UUID_V7.test(id))).toBe(true);
+    // Borrowing from the next millisecond must not let ids run far ahead of the clock.
+    expect(idTimestamp(ids.at(-1)!) - Date.now()).toBeLessThan(1000);
+  });
+
   it('rejects timestamps that do not fit in 48 bits', () => {
     expect(() => newId(-1)).toThrow(RangeError);
     expect(() => newId(2 ** 48)).toThrow(RangeError);

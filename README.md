@@ -3,10 +3,17 @@
 A Windows desktop app for building a family tree and researching it with free
 data sources. Everything is stored on your own PC.
 
-Status: **Phase 0 complete** (project foundations). The app opens a window and
-runs a system check; tree features start in Phase 1. See [docs/PLAN.md](docs/PLAN.md)
-for the full plan and [docs/ACCESS.md](docs/ACCESS.md) for the API keys and
-applications that only the project owner can request.
+Status: **Phase 1 in progress.** The tree database layer is built and tested
+(part 1a): people, names, families, events, dates, undo and redo, and search of
+your own tree. The app window does not create or edit trees yet; that is part
+1b. See [docs/PLAN.md](docs/PLAN.md) for the full plan and
+[docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
+the project owner can request.
+
+An optional AI assistant is planned (Phase 4b). Claude proposes record matches
+for you to confirm, through your own Claude app or your own API key. It is off by
+default, and while it is on, details of the people being researched are sent to
+Anthropic. See section 7 of the plan.
 
 The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
 architecture, data sources, development guide and changelog. It is updated after
@@ -40,8 +47,8 @@ Run these from the repository root.
 
 ```
 apps/desktop          Electron app: main process, preload script, React UI, e2e tests
-packages/core         Domain logic with no Electron dependency (ids now; GEDCOM, matching later)
-packages/db           SQLite access (better-sqlite3)
+packages/core         Domain logic with no Electron dependency (ids, dates; GEDCOM, matching later)
+packages/db           The tree database: schema migrations, queries, undo and redo, search
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
 docs/                 Plan and access checklist
 ```
@@ -54,6 +61,12 @@ docs/                 Plan and access checklist
 - **The UI cannot reach Node.js.** The window runs sandboxed with context
   isolation; it talks to the main process only through the functions listed in
   `apps/desktop/src/shared/ipc.ts`.
+- **Every change to a tree can be undone.** Code changes a tree only through
+  `Tree.transact` in `packages/db`. Database triggers record each changed row
+  and reject a write made any other way.
+- **Schema changes are migrations.** A change to the tree database is a new
+  numbered file in `packages/db/src/schema`; a migration that has shipped is
+  never edited.
 - **Development data stays separate.** `pnpm dev` stores its database in
   `%APPDATA%\RulZ Ancestry (dev)`, not in the installed app's folder.
 

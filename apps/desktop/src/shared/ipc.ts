@@ -22,6 +22,11 @@ export interface AppInfo {
     fts5: boolean;
     journalMode: string;
   };
+  /**
+   * Result of the start-up check that builds a small family tree in memory and
+   * adds, finds, undoes and redoes a person in it.
+   */
+  treeEngine: { ok: true; schemaVersion: number } | { ok: false; error: string };
   /** Number of known data sources per access tier. */
   connectors: {
     api: number;

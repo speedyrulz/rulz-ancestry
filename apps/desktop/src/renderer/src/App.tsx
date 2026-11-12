@@ -51,6 +51,14 @@ function StatusPanel({ info }: { info: AppInfo }) {
         <dd data-testid="fts5">{info.database.fts5 ? 'Available' : 'Missing'}</dd>
       </div>
       <div>
+        <dt>Family tree engine</dt>
+        <dd data-testid="tree-engine" className={info.treeEngine.ok ? undefined : 'error'}>
+          {info.treeEngine.ok
+            ? `Ready (schema version ${info.treeEngine.schemaVersion})`
+            : `Failed: ${info.treeEngine.error}`}
+        </dd>
+      </div>
+      <div>
         <dt>Data sources defined</dt>
         <dd data-testid="source-count">
           {sourceCount} ({info.connectors.api} live, {info.connectors.bulk} downloadable,{' '}

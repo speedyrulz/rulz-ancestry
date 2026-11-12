@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { manifestsByTier } from '@rulz/connectors';
-import { getSqliteInfo, openDatabase, type Db } from '@rulz/db';
+import { checkTreeEngine, getSqliteInfo, openDatabase, type Db } from '@rulz/db';
 import { IPC, type AppInfo } from '../shared/ipc';
 
 /** Must match `appId` in electron-builder.yml so Windows groups taskbar entries correctly. */
@@ -16,6 +16,16 @@ const appUrl = devServerUrl ?? pathToFileURL(rendererFile).href;
 let mainWindow: BrowserWindow | undefined;
 let appDb: Db | undefined;
 let appDbPath = '';
+let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
+
+/** A failed check is shown in the window; it must not stop the app from opening. */
+function runTreeEngineCheck(): AppInfo['treeEngine'] {
+  try {
+    return { ok: true, ...checkTreeEngine() };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
 
 function isAppUrl(candidate: string): boolean {
   try {
@@ -99,6 +109,7 @@ function registerIpc(): void {
         node: process.versions.node,
       },
       database: { path: appDbPath, ...getSqliteInfo(appDb) },
+      treeEngine,
       connectors: {
         api: manifestsByTier('api').length,
         bulk: manifestsByTier('bulk').length,
@@ -149,6 +160,7 @@ if (!app.requestSingleInstanceLock()) {
 
     appDbPath = join(app.getPath('userData'), 'app.db');
     appDb = openDatabase(appDbPath);
+    treeEngine = runTreeEngineCheck();
 
     registerIpc();
     mainWindow = createMainWindow();
