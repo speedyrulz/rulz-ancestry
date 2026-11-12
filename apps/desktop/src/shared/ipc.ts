@@ -53,6 +53,7 @@ export interface TreeState {
   persons: number;
   families: number;
   events: number;
+  sources: number;
   /** Name of the change that undo would reverse, or null when there is none. */
   undo: string | null;
   /** Name of the change that redo would repeat, or null when there is none. */
@@ -161,12 +162,136 @@ export interface PersonPage {
   parentFamilies: ParentFamilyInfo[];
   partnerFamilies: PartnerFamilyInfo[];
   /**
+   * The citations that support anything on the page: the person as a whole,
+   * their names and events, and the families they are a partner in with those
+   * families' events. Each comes once, with the facts of the page it supports.
+   */
+  citations: PersonCitationInfo[];
+  /**
    * For a person who came from a GEDCOM file: the lines of their record that
-   * the app has no fields for (sources, notes, other programs' own tags). They
+   * the app has no fields for (notes, media, other programs' own tags). They
    * are kept as written and go back into an export. Empty for anyone else.
    */
   keptLines: string[];
 }
+
+/** What a citation supports: a person or a family as a whole, one event, or one name. */
+export type CitationTargetType = 'person' | 'family' | 'event' | 'name';
+
+export interface CitationTarget {
+  type: CitationTargetType;
+  id: string;
+}
+
+/** Where information comes from: a census, a register, a book, a web page. */
+export interface SourceInfo {
+  id: string;
+  title: string;
+  author: string;
+  /** Who published it, where and when. May have several lines. */
+  publication: string;
+  /** A short title, which some programs file the source under. */
+  abbreviation: string;
+  /** Words copied from the source itself. May have several lines. */
+  text: string;
+}
+
+/** What the source forms collect. A field that is left out is not changed. */
+export interface SourceInput {
+  title?: string;
+  author?: string;
+  publication?: string;
+  abbreviation?: string;
+  text?: string;
+}
+
+/** What a list shows for one source. */
+export interface SourceSummary {
+  id: string;
+  /** The title, or the short title when there is no other. Empty when it has neither. */
+  title: string;
+  author: string;
+  /** How many citations of this source the tree has. */
+  citations: number;
+}
+
+export interface SourceListRequest {
+  /** What was typed in the search box; empty lists every source by title. */
+  query: string;
+  offset: number;
+  limit: number;
+}
+
+export interface SourceListPage {
+  /** How many sources match in total, not just on this page. */
+  total: number;
+  sources: SourceSummary[];
+}
+
+/** What the citation forms collect. A field that is left out is not changed. */
+export interface CitationInput {
+  /** Where in the source: a page, a sheet, an entry number. */
+  page?: string;
+  /** What the source says there, copied out. */
+  text?: string;
+  /** 0 unreliable, 1 questionable, 2 secondary evidence, 3 direct and primary; null not stated. */
+  quality?: number | null;
+  /** The user's own remark. */
+  note?: string;
+}
+
+/** One place in a source, with what it says there. */
+export interface CitationInfo {
+  id: string;
+  sourceId: string;
+  /** The source's title, or its short title when it has no other. May be empty. */
+  sourceTitle: string;
+  page: string;
+  text: string;
+  quality: number | null;
+  note: string;
+}
+
+/** A citation on a person's page, with the facts of that page it supports. */
+export interface PersonCitationInfo extends CitationInfo {
+  uses: CitationTarget[];
+}
+
+/** One fact a citation supports, as a source's page names it. */
+export interface CitationUseInfo extends CitationTarget {
+  /** "person", "family", "name", or the type of the event, e.g. "birth". */
+  what: string;
+  /** Who it concerns: the person, or the partners of the family. */
+  persons: PersonSummary[];
+}
+
+/** A citation on a source's page, with every fact it supports. */
+export interface SourceCitationInfo extends CitationInfo {
+  uses: CitationUseInfo[];
+}
+
+/** Everything a source's page shows. */
+export interface SourceDetails {
+  source: SourceInfo;
+  /** How many citations the source has in all; `citations` holds one page of them. */
+  citationCount: number;
+  citations: SourceCitationInfo[];
+  /**
+   * For a source that came from a GEDCOM file: the lines of its record that
+   * the app has no fields for (its repository, notes, other programs' own
+   * tags). They are kept as written and go back into an export.
+   */
+  keptLines: string[];
+}
+
+/** The result of an edit that added a source. */
+export interface SourceChange {
+  tree: TreeState;
+  sourceId: string;
+}
+
+/** The source a new citation is of: one that exists, or one to make in the same step. */
+export type SourceRef = { sourceId: string } | { create: SourceInput };
 
 export interface PersonListRequest {
   /** What was typed in the search box; empty lists everyone by surname. */
@@ -236,7 +361,10 @@ export interface GedcomImportInfo {
   persons: number;
   families: number;
   events: number;
-  /** Records the app keeps as written because it has no screens for them yet: sources, notes, media. */
+  sources: number;
+  /** Citations of those sources. One that the file repeats under several facts is counted once. */
+  citations: number;
+  /** Records the app keeps as written because it has no screens for them yet: notes, media. */
   keptRecords: number;
   /** Lines under people and families that are kept as written for the same reason. */
   keptLines: number;
@@ -381,6 +509,12 @@ export interface RulzApi {
   getRelationship(personId: string, otherId: string): Promise<RelationshipInfo>;
   /** Looks through the whole tree for people who may have been entered twice. */
   findDuplicates(): Promise<DuplicateList>;
+  listSources(request: SourceListRequest): Promise<SourceListPage>;
+  /** A source with one page of its citations. Null when the source is gone. */
+  getSource(
+    sourceId: string,
+    citations: { offset: number; limit: number },
+  ): Promise<SourceDetails | null>;
 
   // Changing the open tree. Each call is one undo step.
   addPerson(draft: PersonDraft): Promise<PersonChange>;
@@ -416,6 +550,24 @@ export interface RulzApi {
   mergePersons(keepId: string, mergeId: string): Promise<MergeInfo>;
   /** Records that two people are not the same person, so they are not offered as duplicates again. */
   markNotDuplicate(personId: string, otherId: string): Promise<TreeState>;
+  createSource(source: SourceInput): Promise<SourceChange>;
+  updateSource(sourceId: string, source: SourceInput): Promise<TreeState>;
+  /** Deletes a source together with every citation of it. */
+  deleteSource(sourceId: string): Promise<TreeState>;
+  /** Cites a source for a fact. With `create`, the source is made in the same undo step. */
+  addCitation(
+    target: CitationTarget,
+    source: SourceRef,
+    citation: CitationInput,
+  ): Promise<TreeState>;
+  /** Changes a citation, for every fact it supports. */
+  updateCitation(citationId: string, citation: CitationInput): Promise<TreeState>;
+  /** Uses a citation that exists for one more fact. */
+  linkCitation(citationId: string, target: CitationTarget): Promise<TreeState>;
+  /** Takes a citation away from one fact. It is deleted when that was the last fact it supported. */
+  unlinkCitation(citationId: string, target: CitationTarget): Promise<TreeState>;
+  /** Deletes a citation, for every fact it supports. */
+  deleteCitation(citationId: string): Promise<TreeState>;
   undo(): Promise<TreeState>;
   redo(): Promise<TreeState>;
 
@@ -452,6 +604,8 @@ export const API_METHODS = [
   'getChart',
   'getRelationship',
   'findDuplicates',
+  'listSources',
+  'getSource',
   'addPerson',
   'updatePerson',
   'deletePerson',
@@ -471,6 +625,14 @@ export const API_METHODS = [
   'setPedigree',
   'mergePersons',
   'markNotDuplicate',
+  'createSource',
+  'updateSource',
+  'deleteSource',
+  'addCitation',
+  'updateCitation',
+  'linkCitation',
+  'unlinkCitation',
+  'deleteCitation',
   'undo',
   'redo',
   'listBackups',

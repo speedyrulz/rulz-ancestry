@@ -1,4 +1,12 @@
-import { NAME_TYPES, PEDIGREES, SEXES, kinshipTerm, relationshipTerm } from '@rulz/core';
+import {
+  CITATION_LIMITS,
+  NAME_TYPES,
+  PEDIGREES,
+  SEXES,
+  SOURCE_LIMITS,
+  kinshipTerm,
+  relationshipTerm,
+} from '@rulz/core';
 import {
   BackupError,
   GedcomFileError,
@@ -9,6 +17,7 @@ import {
   TreeLocationError,
   TreeRuleError,
   addChildOf,
+  addCitation,
   addFamilyEvent,
   addName,
   addParent,
@@ -17,16 +26,26 @@ import {
   addPersonFromDraft,
   countPersons,
   countSearchPersons,
+  countSourceCitations,
+  countSources,
+  createSource,
+  deleteCitation,
   deleteEvent,
   deleteName,
   deletePerson,
+  deleteSource,
   findDuplicates,
   findRelationship,
   getChartData,
   getPersonPage,
   getPersonSummary,
+  getSource,
   keptLinesOf,
+  keptLinesOfSource,
+  linkCitation,
   listPersons,
+  listSourceCitations,
+  listSources,
   markNotDuplicate,
   mergePersons,
   presumedLivingIds,
@@ -34,10 +53,13 @@ import {
   setChildPedigree,
   setPrimaryName,
   unlinkChild,
+  unlinkCitation,
   unlinkPartner,
+  updateCitation,
   updateEvent,
   updateName,
   updatePerson,
+  updateSource,
   type Tree,
 } from '@rulz/db';
 import { z } from 'zod';
@@ -152,6 +174,34 @@ const eventInput = z.strictObject({
   description: text(5000).exactOptional(),
 });
 
+const sourceInput = z.strictObject({
+  title: text(SOURCE_LIMITS.title).exactOptional(),
+  author: text(SOURCE_LIMITS.author).exactOptional(),
+  publication: text(SOURCE_LIMITS.publication).exactOptional(),
+  abbreviation: text(SOURCE_LIMITS.abbreviation).exactOptional(),
+  text: text(SOURCE_LIMITS.text).exactOptional(),
+});
+
+const citationInput = z.strictObject({
+  page: text(CITATION_LIMITS.page).exactOptional(),
+  text: text(CITATION_LIMITS.text).exactOptional(),
+  quality: z
+    .union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)])
+    .nullable()
+    .exactOptional(),
+  note: text(CITATION_LIMITS.note).exactOptional(),
+});
+
+const citationTarget = z.strictObject({
+  type: z.enum(['person', 'family', 'event', 'name']),
+  id,
+});
+
+const sourceRef = z.union([
+  z.strictObject({ sourceId: id }),
+  z.strictObject({ create: sourceInput }),
+]);
+
 /** What the file dialogs for import and export offer. */
 const GEDCOM_FILTERS = [
   { name: 'GEDCOM files', extensions: ['ged'] },
@@ -241,6 +291,8 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
             persons: report.persons,
             families: report.families,
             events: report.events,
+            sources: report.sources,
+            citations: report.citations,
             keptRecords: Object.values(report.keptRecords).reduce((sum, count) => sum + count, 0),
             keptLines: report.keptLines,
             issues: report.issues,
@@ -347,6 +399,70 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       };
     }),
 
+    listSources: define<'listSources'>(
+      z.tuple([
+        z.strictObject({
+          query: text(200),
+          offset: z.number().int().min(0),
+          limit: z.number().int().min(1).max(500),
+        }),
+      ]),
+      ({ query, offset, limit }) => ({
+        total: countSources(session.tree, query),
+        sources: listSources(session.tree, { query, offset, limit }).map((source) => ({
+          id: source.id,
+          title: source.title !== '' ? source.title : source.abbreviation,
+          author: source.author,
+          citations: source.citations,
+        })),
+      }),
+    ),
+
+    getSource: define<'getSource'>(
+      z.tuple([
+        id,
+        z.strictObject({
+          offset: z.number().int().min(0),
+          limit: z.number().int().min(1).max(200),
+        }),
+      ]),
+      (sourceId, page) => {
+        const tree = session.tree;
+        const source = getSource(tree, sourceId);
+        if (source === null) return null;
+        const sourceTitle = source.title !== '' ? source.title : source.abbreviation;
+        return {
+          source: {
+            id: source.id,
+            title: source.title,
+            author: source.author,
+            publication: source.publication,
+            abbreviation: source.abbreviation,
+            text: source.text,
+          },
+          citationCount: countSourceCitations(tree, sourceId),
+          citations: listSourceCitations(tree, sourceId, page).map((citation) => ({
+            id: citation.id,
+            sourceId: citation.sourceId,
+            sourceTitle,
+            page: citation.page,
+            text: citation.text,
+            quality: citation.quality,
+            note: citation.note,
+            uses: citation.uses.map((use) => ({
+              type: use.type,
+              id: use.id,
+              what: use.what,
+              persons: use.personIds
+                .map((personId) => getPersonSummary(tree, personId))
+                .filter((person) => person !== null),
+            })),
+          })),
+          keptLines: keptLinesOfSource(tree, sourceId),
+        };
+      },
+    ),
+
     addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
       link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
     ),
@@ -427,6 +543,40 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
 
     markNotDuplicate: define<'markNotDuplicate'>(z.tuple([id, id]), (personId, otherId) =>
       edit((tree) => markNotDuplicate(tree, personId, otherId)),
+    ),
+
+    createSource: define<'createSource'>(z.tuple([sourceInput]), (input) => {
+      const source = session.change((tree) => createSource(tree, input));
+      return { tree: session.state(), sourceId: source.id };
+    }),
+
+    updateSource: define<'updateSource'>(z.tuple([id, sourceInput]), (sourceId, input) =>
+      edit((tree) => updateSource(tree, sourceId, input)),
+    ),
+
+    deleteSource: define<'deleteSource'>(z.tuple([id]), (sourceId) =>
+      edit((tree) => deleteSource(tree, sourceId)),
+    ),
+
+    addCitation: define<'addCitation'>(
+      z.tuple([citationTarget, sourceRef, citationInput]),
+      (target, source, input) => edit((tree) => addCitation(tree, target, source, input)),
+    ),
+
+    updateCitation: define<'updateCitation'>(z.tuple([id, citationInput]), (citationId, input) =>
+      edit((tree) => updateCitation(tree, citationId, input)),
+    ),
+
+    linkCitation: define<'linkCitation'>(z.tuple([id, citationTarget]), (citationId, target) =>
+      edit((tree) => linkCitation(tree, citationId, target)),
+    ),
+
+    unlinkCitation: define<'unlinkCitation'>(z.tuple([id, citationTarget]), (citationId, target) =>
+      edit((tree) => unlinkCitation(tree, citationId, target)),
+    ),
+
+    deleteCitation: define<'deleteCitation'>(z.tuple([id]), (citationId) =>
+      edit((tree) => deleteCitation(tree, citationId)),
     ),
 
     undo: define<'undo'>(none, () => session.undo()),

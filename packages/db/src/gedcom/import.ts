@@ -15,6 +15,7 @@ import {
   readName,
   readPedigree,
   readSex,
+  readSource,
   writeLines,
   type EventFields,
   type GedcomDocument,
@@ -23,19 +24,23 @@ import {
   type GedcomVersion,
   type NameFields,
   type Sex,
+  type SourceFields,
 } from '@rulz/core';
 import { sql } from '../connection';
 import { dateColumns } from '../events';
 import type { Tree } from '../tree';
+import { CitationLoader } from './citations';
 import { GEDCOM_META, type PartKind, type RecordKind, type StoredPart } from './store';
 
 /**
  * Loads a GEDCOM file into an empty tree.
  *
  * People, their names and events, families and the links between them go into
- * the tree's own tables. Everything else in the file (sources, notes, media,
- * other programs' own tags) is kept as written beside them, so that an export
- * gives the file back with nothing lost.
+ * the tree's own tables, and so do sources and the lines that cite them.
+ * Everything else in the file (notes, media, other programs' own tags) is
+ * kept as written beside them, so that an export gives the file back with
+ * nothing lost. The lines of what did go into the tables are kept too: the
+ * export writes an unchanged name, event, source or citation from them.
  *
  * The file is read completely and checked before anything is written, and the
  * writing is one database transaction: the tree ends up holding the whole file
@@ -75,6 +80,9 @@ export interface GedcomImportReport {
   names: number;
   families: number;
   events: number;
+  sources: number;
+  /** Citations of those sources. One that the file repeats under several facts is counted once. */
+  citations: number;
   /** Records the app keeps as written because it has no tables for them yet, counted by tag. */
   keptRecords: Record<string, number>;
   /** Lines under people and families (each with what is below it) that are kept as written. */
@@ -137,6 +145,22 @@ interface PartDraft {
   ref?: string;
   name?: NameFields;
   event?: EventFields;
+  /** For a name or event: the citation each SOUR line under it became. */
+  cites?: (string | null)[];
+}
+
+interface SourceDraft {
+  id: string;
+  fields: SourceFields;
+}
+
+export interface GedcomImportOptions {
+  /**
+   * False keeps source records and the lines citing them as written, which is
+   * what the app did before sources had tables (schema version 4). Only the
+   * tests of that migration ask for it.
+   */
+  sources?: boolean;
 }
 
 interface PersonDraft {
@@ -278,8 +302,13 @@ function breakLoops(
 }
 
 /** Loads a parsed GEDCOM file into `tree`, which must be empty. */
-export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport {
+export function importGedcom(
+  tree: Tree,
+  input: GedcomInput,
+  options: GedcomImportOptions = {},
+): GedcomImportReport {
   const started = Date.now();
+  const modelSources = options.sources !== false;
   const doc = input.document;
   const version = doc.version;
   const issues = new IssueList([], 0);
@@ -293,6 +322,9 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
   const families = new Map<string, FamilyDraft>();
   const personByNode = new Map<GedcomNode, PersonDraft>();
   const familyByNode = new Map<GedcomNode, FamilyDraft>();
+  const sourceByNode = new Map<GedcomNode, SourceDraft>();
+  /** The id of each source, by its cross-reference id in the file. */
+  const sourceIds = new Map<string, string>();
   const usedXrefs = new Set<string>();
   /** Records whose cross-reference id an earlier record already has. */
   const repeated = new Set<GedcomNode>();
@@ -346,6 +378,11 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
       };
       families.set(record.xref, draft);
       familyByNode.set(record, draft);
+    } else if (record.tag === 'SOUR' && record.xref !== null && modelSources) {
+      // A source record without an id cannot be cited; it is kept as written.
+      const draft: SourceDraft = { id: newId(), fields: readSource(record) };
+      sourceByNode.set(record, draft);
+      sourceIds.set(record.xref, draft.id);
     }
   }
 
@@ -503,6 +540,8 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
     names: 0,
     families: families.size,
     events: 0,
+    sources: sourceByNode.size,
+    citations: 0,
     keptRecords: {},
     keptLines: 0,
     issues: [],
@@ -568,6 +607,40 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
       return id;
     };
 
+    // Sources first: the lines that cite them need their ids.
+    for (const source of sourceByNode.values()) {
+      const fields = source.fields;
+      sql(
+        db,
+        `INSERT INTO source (id, title, author, publication, abbreviation, text, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        source.id,
+        fields.title,
+        fields.author,
+        fields.publication,
+        fields.abbreviation,
+        fields.text,
+        now,
+        now,
+      );
+    }
+    const citations = new CitationLoader(db, sourceIds, now);
+    /** Makes citations of the SOUR lines under a name or event that has just been stored. */
+    const cite = (part: PartDraft, owner: { name: string } | { event: string }): void => {
+      if (sourceIds.size === 0) return;
+      const cites = citations.citeChildren(part.node, owner);
+      if (cites !== undefined) part.cites = cites;
+    };
+    /** Makes a citation of a SOUR line that stands directly under a person or family. */
+    const citeWhole = (part: PartDraft, owner: { person: string } | { family: string }): void => {
+      if (sourceIds.size === 0 || part.kind !== undefined || part.node.tag !== 'SOUR') return;
+      const id = citations.cite(part.node, owner);
+      if (id === null) return;
+      part.kind = 'citation';
+      part.ref = id;
+    };
+
     for (const person of persons.values()) {
       insertPerson.run(
         person.id,
@@ -595,9 +668,13 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
             names,
           );
           names += 1;
+          cite(part, { name: part.ref });
         } else if (part.kind === 'event' && part.event) {
           part.ref = addEvent(part.event, person.id, null, events);
           events += 1;
+          cite(part, { event: part.ref });
+        } else {
+          citeWhole(part, { person: person.id });
         }
       }
       report.names += names;
@@ -615,9 +692,13 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
         if (part.kind === 'event' && part.event) {
           part.ref = addEvent(part.event, null, family.id, events);
           events += 1;
+          cite(part, { event: part.ref });
+        } else {
+          citeWhole(part, { family: family.id });
         }
       }
     }
+    report.citations = citations.citations;
 
     const storeParts = (parts: readonly PartDraft[]): string => {
       const stored = parts.map((part): StoredPart => {
@@ -626,9 +707,12 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
           report.keptLines += 1;
           return { t: text };
         }
-        return part.ref === undefined
-          ? { k: part.kind, t: text }
-          : { k: part.kind, r: part.ref, t: text };
+        const made: StoredPart =
+          part.ref === undefined
+            ? { k: part.kind, t: text }
+            : { k: part.kind, r: part.ref, t: text };
+        if (part.cites !== undefined) made.c = part.cites;
+        return made;
       });
       return JSON.stringify(stored);
     };
@@ -639,6 +723,7 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
       if (record.tag === 'TRLR') continue;
       const person = personByNode.get(record);
       const family = familyByNode.get(record);
+      const source = sourceByNode.get(record);
       const xref = repeated.has(record) ? null : record.xref;
       let id: string;
       let kind: RecordKind;
@@ -654,6 +739,10 @@ export function importGedcom(tree: Tree, input: GedcomInput): GedcomImportReport
         kind = 'family';
         text = (record.raw ?? [`0 @${family.xref}@ FAM`]).join('\n');
         parts = storeParts(family.parts);
+      } else if (source) {
+        id = source.id;
+        kind = 'source';
+        text = textOf(record, 0, version);
       } else {
         id = newId();
         kind = record.tag === 'HEAD' && !headStored ? 'head' : 'kept';

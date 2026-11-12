@@ -3,14 +3,16 @@
 A Windows desktop app for building a family tree and researching it with free
 data sources. Everything is stored on your own PC.
 
-Status: **Phase 1 is built; one check is open.** You can create a family tree,
-add and edit people with their names, events, parents, partners and children,
-search the tree by name, and undo or redo every change. The app backs the tree
-up when it closes. You can bring in a tree from Ancestry or another program as
-a GEDCOM file, and write a tree out as one. You can draw four kinds of chart,
-ask how two people are related, and find and merge people who were entered
-twice. The open check is to try the import on a real export from Ancestry.
-Sources, media and places (Phase 2) are next; there is no record search yet. See
+Status: **Phase 1 is built with one check open, and Phase 2 has started.** You
+can create a family tree, add and edit people with their names, events,
+parents, partners and children, search the tree by name, and undo or redo every
+change. The app backs the tree up when it closes. You can bring in a tree from
+Ancestry or another program as a GEDCOM file, and write a tree out as one. You
+can draw four kinds of chart, ask how two people are related, and find and
+merge people who were entered twice. You can record the sources a tree rests
+on and say which names and events each one supports. The open check is to try
+the import on a real export from Ancestry. Pictures and documents (part 2b) are
+next; there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -23,8 +25,8 @@ GEDCOM is the file format family tree programs use to pass a tree to one
 another. The app reads versions 5.5.1 and 7.0 and writes both.
 
 - **Import** always makes a new tree; the file itself is not changed. Details
-  the app has no screens for yet (sources, notes, pictures, other programs'
-  own tags) are kept exactly as written and go back into an export.
+  the app has no screens for yet (notes, pictures, other programs' own tags)
+  are kept exactly as written and go back into an export.
 - **Export** in the version the file came in gives the same file again, line
   for line, apart from its header. After edits, only the edited lines differ.
 - **Living people are left out of an export** unless you choose to include
@@ -46,6 +48,21 @@ Charts, relationships and duplicates:
   and say so. A merge keeps everything both records had and is one undo step.
 - The duplicate scores were set by hand and have not been checked against a
   real tree, so treat the list as suggestions.
+
+Sources:
+
+- **A source** is where information comes from: a census, a register, a
+  certificate, a book. "Sources" on the tree screen lists them all.
+- **A citation** is one place in a source, with what it says there. "Sources"
+  beside a name or an event on a person's page lists the citations that fact
+  rests on, and adds, edits and removes them.
+- **One citation can support several facts.** One census entry gives a name, a
+  year of birth and a residence; it is entered once and edited once.
+- **Sources in a GEDCOM file** are read into these screens and written back.
+  A tree imported by an earlier build is upgraded when it is opened, after a
+  copy of it is put in its backups folder.
+- Where a source is kept (an archive, a website) and the web address of a
+  record have no fields of their own yet.
 
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
@@ -85,7 +102,7 @@ Run these from the repository root.
 ```
 apps/desktop          Electron app: main process, preload script, React UI, e2e tests
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring)
-packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM import and export, chart data, relationships, duplicates and merging
+packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM import and export, chart data, relationships, duplicates and merging, sources and citations
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
 docs/                 Plan and access checklist
 ```
@@ -119,9 +136,16 @@ docs/                 Plan and access checklist
   (`packages/core/src/chart.ts`) and what a relationship is called
   (`packages/core/src/kinship.ts`) are worked out from plain values, with no
   database and no screen, so they are tested as arithmetic.
+- **A citation exists only while it supports something.** When the last fact
+  it supports goes, the database removes the citation in the same undo step.
+  A GEDCOM file has no place for a citation that supports nothing, so it would
+  otherwise be lost in an export without notice.
 - **Schema changes are migrations.** A change to the tree database is a new
   numbered file in `packages/db/src/schema`; a migration that has shipped is
-  never edited.
+  never edited. A tree is copied to its backups folder before a migration
+  changes it. When a migration gives a table to something an import used to
+  keep as written, the import and the migration make their rows with the same
+  code, and a test compares an upgraded tree with a fresh import.
 - **Development data stays separate.** `pnpm dev` stores its database in
   `%APPDATA%\RulZ Ancestry (dev)` and makes new trees in
   `Documents\RulZ Ancestry (dev)`, not in the installed app's folders. The

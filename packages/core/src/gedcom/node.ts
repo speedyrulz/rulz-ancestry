@@ -46,6 +46,16 @@ export function touch(node: GedcomNode): void {
   node.raw = null;
 }
 
+/**
+ * Marks a node and everything under it as changed. Needed when a structure is
+ * written at another level than the one it was read from, because its original
+ * lines carry their level numbers.
+ */
+export function touchAll(node: GedcomNode): void {
+  touch(node);
+  node.children.forEach(touchAll);
+}
+
 export function findChild(node: GedcomNode, tag: string): GedcomNode | undefined {
   return node.children.find((child) => child.tag === tag);
 }

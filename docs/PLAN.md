@@ -88,6 +88,18 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - **A result list must not offer stale answers.** The first version of the person picker showed the results of the previous spelling for a moment after each keystroke, and a click could land on the wrong person. It now shows results only for the text that is in the box.
 - Measured on the 10,000-person sample tree: reading a chart of seven generations each way takes about 1 ms for an ordinary family, and about 70 ms with layout for the largest one shown (1,000 descendants and their partners); a relationship takes under 1 ms; a merge takes 6 ms. The duplicate scan takes 2.2 seconds there and stops at its limit of four million comparisons, because the sample repeats a small set of names. No tree with realistic names was measured.
 
+### Findings from Phase 2a that later phases rely on
+
+- **A table for something the import used to keep as written needs three things together:** a migration that makes the rows for trees imported earlier, an import that makes the same rows for a new file, and a test that the two agree. `CitationLoader` in `packages/db/src/gedcom/citations.ts` is the one piece of code both use; `packages/db/src/gedcom/sources.test.ts` imports a file the old way into a version 3 tree, upgrades it, and compares it with a fresh import. Notes, media and places will each need the same.
+- **The stored lines of an imported file are not rewritten when part of them gets a table.** A part of a person's record is only marked: `k: 'citation'` with the citation's id for a SOUR line under the person, and a list `c` of citation ids for the SOUR lines under a name or event. The export finds a citation's original lines through those marks and patches them, as it does for names and events.
+- **A link from many kinds of record uses one nullable column per kind,** each a real foreign key with `ON DELETE CASCADE`, as `event_participant` does, and one query per column. `citation_link` has four. A single column holding "type and id" would have no foreign key, and every place that deletes a person, family, event or name would have to clean up after itself.
+- **A rule such as "a citation goes with its last link" is a trigger that acts only while a change is recorded** (`change_state.mode = 'record'`). The change log then holds both deletions, and undo and redo write the rows back themselves. A trigger that also acted during undo would fight the replay.
+- **Lines that say the same are one citation.** Ancestry writes a citation out again under every fact it supports. The import makes one citation of SOUR lines that cite the same source in exactly the same words, with one link per fact. The sample file has 20,000 such lines and 10,000 citations.
+- **A citation used for a new fact is written with the lines of its first imported copy,** so what the app has no fields for (Ancestry's `_APID`, a media link) goes along. A copy written at another level than it was read from must have all its lines marked as changed (`touchAll`), because original lines carry their level numbers.
+- **A tree is backed up before a migration changes it.** `openTree` calls `backupTree` when the file is at an older schema version. Nothing is written when the newest backup already holds the same data, which is the usual case, since the app backs a tree up when it closes it.
+- **A dialog can open another dialog over itself.** The fact's list of sources opens the form for one citation as a second `<dialog>` inside the first. Both are modal, Escape closes the top one, and no state has to be passed between them.
+- Measured on the 10,000-person sample tree, with other work running on the machine: a person's page with its citations reads in 0.3 ms, the list of sources in 0.5 ms, a page of 50 citations of one source with the facts they support in 2 ms. Upgrading the tree from schema version 3 takes about 1.1 seconds. Sources make the import slower: writing the sample to the database takes about 3.2 seconds with its 10,000 citations and 20,000 links and about 2.4 without, measured four times each. In the app the whole import, from picking the file to the tree being on screen, took 3.2 to 3.6 seconds in three runs. The export takes about 0.15 seconds longer, at about 0.95.
+
 ## 3. Architecture
 
 ```
@@ -122,6 +134,16 @@ packages/db/src/charts.ts         Reading a person's ancestors and descendants.
 packages/db/src/relationship.ts   Finding how two people are related.
 packages/db/src/duplicates.ts     Scanning a tree for likely duplicates.
 packages/db/src/merge.ts          Merging two records of one person.
+```
+
+Sources follow the same split:
+
+```
+packages/core/src/gedcom/sources.ts   Reading and writing a source record and a citation, changing
+                                      as few of the original lines as possible.
+packages/db/src/sources.ts            Sources and citations: adding, editing, citing a fact, lists.
+packages/db/src/gedcom/citations.ts   Making citations of the SOUR lines of a file, for the import
+                                      and for the upgrade of trees imported earlier.
 ```
 
 GEDCOM is split between two packages:
@@ -238,13 +260,27 @@ Both are in the change log, so marking a pair and merging two people can be
 undone. `merged_record` is how the export and the person page find the kept
 lines of a record that was merged into another.
 
+Built, in schema version 4 (`packages/db/src/schema/004-sources.ts`):
+
+```sql
+source(id, title, author, publication, abbreviation, text, created_at, updated_at)
+citation(id, source_id, page, text, quality, note, created_at, updated_at)
+  -- quality: 0 unreliable, 1 questionable, 2 secondary, 3 direct and primary; NULL not stated
+citation_link(id, citation_id, person_id, family_id, event_id, name_id, sort_order)
+  -- exactly one of the four is set: what the citation supports
+gedcom_record.kind gains 'source': the record a source was imported from, under the source's id
+```
+
+All three are in the change log. A source's repository, its web address and the
+date it was consulted are not columns yet: the first is kept as written from an
+imported file, and the other two wait for the clip form of Phase 3.
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
 place(id, name, parent_id, geonames_id, lat, lon)            -- Phase 2; event gains place_id
-source(id, title, author, repository_id, connector_id, url)
-citation(id, source_id, page, url, accessed_at, transcription, confidence, external_record_id)
-citation_link(citation_id, entity_type, entity_id)
+source gains: repository_id, connector_id, url
+citation gains: url, accessed_at, external_record_id
 media(id, sha256, rel_path, mime, title)
 media_link(media_id, entity_type, entity_id, region_json)
 external_id(person_id, connector_id, external_key)
@@ -261,9 +297,10 @@ logs.
 Also planned: places, notes and transcriptions in the search index. Phonetic
 codes were planned as columns on `person_name`; part 1d works them out in memory
 during a scan instead, which needed no schema change. They become columns only
-if the hints of Phase 4 need to look names up by sound in the database. When sources, notes and
-media get their tables (Phase 2), a migration moves them out of the `kept` rows
-and the kept lines of `gedcom_record`.
+if the hints of Phase 4 need to look names up by sound in the database. Sources
+and citations got their tables in part 2a, and a migration made their rows for
+trees imported earlier. Notes and media are still kept as written; when they
+get their tables, a migration does the same for them.
 
 The application database (`app.db` in the profile folder, schema in
 `packages/db/src/appdb.ts`) is separate from any tree. Built, in its schema
@@ -279,7 +316,11 @@ Rules:
 - **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. The cross-reference ids of an imported GEDCOM file (`@I1@`) are kept in `gedcom_record.xref` and used again on export; a person added later gets the first free `I` number, a family the first free `F` number.
 - **Dates** keep the text as typed, plus a normalized day-number range, a qualifier (about, before, between) and a calendar. `parseDate()` in `packages/core` reads GEDCOM 5.5.1 and 7.0 dates and common English forms. Text it cannot read is kept as a phrase with no range.
 - **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten.
-- **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event or a family link together with the id of what it became, and every other line (sources, notes, media, other programs' own tags) exactly as it was. The export puts each line back in its place. A name or event that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
+- **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event, a family link, a source or a citation together with the id of what it became, and every other line (notes, media, repositories, other programs' own tags) exactly as it was. The export puts each line back in its place. A name, event, source or citation that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
+- **A citation is one place in a source, and can support several facts.** It is linked to a person or a family as a whole, to an event, or to a name. Editing it changes it for every fact it supports. In a GEDCOM file it is written out under each of them.
+- **A citation exists only while it supports something.** When its last link goes, the citation goes too, whether the user removed the link or deleted the event, name, person or family. GEDCOM has no place to write a citation that supports nothing, so such a citation would be lost in an export without anyone being told. The source stays, and Undo brings the citation back.
+- **Deleting a source deletes its citations.** The app says how many before it does.
+- **Not every SOUR line becomes a citation.** A source described in place with no record of its own (GEDCOM 5.5.1 allows this), a line that points at no record of the file, the second of two equal citations of one fact, and a citation under something other than a person, family, name or event stay as lines kept as written.
 - **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it. The duplicate detection that needs exists since part 1d; bringing a file into an existing tree is still to be built.
 - **Nothing is merged automatically.** The app lists pairs of people who may be one person, with a score and its reasons. Two records become one only when the user compares them and says so, and a pair the user marks as different people is not offered again.
 - **A merge loses nothing but exact repeats.** The person kept receives the other record's names, events, parents, partners and children. A name or event is dropped only when the person kept already has it word for word and the imported file says nothing more about it. Two families with the same two partners become one. The whole merge is one undo step.
@@ -296,7 +337,7 @@ Rules:
 
 1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge. Built in parts 1b and 1d.
 2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c, apart from GEDZip (a 7.0 file zipped together with its media), which waits for the media store in Phase 2.
-3. **Sources and media:** citation management, IIIF deep-zoom viewer, face-region tags, optional local OCR with `tesseract.js`.
+3. **Sources and media:** citation management, IIIF deep-zoom viewer, face-region tags, optional local OCR with `tesseract.js`. Sources and citations were built in part 2a; media is part 2b.
 4. **Search:** one query form sent to Tier A connectors and installed packs, results grouped by source with attribution, plus a row of Tier C links.
 5. **Hints:** background jobs query sources for each person, direct ancestors first. Scoring is Fellegi-Sunter style over name similarity, phonetic codes, date gaps, place hierarchy overlap and relatives' names. Results go to a hints inbox with a side-by-side compare. Accepted facts get a citation, rejected hints never resurface, and nothing merges automatically.
 6. **Places and timeline:** local gazetteer autocomplete, map of a person's events, life timeline.
@@ -401,7 +442,7 @@ Durations are rough estimates for one developer working with AI assistance.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | 0. Foundations              | Repo, monorepo, CI, packaging; connector manifests; access checklist                                                                                                                                                      | An installer builds and the packaged app opens a window. **Done 2026-11-11**                                                                                                          | 1 week    |
 | 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff. Met in part 1c on a file written in Ancestry's style; a real export is still to be tried    | 3–4 weeks |
-| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom                                                                                                                       | 2–3 weeks |
+| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom. Part 2a (sources and citations) **done 2026-11-12**; see "Phase 2 breakdown"                                         | 2–3 weeks |
 | 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                        | 3–4 weeks |
 | 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                    | 2–3 weeks |
 | 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set | 2–3 weeks |
@@ -510,7 +551,7 @@ Not done, and why:
 - **A file cannot be merged into a tree that has people in it.** An import always makes a new tree. Merging needs duplicate detection, which is part 1d.
 - **An import cannot be undone,** and a tree cannot be deleted in the app. To discard an imported tree, close it and delete its folder.
 - **GEDZip files (`.gdz`) are refused,** with a message to unzip them first. Media files are not copied: a media record keeps its lines, and its link or file name with them. Both wait for the media store in Phase 2.
-- **Sources, notes and media have no screens.** They are kept and exported, and those lines that sit directly under a person are shown on that person's page as GEDCOM text. Lines kept under a name, an event or a family, and records of their own, are not shown anywhere yet.
+- **Sources, notes and media have no screens.** They are kept and exported, and those lines that sit directly under a person are shown on that person's page as GEDCOM text. Lines kept under a name, an event or a family, and records of their own, are not shown anywhere yet. Sources and citations got their screens in part 2a.
 - **The rewrite between versions is partial.** A media item described in place (5.5.1) is not turned into a media record, an unknown file format is left as it is, and 7.0 extension tags are not declared in the header. A strict reader of the other version may reject such lines. Exporting in the version the file came in avoids all of this.
 - **A description typed on an event such as a birth** is written on the event's own line in 5.5.1, as Ancestry does, although the standard allows only `Y` there. In 7.0 it is written as a note under the event, and importing that file again shows it with the kept lines, not as the description.
 - **Not everything about a name survives an edit.** A name written surname first is rewritten given name first when it is edited, and a separate surname prefix (`SPFX`) is folded into the surname when the surname is edited. A kind of name outside the app's list is shown as "other". Unedited names are untouched.
@@ -560,6 +601,58 @@ Not done, and why:
 - **The charts were checked by eye in light colours only,** and at one window size. Dragging was not tried on a touch screen.
 - **The unexplained crash of part 1c happened again, once.** In one of about twelve full runs of the unit tests in this part, the worker running the 10,000-person GEDCOM test stopped before reporting its three tests. Eight further full runs in a row passed. It is the same test file as before, which this part did not change. The cause is still unknown; the next step is to capture a crash dump. Until then a run of the unit tests, locally or in CI, can fail for this reason and pass when repeated.
 
+### Phase 2 breakdown
+
+| Part | Scope                                                                                                                                              | Status              |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier         | **Done 2026-11-12** |
+| 2b   | Media: a store inside the tree folder, attaching a file to a person, an event or a citation, a viewer with deep zoom, GEDCOM media records, GEDZip | Next                |
+| 2c   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                                 | Planned             |
+| 2d   | Map of a person's events, and the life timeline                                                                                                    | Planned             |
+
+The phase's test ("a scanned record can be attached, cited and viewed at full
+zoom") needs parts 2a and 2b. Two things decide how 2c is built and need the
+owner: whether the GeoNames gazetteer may be bundled or downloaded (its licence
+is still on the "to confirm" list in section 4), and where map tiles come from,
+since free tile servers limit how an app may use them.
+
+### Phase 2a outcome
+
+Delivered:
+
+- **Sources.** A "Sources" button on the tree screen lists every source with how often it is cited, and finds one by title or author. A source has a title, an author, where it was published or is kept, a short title and its own text. It can be added before anything cites it, edited in place and deleted.
+- **Citations.** "Sources" beside every name and event on a person's page, and for a family and a person as a whole, lists what that fact rests on. A citation says where in the source (a page, a sheet, an entry), what it says there, how far it can be trusted, and a note. It is added with a source already in the tree or with a new source made in the same step.
+- **One citation for several facts.** Where a source is already cited on the person's page, the form offers to use that citation again. The person's page lists each citation once with everything it supports ("Name, Birth, Residence"), and an edit changes it for all of them.
+- **A source's page** lists its citations with the facts they support and the people concerned; a click on a name opens that person. It also shows the lines of an imported source the app has no fields for.
+- **GEDCOM.** Source records and the lines that cite them are read into these tables and written back. An untouched import still exports line for line; an edited citation changes one line in each place it stands; a citation used for another fact is written there with the lines its first copy had; a new source gets the first free `S` number.
+- **Trees imported before this part are upgraded** when they are opened: their sources, which were lines kept as written, become sources and citations exactly as a fresh import of the same file would make them. A copy of the tree is put in its backups folder first.
+- **Merging and deleting.** A merge moves the citations of the record that goes to the person who is left. A name or event with a citation is never dropped as a repeat. Deleting a person, family, event or name removes its citations, and Undo brings them back.
+- **Tests.** Unit tests went from 488 to 552 and end-to-end tests from 25 to 28.
+
+Changed from earlier parts:
+
+- **The tree schema is at version 4.** As before, an earlier build cannot open a tree once this build has opened it. New in this part: the tree is copied to its backups folder before it is upgraded.
+- **An import report counts sources and citations**, and no longer counts source records among what is kept as written.
+- **The person page lists citations as sources**, not as GEDCOM text under "Other details from the imported file". Lines under a name or an event that cite a source are now visible; before, they were shown nowhere.
+- **The contract between the page and the main process has 51 functions,** ten more than before.
+
+Not done, and why:
+
+- **No repositories.** Where a source is held (an archive, a library, a website) is a record of its own in GEDCOM. That record is kept as written and exported, and shown nowhere; the source's page shows only the line that points at it, as GEDCOM text. A source added in the app has the "published or kept" field for it.
+- **No web address or date consulted on a citation.** Both arrive with the clip form of Phase 3, which turns a result's address into a citation. Until then an address goes in the note or in "where in the source".
+- **A citation cannot be moved to another source, and two sources cannot be merged.** A file that names one census under two source records keeps two sources.
+- **A citation is only used again from the same person's page.** The form offers the citations already on the page; a citation of another person (the same household entry for a brother) has to be typed again, and then is a second citation.
+- **Some source lines of a file are not citations:** a source described in place without a record, a line pointing at no record of the file, the second of two equal citations of one fact, and citations under notes, associations and other structures. They stay kept as written; those directly under a person show as GEDCOM text, the others are not shown.
+- **What a citation carries beyond the four fields is not shown:** Ancestry's record number, a link to a picture, a note that is a record of its own, a second quotation. It is kept and exported.
+- **Only the first title, author and so on of a source record is a field.** A second line of the same kind is kept as written. A title of several lines is read as one line, and written as one line once it is edited.
+- **Citations that say the same in the modelled fields but differ in a line the app does not show are two citations** that look alike on screen.
+- **The quality of a citation uses GEDCOM's four steps** (unreliable, questionable, secondary, direct and primary). It is one value per citation, not per fact, although a census can be good evidence for a residence and poor evidence for a year of birth.
+- **Sources are found by a plain text match** on title, author and short title. The list shows the first 200; a source's page shows up to 200 of its citations, 50 at a time.
+- **An upgrade cannot be undone from inside the app.** The backup made before it is in the tree's backups folder and opens in the earlier build; restoring it in this build upgrades it again.
+- **The upgrade was tested on trees made by the current import with sources left out,** not on a tree file written by the earlier build itself. The schema of such a tree is made by the same three migrations, so the two should not differ, but no file from the earlier build was kept to prove it.
+- **The new screens were checked by eye in light colours only,** at one window size.
+- **Still no real export from Ancestry or any other program has been tried.** Source records are where programs differ most, so this matters more than it did.
+
 ## 9. Risks
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
@@ -571,6 +664,8 @@ Not done, and why:
 - **Privacy.** Living people and DNA stay on the PC. Exports hide living people by default. No telemetry. The one exception is the optional AI assistant: while it is on, details of the people being researched and the records read for them are sent to Anthropic. Living people are masked unless the user opts in, and DNA is never sent.
 - **GEDCOM files in the wild do not follow the standard closely,** and each program bends it in its own way. The import was built from the two standards and from what is known of Ancestry's files, not from a collection of real exports. It keeps every line it does not understand and reports what it could not place, so a surprise in a real file should cost a misread field, not lost data. Real exports from each program need to be tried before a release.
 - **A wrong merge damages a tree,** and a list of suggested duplicates invites one. The app never merges on its own, shows both records before a merge, keeps everything both had, and makes the merge one undo step. The undo history is kept in the tree file, and backups hold earlier states.
+- **An upgrade rewrites a tree in place.** From part 2a a migration can change what a tree holds, not only add tables. The tree is copied to its backups folder first, each migration is one transaction that is applied whole or not at all, and the tests compare an upgraded tree with a fresh import. A mistake in a migration would still reach every tree the build opens, so each one needs that comparison.
+- **One citation for several facts is not how every program thinks.** A user who edits a citation under a birth may not expect the name's citation to change with it. The edit form says when a citation supports more than one fact; whether that is enough has not been tried with a user.
 - **A test that fails now and then hides real failures.** The 10,000-person GEDCOM unit test has stopped with a native crash twice in about 35 full runs, with no cause found. If it becomes more frequent, find the cause before adding more tests around it.
 - **Coverage.** Users with mostly US ancestors before 1940 will do much of their record searching through links to FamilySearch's own site.
 

@@ -68,7 +68,9 @@ describe('importGedcom', () => {
       names: 4,
       families: 1,
       events: 4,
-      keptRecords: { SOUR: 1 },
+      sources: 1,
+      citations: 1,
+      keptRecords: {},
       // The _UID line of the first person and the note of the family.
       keptLines: 2,
       issues: [],
@@ -185,7 +187,7 @@ describe('importGedcom', () => {
       'person INDI I2',
       'person INDI I3',
       'family FAM F1',
-      'kept SOUR S1',
+      'source SOUR S1',
     ]);
     // Put together again, the stored text is the file (without its trailer).
     const text = stored

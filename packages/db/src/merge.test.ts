@@ -15,6 +15,7 @@ import { exportLines, file, importText, recordOf } from './gedcom/testing';
 import { mergeObstacle, mergePersons, mergedInto } from './merge';
 import { addName, createPerson, deletePerson, getPerson, listNames, updatePerson } from './persons';
 import { searchPersons } from './search';
+import { listPersonCitations } from './sources';
 import { cleanUpAfterEach, memoryTree, snapshot } from './testing';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
 
@@ -389,8 +390,30 @@ describe('merging people who came from a GEDCOM file', () => {
     expect(keptLinesOf(tree, id('I1'))).toEqual([
       '1 NOTE First record of Ann',
       '1 NOTE Second record of Ann',
-      '1 SOUR @S1@',
     ]);
+  });
+
+  it('moves the citations of the merged record to the person who is left', () => {
+    const { tree, id } = imported();
+    expect(listPersonCitations(tree, id('I1'))).toEqual([]);
+    const before = listPersonCitations(tree, id('I2')).map((citation) => ({
+      page: citation.page,
+      uses: citation.uses.map((use) => use.type),
+    }));
+    // Two citations: the bare one supports the person and the death, the one with a page a name.
+    expect(before).toEqual([
+      { page: '', uses: ['person', 'event'] },
+      { page: '12', uses: ['name'] },
+    ]);
+
+    mergePersons(tree, id('I1'), id('I2'));
+    const after = listPersonCitations(tree, id('I1'));
+    expect(after.map((citation) => citation.page)).toEqual(['', '12']);
+    expect(after[0]?.uses).toContainEqual({ type: 'person', id: id('I1') });
+
+    tree.undo();
+    expect(listPersonCitations(tree, id('I1'))).toEqual([]);
+    expect(listPersonCitations(tree, id('I2'))).toHaveLength(2);
   });
 
   it('gives the file back as it was once the merge is undone', () => {

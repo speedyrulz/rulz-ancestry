@@ -218,6 +218,48 @@ export function TextField({
   );
 }
 
+interface TextAreaFieldProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  testId?: string;
+  rows?: number;
+  maxLength?: number;
+  placeholder?: string;
+  /** Text shown under the field. */
+  hint?: ReactNode;
+}
+
+/** A field for text of several lines. */
+export function TextAreaField({
+  label,
+  value,
+  onChange,
+  testId,
+  rows = 3,
+  maxLength = 5000,
+  placeholder,
+  hint,
+}: TextAreaFieldProps) {
+  const id = useId();
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <textarea
+        id={id}
+        value={value}
+        rows={rows}
+        maxLength={maxLength}
+        placeholder={placeholder}
+        spellCheck={false}
+        data-testid={testId}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {hint}
+    </div>
+  );
+}
+
 interface SelectFieldProps<T extends string> {
   label: string;
   value: T;

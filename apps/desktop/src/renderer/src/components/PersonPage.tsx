@@ -1,6 +1,7 @@
 import { PEDIGREES, SEXES, describeDate, type Pedigree, type Sex } from '@rulz/core';
 import { useEffect, useState } from 'react';
 import type {
+  CitationTarget,
   EventInfo,
   MergeInfo,
   PersonChange,
@@ -20,6 +21,7 @@ import {
   lifespan,
   type PersonFieldsValue,
 } from '../format';
+import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
 import { EventDialog, NameDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { RelationshipDialog } from './relationship';
@@ -49,7 +51,9 @@ type Open =
   | { kind: 'child'; familyId?: string; surname: string }
   | { kind: 'relationship' }
   | { kind: 'merge' }
-  | { kind: 'delete' };
+  | { kind: 'delete' }
+  | { kind: 'sources'; target: CitationTarget; title: string }
+  | { kind: 'citation'; citationId: string };
 
 interface PersonPageProps {
   personId: string;
@@ -89,13 +93,37 @@ function PersonLink({ person, onSelect, role }: PersonLinkProps) {
   );
 }
 
+interface SourcesButtonProps {
+  /** How many citations support the fact. */
+  count: number;
+  onClick: () => void;
+  testId: string;
+}
+
+/** Opens the list of sources a fact rests on; its label says how many there are. */
+function SourcesButton({ count, onClick, testId }: SourcesButtonProps) {
+  return (
+    <button
+      type="button"
+      title={count === 0 ? 'Record where this comes from' : 'See where this comes from'}
+      onClick={onClick}
+      data-testid={testId}
+    >
+      {count === 0 ? 'Sources' : `Sources (${count.toLocaleString()})`}
+    </button>
+  );
+}
+
 interface EventRowsProps {
   events: EventInfo[];
+  /** How many citations support an event. */
+  sourceCount: (eventId: string) => number;
+  onSources: (event: EventInfo) => void;
   onEdit: (event: EventInfo) => void;
   onDelete: (event: EventInfo) => void;
 }
 
-function EventRows({ events, onEdit, onDelete }: EventRowsProps) {
+function EventRows({ events, sourceCount, onSources, onEdit, onDelete }: EventRowsProps) {
   return (
     <>
       {events.map((event) => {
@@ -120,6 +148,11 @@ function EventRows({ events, onEdit, onDelete }: EventRowsProps) {
             <td>{event.placeText}</td>
             <td>{event.description}</td>
             <td className="row-actions">
+              <SourcesButton
+                count={sourceCount(event.id)}
+                onClick={() => onSources(event)}
+                testId="event-sources"
+              />
               <button type="button" onClick={() => onEdit(event)} data-testid="edit-event">
                 Edit
               </button>
@@ -226,6 +259,38 @@ export function PersonPageView({
   const relativeDefaults = (surname: string): Partial<PersonFieldsValue> =>
     surname === '' ? {} : { surname };
 
+  /** How many citations support one fact of this page. */
+  const sourceCount = (type: CitationTarget['type'], id: string): number =>
+    page.citations.filter((citation) =>
+      citation.uses.some((use) => use.type === type && use.id === id),
+    ).length;
+  const showSources = (target: CitationTarget, title: string) =>
+    setOpen({ kind: 'sources', target, title });
+  const eventSources = (event: EventInfo, of: string) =>
+    showSources(
+      { type: 'event', id: event.id },
+      `Sources for the ${labelOf(event.type).toLowerCase()} of ${of}`,
+    );
+  /** "John Hale and Mary Stone", or the person alone when the partner is not known. */
+  const couple = (partner: PersonSummary | null) =>
+    partner ? `${name} and ${fullName(partner)}` : name;
+  const familyEvents = page.partnerFamilies.flatMap((family) => family.events);
+  /** What a citation supports, in a word or two. */
+  const factLabel = (use: CitationTarget): string => {
+    if (use.type === 'person') return 'This person in general';
+    if (use.type === 'name') return 'Name';
+    if (use.type === 'family') {
+      const partner = page.partnerFamilies.find((family) => family.familyId === use.id)?.partner;
+      return partner ? `Family with ${fullName(partner)}` : 'Family';
+    }
+    const event = [...page.events, ...familyEvents].find((entry) => entry.id === use.id);
+    return event ? labelOf(event.type) : 'Event';
+  };
+  const editedCitation =
+    open?.kind === 'citation'
+      ? (page.citations.find((citation) => citation.id === open.citationId) ?? null)
+      : null;
+
   return (
     <div className="person-page" data-testid="person-page">
       <header className="person-head">
@@ -314,6 +379,16 @@ export function PersonPageView({
                     )}
                   </td>
                   <td className="row-actions">
+                    <SourcesButton
+                      count={sourceCount('name', entry.id)}
+                      onClick={() =>
+                        showSources(
+                          { type: 'name', id: entry.id },
+                          `Sources for the name ${fullName({ name: entry })}`,
+                        )
+                      }
+                      testId="name-sources"
+                    />
                     {!entry.isPrimary && (
                       <button
                         type="button"
@@ -360,6 +435,8 @@ export function PersonPageView({
             <tbody>
               <EventRows
                 events={page.events}
+                sourceCount={(eventId) => sourceCount('event', eventId)}
+                onSources={(event) => eventSources(event, name)}
                 onEdit={(event) => setOpen({ kind: 'event', event })}
                 onDelete={(event) => direct(api.deleteEvent(event.id))}
               />
@@ -491,6 +568,8 @@ export function PersonPageView({
                 <tbody>
                   <EventRows
                     events={family.events}
+                    sourceCount={(eventId) => sourceCount('event', eventId)}
+                    onSources={(event) => eventSources(event, couple(family.partner))}
                     onEdit={(event) =>
                       setOpen({ kind: 'family-event', familyId: family.familyId, event })
                     }
@@ -520,6 +599,16 @@ export function PersonPageView({
               >
                 Add a marriage or other event
               </button>
+              <SourcesButton
+                count={sourceCount('family', family.familyId)}
+                onClick={() =>
+                  showSources(
+                    { type: 'family', id: family.familyId },
+                    `Sources for the family of ${couple(family.partner)}`,
+                  )
+                }
+                testId="family-sources"
+              />
               {family.partner ? (
                 <button
                   type="button"
@@ -564,6 +653,62 @@ export function PersonPageView({
         </div>
       </section>
 
+      <section data-testid="sources-section">
+        <h3>Sources</h3>
+        {page.citations.length === 0 ? (
+          <p className="muted">
+            No sources recorded. Use “Sources” beside a name or an event to say where it comes from.
+          </p>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th scope="col">Source</th>
+                <th scope="col">Where in it, and what it says</th>
+                <th scope="col">Supports</th>
+                <th scope="col">
+                  <span className="visually-hidden">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {page.citations.map((citation) => (
+                <tr key={citation.id} data-testid="person-citation">
+                  <th scope="row">{sourceTitle(citation.sourceTitle)}</th>
+                  <td>
+                    <div className="citation">
+                      <CitationText citation={citation} />
+                    </div>
+                  </td>
+                  <td data-testid="person-citation-uses">
+                    {citation.uses.map(factLabel).join(', ')}
+                  </td>
+                  <td className="row-actions">
+                    <button
+                      type="button"
+                      onClick={() => setOpen({ kind: 'citation', citationId: citation.id })}
+                      data-testid="edit-person-citation"
+                    >
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div className="actions">
+          <SourcesButton
+            count={sourceCount('person', person.id)}
+            onClick={() =>
+              showSources({ type: 'person', id: person.id }, `Sources for ${name} in general`)
+            }
+            testId="person-sources"
+          />
+          <span className="muted">for {name} in general, not one name or event</span>
+        </div>
+      </section>
+
       {page.keptLines.length > 0 && (
         <section data-testid="kept-section">
           <h3>Other details from the imported file</h3>
@@ -572,9 +717,9 @@ export function PersonPageView({
               {countOf(page.keptLines.length, 'item', 'items')} that the app has no fields for yet
             </summary>
             <p className="hint">
-              These are sources, notes, pictures and other details from the file this person was
-              imported from. The app keeps them exactly as they were written and puts them back when
-              the tree is exported. They cannot be edited here yet.
+              These are notes, pictures and other details from the file this person was imported
+              from. The app keeps them exactly as they were written and puts them back when the tree
+              is exported. They cannot be edited here yet.
             </p>
             {page.keptLines.map((lines, index) => (
               <pre key={index} className="kept-lines" data-testid="kept-lines">
@@ -665,6 +810,24 @@ export function PersonPageView({
           personId={person.id}
           revision={tree.revision}
           onMerged={onMerged}
+          onClose={() => setOpen(null)}
+        />
+      )}
+      {open?.kind === 'sources' && (
+        <FactSourcesDialog
+          title={open.title}
+          target={open.target}
+          citations={page.citations}
+          tree={tree}
+          onTree={onTree}
+          onClose={() => setOpen(null)}
+        />
+      )}
+      {editedCitation !== null && (
+        <CitationEditDialog
+          citation={editedCitation}
+          shared={editedCitation.uses.length > 1}
+          onTree={onTree}
           onClose={() => setOpen(null)}
         />
       )}

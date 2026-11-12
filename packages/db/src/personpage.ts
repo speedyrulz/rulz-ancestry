@@ -7,6 +7,7 @@ import {
 } from './families';
 import { getPerson, listNames, type Person, type PersonName } from './persons';
 import { getPersonSummary, type PersonSummary } from './search';
+import { listPersonCitations, type PersonCitation } from './sources';
 import type { Tree } from './tree';
 
 /** A family in which the person is a child. */
@@ -39,6 +40,8 @@ export interface PersonPage {
   events: TreeEvent[];
   parentFamilies: ParentFamily[];
   partnerFamilies: PartnerFamily[];
+  /** The citations that support anything on the page, each with the facts it supports. */
+  citations: PersonCitation[];
 }
 
 const FIRST_IN_LIFE = new Set(['birth']);
@@ -112,6 +115,7 @@ export function getPersonPage(tree: Tree, id: string): PersonPage | null {
       events: sortEventsForDisplay(listPersonEvents(tree, id)),
       parentFamilies,
       partnerFamilies,
+      citations: listPersonCitations(tree, id),
     };
   })();
 }

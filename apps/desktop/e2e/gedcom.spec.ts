@@ -106,14 +106,17 @@ test('imports a GEDCOM file into a new tree and says what it did', async ({
   await expect(window.getByTestId('undo')).toBeDisabled();
 
   await expect(window.getByTestId('import-notice')).toContainText(
-    'Imported 3 people, 1 family and 4 events from Müller family.ged. 1 place in the file did not follow the rules of the format.',
+    'Imported 3 people, 1 family, 4 events and 1 source from Müller family.ged. 1 place in the file did not follow the rules of the format.',
   );
   await window.getByTestId('import-details').click();
   await expect(window.getByTestId('import-report-summary')).toContainText(
     'The file is GEDCOM 5.5.1, in the UTF-8 character set.',
   );
-  // The submitter and source records, the _UID line and the link to a family that is not there.
-  await expect(window.getByTestId('import-report-kept')).toContainText('4 items');
+  await expect(window.getByTestId('import-report-sources')).toContainText(
+    'The 1 source of the file is under “Sources”, with 1 citation',
+  );
+  // The submitter record, the _UID line and the link to a family that is not there.
+  await expect(window.getByTestId('import-report-kept')).toContainText('3 items');
   await expect(window.getByTestId('import-issue')).toHaveText([
     /^36.*FAMC @F9@ is not a family in this file; the line is kept as written$/,
   ]);
@@ -131,6 +134,11 @@ test('imports a GEDCOM file into a new tree and says what it did', async ({
   );
   await expect(window.getByTestId('partner-family')).toContainText('Jones');
   await expect(window.getByTestId('child-row')).toContainText('Müller');
+  // The census entry cited under his name is listed as a source, not as a line kept as written.
+  await expect(window.getByTestId('name-sources')).toHaveText('Sources (1)');
+  await expect(window.getByTestId('person-citation')).toHaveText([
+    /1900 United States Federal Census.*Year: 1900; Census Place: Boston.*Name/,
+  ]);
   await expect(window.getByTestId('kept-summary')).toHaveText(
     '1 item that the app has no fields for yet',
   );

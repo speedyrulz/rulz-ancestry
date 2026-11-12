@@ -74,6 +74,46 @@ function withKeptLines(tree: Tree, recordId: string, kind: 'name' | 'event'): Se
   return found;
 }
 
+/** True when a name or event has a citation: it then says more than a bare repeat. */
+function isCited(tree: Tree, column: 'name_id' | 'event_id', id: string): boolean {
+  return (
+    sql(tree.db, `SELECT 1 FROM citation_link WHERE ${column} = ? LIMIT 1`).get(id) !== undefined
+  );
+}
+
+/**
+ * Moves the citations of a person or family as a whole to the one that stays.
+ * A citation both already had is kept once.
+ */
+function moveCitations(tree: Tree, owner: Owner, fromId: string, toId: string): void {
+  const db = tree.db;
+  const present = new Set(
+    sql(db, `SELECT citation_id FROM citation_link WHERE ${owner} = ?`)
+      .pluck()
+      .all(toId) as string[],
+  );
+  let order =
+    (sql(db, `SELECT max(sort_order) FROM citation_link WHERE ${owner} = ?`).pluck().get(toId) as
+      number | null) ?? -1;
+  const links = sql(
+    db,
+    `SELECT id, citation_id FROM citation_link WHERE ${owner} = ? ORDER BY sort_order, id`,
+  ).all(fromId) as { id: string; citation_id: string }[];
+  for (const link of links) {
+    if (present.has(link.citation_id)) {
+      sql(db, 'DELETE FROM citation_link WHERE id = ?').run(link.id);
+      continue;
+    }
+    order += 1;
+    sql(db, `UPDATE citation_link SET ${owner} = ?, sort_order = ? WHERE id = ?`).run(
+      toId,
+      order,
+      link.id,
+    );
+    present.add(link.citation_id);
+  }
+}
+
 function eventsOf(tree: Tree, owner: Owner, id: string): (EventKey & { link: string })[] {
   return sql(
     tree.db,
@@ -98,8 +138,9 @@ function moveEvents(tree: Tree, owner: Owner, fromId: string, toId: string): num
       .get(toId) as number | null) ?? -1;
   let moved = 0;
   for (const event of eventsOf(tree, owner, fromId)) {
+    const more = sourced.has(event.id) || isCited(tree, 'event_id', event.id);
     const repeat = kept.some(
-      (other) => other.id === event.id || (sameEvent(other, event) && !sourced.has(event.id)),
+      (other) => other.id === event.id || (sameEvent(other, event) && !more),
     );
     if (repeat) {
       sql(db, 'DELETE FROM event_participant WHERE id = ?').run(event.link);
@@ -172,7 +213,8 @@ function moveNames(tree: Tree, fromId: string, toId: string): number {
       number | null) ?? -1;
   let moved = 0;
   for (const name of namesOf(fromId)) {
-    if (!sourced.has(name.id) && kept.some((other) => sameName(other, name))) {
+    const more = sourced.has(name.id) || isCited(tree, 'name_id', name.id);
+    if (!more && kept.some((other) => sameName(other, name))) {
       sql(db, 'DELETE FROM person_name WHERE id = ?').run(name.id);
       continue;
     }
@@ -236,6 +278,7 @@ function joinTwinFamilies(tree: Tree, personId: string): number {
       present.add(link.child_id);
     }
     moveEvents(tree, 'family_id', family.id, keptId);
+    moveCitations(tree, 'family_id', family.id, keptId);
     recordMerge(tree, 'family', family.id, keptId);
     sql(db, 'DELETE FROM family WHERE id = ?').run(family.id);
     joined += 1;
@@ -288,6 +331,7 @@ export function mergePersons(tree: Tree, keepId: string, mergeId: string): Merge
 
     const names = moveNames(tree, mergeId, keepId);
     const events = moveEvents(tree, 'person_id', mergeId, keepId);
+    moveCitations(tree, 'person_id', mergeId, keepId);
 
     // Parents: the kept person joins each family the other was a child of.
     const touched = new Set<string>();

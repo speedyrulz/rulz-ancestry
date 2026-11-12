@@ -45,7 +45,11 @@ describe('a 10,000-person file written the way Ancestry writes them', () => {
     expect(countPersons(tree)).toBe(PEOPLE);
     expect(report.names).toBe(PEOPLE);
     expect(report.events).toBeGreaterThan(PEOPLE * 2);
-    expect(report.keptRecords).toEqual({ SUBM: 1, SOUR: 20, REPO: 1, OBJE: 1 });
+    expect(report.keptRecords).toEqual({ SUBM: 1, REPO: 1, OBJE: 1 });
+    expect(report.sources).toBe(20);
+    // Each person's name and birth cite the same census entry: one citation, two links.
+    expect(report.citations).toBe(PEOPLE);
+    expect(tree.db.prepare('SELECT count(*) FROM citation_link').pluck().get()).toBe(PEOPLE * 2);
     expect(importMs).toBeLessThan(10_000);
     // Nothing went into the change log, which would have doubled the work.
     expect(tree.db.prepare('SELECT count(*) FROM change_log').pluck().get()).toBe(0);

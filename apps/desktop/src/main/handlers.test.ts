@@ -16,6 +16,9 @@ import {
   type PersonListPage,
   type PersonPage,
   type RelationshipInfo,
+  type SourceChange,
+  type SourceDetails,
+  type SourceListPage,
   type TreeState,
 } from '../shared/ipc';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
@@ -131,6 +134,22 @@ describe('argument checks', () => {
       ['findDuplicates', { limit: 5 }],
       ['mergePersons', MISSING, { id: MISSING }],
       ['markNotDuplicate', MISSING],
+      ['listSources', { query: '', offset: 0, limit: 0 }],
+      ['listSources', { query: 5, offset: 0, limit: 10 }],
+      ['getSource', MISSING],
+      ['getSource', MISSING, { offset: 0, limit: 1000 }],
+      ['createSource', { title: 'x'.repeat(1001) }],
+      ['createSource', { title: 'A', url: 'https://example.com' }],
+      ['updateSource', 'not-an-id', { title: 'A' }],
+      ['addCitation', { type: 'place', id: MISSING }, { sourceId: MISSING }, {}],
+      ['addCitation', { type: 'event', id: MISSING }, { sourceId: MISSING, create: {} }, {}],
+      ['addCitation', { type: 'event', id: MISSING }, { sourceId: MISSING }, { quality: 4 }],
+      ['addCitation', { type: 'event', id: MISSING }, { sourceId: MISSING }, { quality: '3' }],
+      ['addCitation', { type: 'event', id: MISSING }, { sourceId: MISSING }],
+      ['updateCitation', MISSING, { page: 7 }],
+      ['linkCitation', MISSING, { type: 'event' }],
+      ['unlinkCitation', MISSING, MISSING],
+      ['deleteCitation'],
       ['createTree', { name: 'x', parentDir: '' }],
       ['undo', 'unexpected'],
     ];
@@ -452,6 +471,151 @@ describe('charts, relationships and duplicates', () => {
   });
 });
 
+describe('sources and citations', () => {
+  /** A tree with one person who has a birth. */
+  async function start(): Promise<{ personId: string; birthId: string }> {
+    await openNewTree();
+    const personId = await addPerson('John', { birthDate: '1870' });
+    const page = await call<PersonPage>('getPersonPage', personId);
+    return { personId, birthId: page.events[0]?.id ?? '' };
+  }
+
+  it('adds, lists, edits and deletes sources', async () => {
+    await openNewTree();
+    const made = await call<SourceChange>('createSource', {
+      title: ' Parish register ',
+      author: 'The parish',
+    });
+    expect(made.tree).toMatchObject({ sources: 1, undo: 'Add source' });
+    await call('createSource', { abbreviation: 'Family bible' });
+
+    const all = await call<SourceListPage>('listSources', { query: '', offset: 0, limit: 10 });
+    expect(all).toEqual({
+      total: 2,
+      sources: [
+        // A source with only a short title is listed under it.
+        { id: expect.any(String), title: 'Family bible', author: '', citations: 0 },
+        { id: made.sourceId, title: 'Parish register', author: 'The parish', citations: 0 },
+      ],
+    });
+    const found = await call<SourceListPage>('listSources', { query: 'par', offset: 0, limit: 10 });
+    expect(found.total).toBe(1);
+
+    const state = await call<TreeState>('updateSource', made.sourceId, { publication: 'York' });
+    expect(state.undo).toBe('Edit source');
+    const details = await call<SourceDetails>('getSource', made.sourceId, { offset: 0, limit: 50 });
+    expect(details).toEqual({
+      source: {
+        id: made.sourceId,
+        title: 'Parish register',
+        author: 'The parish',
+        publication: 'York',
+        abbreviation: '',
+        text: '',
+      },
+      citationCount: 0,
+      citations: [],
+      keptLines: [],
+    });
+
+    expect((await call<TreeState>('deleteSource', made.sourceId)).sources).toBe(1);
+    expect(await call('getSource', made.sourceId, { offset: 0, limit: 50 })).toBeNull();
+    expect((await errorOf('createSource', { author: 'Nobody' })).code).toBe('rule');
+    expect((await errorOf('deleteSource', MISSING)).code).toBe('not-found');
+  });
+
+  it('cites a source for a fact, and shows it on the person and on the source', async () => {
+    const { personId, birthId } = await start();
+    const birth = { type: 'event', id: birthId };
+    const state = await call<TreeState>(
+      'addCitation',
+      birth,
+      { create: { title: 'Parish register' } },
+      { page: 'p. 12', text: 'John, son of Tom', quality: 3 },
+    );
+    expect(state).toMatchObject({ sources: 1, undo: 'Add citation' });
+
+    const page = await call<PersonPage>('getPersonPage', personId);
+    expect(page.citations).toHaveLength(1);
+    const citation = page.citations[0];
+    expect(citation).toMatchObject({
+      sourceTitle: 'Parish register',
+      page: 'p. 12',
+      text: 'John, son of Tom',
+      quality: 3,
+      note: '',
+      uses: [birth],
+    });
+
+    // The same citation for the person as a whole, then edited once for both.
+    const person = { type: 'person', id: personId };
+    await call('linkCitation', citation?.id, person);
+    await call('updateCitation', citation?.id, { note: 'Seen in person', quality: null });
+    const after = await call<PersonPage>('getPersonPage', personId);
+    expect(after.citations).toHaveLength(1);
+    expect(after.citations[0]).toMatchObject({ note: 'Seen in person', quality: null });
+    expect(after.citations[0]?.uses).toEqual([person, birth]);
+
+    const details = await call<SourceDetails>('getSource', citation?.sourceId, {
+      offset: 0,
+      limit: 50,
+    });
+    expect(details.citationCount).toBe(1);
+    expect(details.citations[0]?.uses.map((use) => [use.what, use.persons[0]?.id])).toEqual([
+      ['birth', personId],
+      ['person', personId],
+    ]);
+
+    // Taken away from both facts, the citation is gone; its source stays.
+    await call('unlinkCitation', citation?.id, person);
+    expect((await call<PersonPage>('getPersonPage', personId)).citations).toHaveLength(1);
+    await call('unlinkCitation', citation?.id, birth);
+    expect((await call<PersonPage>('getPersonPage', personId)).citations).toEqual([]);
+    expect((await errorOf('updateCitation', citation?.id, { page: 'x' })).code).toBe('not-found');
+    expect(session.state().sources).toBe(1);
+
+    // One Undo brings it back with its last link.
+    await call('undo');
+    expect((await call<PersonPage>('getPersonPage', personId)).citations[0]?.uses).toEqual([birth]);
+  });
+
+  it('refuses a citation of nothing, and deletes one for every fact at once', async () => {
+    const { personId, birthId } = await start();
+    const birth = { type: 'event', id: birthId };
+    expect((await errorOf('addCitation', birth, { sourceId: MISSING }, {})).code).toBe('not-found');
+    expect(
+      (await errorOf('addCitation', { type: 'name', id: MISSING }, { create: { title: 'A' } }, {}))
+        .code,
+    ).toBe('not-found');
+    expect((await errorOf('addCitation', birth, { create: {} }, {})).code).toBe('rule');
+    expect(session.state().sources).toBe(0);
+
+    await call('addCitation', birth, { create: { title: 'A' } }, {});
+    const citation = (await call<PersonPage>('getPersonPage', personId)).citations[0];
+    await call('linkCitation', citation?.id, { type: 'person', id: personId });
+    await call('deleteCitation', citation?.id);
+    expect((await call<PersonPage>('getPersonPage', personId)).citations).toEqual([]);
+  });
+
+  it('needs an open tree', async () => {
+    const target = { type: 'event', id: MISSING };
+    for (const [method, ...args] of [
+      ['listSources', { query: '', offset: 0, limit: 10 }],
+      ['getSource', MISSING, { offset: 0, limit: 10 }],
+      ['createSource', { title: 'A' }],
+      ['updateSource', MISSING, { title: 'A' }],
+      ['deleteSource', MISSING],
+      ['addCitation', target, { sourceId: MISSING }, {}],
+      ['updateCitation', MISSING, {}],
+      ['linkCitation', MISSING, target],
+      ['unlinkCitation', MISSING, target],
+      ['deleteCitation', MISSING],
+    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+      expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
+    }
+  });
+});
+
 describe('backups', () => {
   it('backs up, lists, restores and shows the folder', async () => {
     const tree = await openNewTree();
@@ -525,7 +689,9 @@ describe('GEDCOM files', () => {
       persons: 2,
       families: 1,
       events: 1,
-      keptRecords: 1,
+      sources: 1,
+      citations: 0,
+      keptRecords: 0,
       // The two lines of the first person, and the link to a family that is not in the file.
       keptLines: 3,
       issues: [

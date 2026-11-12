@@ -1,27 +1,33 @@
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import {
+  cloneNode,
   convertVersion,
   encodeGedcom,
   makeNode,
   parseFragment,
   patchChildLine,
   patchChildOf,
+  patchCitation,
   patchEvent,
   patchLiving,
   patchName,
   patchSex,
+  patchSource,
   pointerTarget,
   pointerTo,
   readPedigree,
   touch,
+  touchAll,
   writeGedcom,
+  type CitationFields,
   type EventFields,
   type EventOwner,
   type GedcomNode,
   type GedcomVersion,
   type NameFields,
   type Sex,
+  type SourceFields,
 } from '@rulz/core';
 import { sql } from '../connection';
 import { presumedLivingIds } from '../living';
@@ -105,6 +111,26 @@ interface ChildRow {
   child_id: string;
   pedigree: string;
 }
+
+interface SourceRow extends SourceFields {
+  id: string;
+}
+
+interface CitationRow extends CitationFields {
+  id: string;
+  source_id: string;
+}
+
+interface CitationLinkRow {
+  citation_id: string;
+  person_id: string | null;
+  family_id: string | null;
+  event_id: string | null;
+  name_id: string | null;
+}
+
+/** The citation each SOUR line under a name or event became; see `StoredPart.c`. */
+type Cites = readonly (string | null)[] | undefined;
 
 /** A line under a record that is being put together, with where it goes. */
 interface Item {
@@ -193,9 +219,10 @@ const PERSON_SECTIONS: readonly PartKind[] = [
   'event',
   'child-of',
   'partner-in',
+  'citation',
 ];
 /** The same for a family record. */
-const FAMILY_SECTIONS: readonly PartKind[] = ['partner', 'event', 'child'];
+const FAMILY_SECTIONS: readonly PartKind[] = ['partner', 'event', 'child', 'citation'];
 
 /**
  * Works out where lines go that have no original line of their own (a name
@@ -302,6 +329,32 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       else partnerFamiliesOf.set(partner, [family.id]);
     }
   }
+  const sources = sql(
+    db,
+    'SELECT id, title, author, publication, abbreviation, text FROM source ORDER BY id',
+  ).all() as SourceRow[];
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const citationById = new Map(
+    (
+      sql(
+        db,
+        'SELECT id, source_id, page, text, quality, note FROM citation',
+      ).all() as CitationRow[]
+    ).map((citation) => [citation.id, citation]),
+  );
+  /** The citations of each person, family, event and name, in the order of that owner's list. */
+  const citedBy = new Map<string, string[]>();
+  for (const link of sql(
+    db,
+    `SELECT citation_id, person_id, family_id, event_id, name_id FROM citation_link
+     ORDER BY sort_order, id`,
+  ).all() as CitationLinkRow[]) {
+    const owner = link.person_id ?? link.family_id ?? link.event_id ?? link.name_id;
+    if (owner === null) continue;
+    const list = citedBy.get(owner);
+    if (list) list.push(link.citation_id);
+    else citedBy.set(owner, [link.citation_id]);
+  }
 
   // Who is left out.
   const omitted = options.includeLiving ? new Set<string>() : presumedLivingIds(tree, now);
@@ -366,9 +419,8 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   );
   const xrefOf = new Map<string, string>();
   for (const record of stored) {
-    if ((record.kind === 'person' || record.kind === 'family') && record.xref !== null) {
-      xrefOf.set(record.id, record.xref);
-    }
+    const own = record.kind === 'person' || record.kind === 'family' || record.kind === 'source';
+    if (own && record.xref !== null) xrefOf.set(record.id, record.xref);
   }
   for (const person of persons) {
     if (!xrefOf.has(person.id)) xrefOf.set(person.id, xrefs.make('I'));
@@ -376,7 +428,92 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   for (const family of families) {
     if (!xrefOf.has(family.id)) xrefOf.set(family.id, xrefs.make('F'));
   }
+  for (const source of sources) {
+    if (!xrefOf.has(source.id)) xrefOf.set(source.id, xrefs.make('S'));
+  }
   const xref = (id: string): string => xrefOf.get(id) ?? 'VOID';
+
+  /**
+   * The lines each imported citation was first written with. A citation that
+   * has since been used for another fact is written there with the same lines,
+   * so what the app has no fields for (Ancestry's record number, say) goes
+   * along with it.
+   */
+  const firstWritten = new Map<string, GedcomNode>();
+  for (const parsed of parsedById.values()) {
+    parsed.stored.parts?.forEach((part, index) => {
+      const node = parsed.nodes[index];
+      if (!node) return;
+      if (part.k === 'citation' && part.r !== undefined) {
+        if (!firstWritten.has(part.r)) firstWritten.set(part.r, node);
+      } else if (part.c !== undefined) {
+        const lines = node.children.filter((child) => child.tag === 'SOUR');
+        part.c.forEach((id, place) => {
+          const line = lines[place];
+          if (id !== null && line && !firstWritten.has(id)) firstWritten.set(id, line);
+        });
+      }
+    });
+  }
+
+  /** The SOUR structure for a citation: its original line patched, or a new one. Null when it has gone. */
+  const citationNode = (citationId: string, original: GedcomNode | null): GedcomNode | null => {
+    const citation = citationById.get(citationId);
+    const sourceXref = citation === undefined ? undefined : xrefOf.get(citation.source_id);
+    if (citation === undefined || sourceXref === undefined) return null;
+    let base = original;
+    if (base === null) {
+      const model = firstWritten.get(citationId);
+      if (model) {
+        // Written at another place, and perhaps another level, than it was read from.
+        base = cloneNode(model);
+        touchAll(base);
+      }
+    }
+    return patchCitation(base, citation, sourceXref);
+  };
+
+  /**
+   * Brings the SOUR lines under a name or event in step with the tree: a line
+   * whose citation no longer supports this fact goes, one whose citation was
+   * edited is rewritten, and citations added since follow the last of them.
+   * Lines that never became a citation stay as they are.
+   */
+  const cite = (node: GedcomNode, cites: Cites, ownerId: string): void => {
+    const wanted = citedBy.get(ownerId) ?? [];
+    if (wanted.length === 0 && cites === undefined) return;
+    const alive = new Set(wanted);
+    const written = new Set<string>();
+    const children: GedcomNode[] = [];
+    let place = -1;
+    let last = -1;
+    for (const child of node.children) {
+      if (child.tag !== 'SOUR') {
+        children.push(child);
+        continue;
+      }
+      place += 1;
+      const id = cites?.[place] ?? null;
+      if (id === null) {
+        children.push(child);
+        last = children.length - 1;
+        continue;
+      }
+      if (!alive.has(id) || written.has(id)) continue;
+      const line = citationNode(id, child);
+      if (!line) continue;
+      written.add(id);
+      children.push(line);
+      last = children.length - 1;
+    }
+    const added = wanted
+      .filter((id) => !written.has(id))
+      .map((id) => citationNode(id, null))
+      .filter((line) => line !== null);
+    if (last === -1) children.push(...added);
+    else children.splice(last + 1, 0, ...added);
+    node.children = children;
+  };
 
   /** The first line of a record: its original, or a new one. */
   const recordNode = (id: string, tag: string): GedcomNode => {
@@ -397,16 +534,16 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     parsed: ParsedRecord | null,
     kind: PartKind,
     rows: readonly T[],
-    build: (row: T, original: GedcomNode | null) => GedcomNode,
+    build: (row: T, original: GedcomNode | null, cites: Cites) => GedcomNode,
     absorbed: readonly ParsedRecord[] = [],
   ): void => {
     const alive = new Set(rows.map((row) => row.id));
-    const originals = new Map<string, GedcomNode>();
+    const originals = new Map<string, { node: GedcomNode; cites: Cites }>();
     const places: number[] = [];
     parsed?.stored.parts?.forEach((part, index) => {
       const node = parsed.nodes[index];
       if (part.k !== kind || part.r === undefined || !node || !alive.has(part.r)) return;
-      originals.set(part.r, node);
+      originals.set(part.r, { node, cites: part.c });
       places.push(index);
     });
     // A name or event that came over in a merge keeps the lines it had in its
@@ -415,13 +552,14 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       other.stored.parts?.forEach((part, index) => {
         const node = other.nodes[index];
         if (part.k !== kind || part.r === undefined || !node || !alive.has(part.r)) return;
-        if (!originals.has(part.r)) originals.set(part.r, node);
+        if (!originals.has(part.r)) originals.set(part.r, { node, cites: part.c });
       });
     }
     // The tree's order decides which comes first (the main name, say); the
     // places are the ones those lines had in the file.
     rows.forEach((row, index) => {
-      const node = build(row, originals.get(row.id) ?? null);
+      const original = originals.get(row.id);
+      const node = build(row, original?.node ?? null, original?.cites);
       const place = places[index];
       if (place === undefined) layout.add(kind, node);
       else layout.at(place, node);
@@ -446,9 +584,47 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       parsed,
       'event',
       rows,
-      (row, original) => patchEvent(original, eventFields(row), owner, target),
+      (row, original, cites) => {
+        const node = patchEvent(original, eventFields(row), owner, target);
+        cite(node, cites, row.id);
+        return node;
+      },
       absorbed,
     );
+  };
+
+  /**
+   * Places the citations of a person or family as a whole: the imported ones
+   * where they stood, those of records merged into this one after its own
+   * lines, and citations added since after the last of their kind.
+   */
+  const placeCitations = (
+    layout: Layout,
+    parsed: ParsedRecord | null,
+    absorbed: readonly ParsedRecord[],
+    ownerId: string,
+  ): void => {
+    const wanted = citedBy.get(ownerId) ?? [];
+    const alive = new Set(wanted);
+    const written = new Set<string>();
+    const original = (record: ParsedRecord, put: (node: GedcomNode, index: number) => void) => {
+      record.stored.parts?.forEach((part, index) => {
+        const node = record.nodes[index];
+        if (part.k !== 'citation' || part.r === undefined || !node) return;
+        if (!alive.has(part.r) || written.has(part.r)) return;
+        const line = citationNode(part.r, node);
+        if (!line) return;
+        written.add(part.r);
+        put(line, index);
+      });
+    };
+    if (parsed) original(parsed, (node, index) => layout.at(index, node));
+    for (const other of absorbed) original(other, (node) => layout.end(node));
+    for (const id of wanted) {
+      if (written.has(id)) continue;
+      const line = citationNode(id, null);
+      if (line) layout.add('citation', line);
+    }
   };
 
   /** Puts the kept lines of records merged into this one after its own lines. */
@@ -476,13 +652,18 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     const absorbed = absorbedBy.get(person.id) ?? [];
     placeKept(layout, parsed);
     placeAbsorbed(layout, absorbed);
+    placeCitations(layout, parsed, absorbed, person.id);
 
     placeInOrder(
       layout,
       parsed,
       'name',
       namesOf.get(person.id) ?? [],
-      (row, original) => patchName(original, row, target),
+      (row, original, cites) => {
+        const node = patchName(original, row, target);
+        cite(node, cites, row.id);
+        return node;
+      },
       absorbed,
     );
     placeEvents(layout, parsed, personEvents.get(person.id) ?? [], 'person', absorbed);
@@ -555,6 +736,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       const absorbed = absorbedBy.get(family.id) ?? [];
       placeKept(layout, parsed);
       placeAbsorbed(layout, absorbed);
+      placeCitations(layout, parsed, absorbed, family.id);
       placeEvents(layout, parsed, familyEvents.get(family.id) ?? [], 'family', absorbed);
     }
 
@@ -594,6 +776,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   const records: { key: readonly [number, number, number]; node: GedcomNode }[] = [];
   let lastPerson = -1;
   let lastFamily = -1;
+  let lastSource = -1;
   let headPosition = -1;
   let head: StoredRecord | null = null;
 
@@ -611,6 +794,16 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       lastFamily = record.position;
       const family = familyById.get(record.id);
       if (family) records.push({ key: [record.position, 0, 0], node: buildFamily(family) });
+    } else if (record.kind === 'source') {
+      lastSource = record.position;
+      const source = sourceById.get(record.id);
+      if (source) {
+        const original = parseFragment(record.text, sourceVersion)[0] ?? null;
+        records.push({
+          key: [record.position, 0, 0],
+          node: patchSource(original, source, xref(source.id)),
+        });
+      }
     } else {
       parseFragment(record.text, sourceVersion).forEach((node, index) => {
         records.push({ key: [record.position, 0, index], node });
@@ -619,6 +812,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   }
   const afterPeople = lastPerson === -1 ? headPosition : lastPerson;
   const afterFamilies = lastFamily === -1 ? afterPeople : lastFamily;
+  const afterSources = lastSource === -1 ? afterFamilies : lastSource;
   let added = 0;
   for (const person of persons) {
     if (imported.has(person.id) || !shown(person.id)) continue;
@@ -628,6 +822,14 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   for (const family of exportedFamilies) {
     if (imported.has(family.id)) continue;
     records.push({ key: [afterFamilies, 2, added], node: buildFamily(family) });
+    added += 1;
+  }
+  for (const source of sources) {
+    if (imported.has(source.id)) continue;
+    records.push({
+      key: [afterSources, 3, added],
+      node: patchSource(null, source, xref(source.id)),
+    });
     added += 1;
   }
   records.sort((a, b) => a.key[0] - b.key[0] || a.key[1] - b.key[1] || a.key[2] - b.key[2]);
@@ -653,8 +855,8 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     body.forEach(repoint);
   }
 
-  // Nothing may point at a person or family that was left out, or that has
-  // been deleted since the import.
+  // Nothing may point at a person or family that was left out, or at a
+  // person, family or source that has been deleted since the import.
   const gone = new Set<string>();
   for (const person of persons) if (!shown(person.id)) gone.add(xref(person.id));
   for (const family of families) if (!familyShown.has(family.id)) gone.add(xref(family.id));
@@ -662,7 +864,8 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     if (record.xref === null || movedTo.has(record.xref)) continue;
     const deleted =
       (record.kind === 'person' && !personById.has(record.id)) ||
-      (record.kind === 'family' && !familyExists.has(record.id));
+      (record.kind === 'family' && !familyExists.has(record.id)) ||
+      (record.kind === 'source' && !sourceById.has(record.id));
     if (deleted) gone.add(record.xref);
   }
   if (gone.size > 0) {

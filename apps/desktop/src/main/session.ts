@@ -142,6 +142,7 @@ export class TreeSession {
       persons: info.persons,
       families: info.families,
       events: info.events,
+      sources: info.sources,
       undo: status.undo?.label ?? null,
       redo: status.redo?.label ?? null,
       revision: this.#revision,

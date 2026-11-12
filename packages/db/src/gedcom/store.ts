@@ -13,25 +13,42 @@ import type { Tree } from '../tree';
  * - person records: `name`, `sex`, `living`, `event`, `child-of` (FAMC, with
  *   the family's id) and `partner-in` (FAMS, with the family's id);
  * - family records: `partner` (HUSB or WIFE, with the person's id), `child`
- *   (CHIL, with the person's id) and `event`.
+ *   (CHIL, with the person's id) and `event`;
+ * - both: `citation` (a SOUR line that cites a source record for the person
+ *   or family as a whole, with the citation's id).
  */
 export type PartKind =
-  'name' | 'sex' | 'living' | 'event' | 'child-of' | 'partner-in' | 'partner' | 'child';
+  | 'name'
+  | 'sex'
+  | 'living'
+  | 'event'
+  | 'child-of'
+  | 'partner-in'
+  | 'partner'
+  | 'child'
+  | 'citation';
 
 /** One line under a record, with everything below it. */
 export interface StoredPart {
   /** What the line became. Left out for a line the app keeps as written. */
   k?: PartKind;
-  /** The id of the name, event, family or person the line became. */
+  /** The id of the name, event, family, person or citation the line became. */
   r?: string;
   /** The line and everything under it, as written in the file. */
   t: string;
+  /**
+   * For a name or an event: one entry for each SOUR line directly under it, in
+   * order. An entry is the id of the citation that line became, or null for a
+   * line that is kept as written (a source described in place, say). Left out
+   * when no line under it became a citation.
+   */
+  c?: (string | null)[];
 }
 
-export type RecordKind = 'head' | 'person' | 'family' | 'kept';
+export type RecordKind = 'head' | 'person' | 'family' | 'source' | 'kept';
 
 export interface StoredRecord {
-  /** For a person or family record: the id of that person or family. */
+  /** For a person, family or source record: the id of that person, family or source. */
   id: string;
   position: number;
   tag: string;

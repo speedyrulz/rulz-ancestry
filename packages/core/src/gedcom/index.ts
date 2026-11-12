@@ -11,10 +11,26 @@ export {
   rawLines,
   setChildValue,
   touch,
+  touchAll,
   walk,
   type GedcomNode,
   type GedcomVersion,
 } from './node';
+export {
+  CITATION_LIMITS,
+  CITATION_QUALITIES,
+  SOURCE_LIMITS,
+  citationKey,
+  citedSource,
+  cleanCitationFields,
+  cleanSourceFields,
+  patchCitation,
+  patchSource,
+  readCitation,
+  readSource,
+  type CitationFields,
+  type SourceFields,
+} from './sources';
 export {
   MAX_ISSUES,
   parseFragment,

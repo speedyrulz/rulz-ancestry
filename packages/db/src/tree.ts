@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { newId } from '@rulz/core';
+import { BackupError, backupTree } from './backup';
 import { beginRecording, endRecording, redo, undo, undoStatus, type ChangeTx } from './changelog';
 import { openDatabase, sql, type Db } from './connection';
 import { migrate, schemaVersion } from './migrate';
@@ -74,6 +75,7 @@ export interface TreeInfo {
   persons: number;
   families: number;
   events: number;
+  sources: number;
 }
 
 /** An open family tree. */
@@ -201,6 +203,7 @@ export class Tree {
       persons: count('person'),
       families: count('family'),
       events: count('event'),
+      sources: count('source'),
     };
   }
 
@@ -237,6 +240,22 @@ export function openTree(location: string, options: OpenTreeOptions = {}): Tree 
       db.pragma(`application_id = ${TREE_APPLICATION_ID}`);
     } else if (applicationId !== TREE_APPLICATION_ID) {
       throw new NotATreeError(file);
+    }
+
+    // An upgrade rewrites what the tree holds, and an older version of the
+    // app cannot open the result. Keep a copy of the tree as it was. Nothing
+    // is written when the newest backup already holds the same data, which is
+    // the usual case: the app backs a tree up when it closes it.
+    const version = schemaVersion(db);
+    if (!isNew && !inMemory && version > 0 && version < treeMigrations.length) {
+      try {
+        backupTree(new Tree(db, location));
+      } catch (error) {
+        throw new BackupError(
+          'this tree was made by an older version of the app and has to be upgraded, ' +
+            `but the copy that is made first failed: ${(error as Error).message}`,
+        );
+      }
     }
 
     migrate(db, treeMigrations);

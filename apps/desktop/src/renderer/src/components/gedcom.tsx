@@ -13,8 +13,10 @@ export function importSummary(report: GedcomImportInfo): string {
     countOf(report.persons, 'person', 'people'),
     countOf(report.families, 'family', 'families'),
     countOf(report.events, 'event', 'events'),
+    ...(report.sources > 0 ? [countOf(report.sources, 'source', 'sources')] : []),
   ];
-  return `Imported ${parts[0] ?? ''}, ${parts[1] ?? ''} and ${parts[2] ?? ''} from ${report.fileName}.`;
+  const last = parts.pop() ?? '';
+  return `Imported ${parts.join(', ')} and ${last} from ${report.fileName}.`;
 }
 
 interface ImportReportDialogProps {
@@ -32,12 +34,20 @@ export function ImportReportDialog({ report, onClose }: ImportReportDialogProps)
         {importSummary(report)} The file is GEDCOM {report.version}, in the {report.encoding}{' '}
         character set.
       </p>
+      {report.sources > 0 && (
+        <p className="dialog-text" data-testid="import-report-sources">
+          The {countOf(report.sources, 'source', 'sources')} of the file{' '}
+          {report.sources === 1 ? 'is' : 'are'} under “Sources”, with{' '}
+          {countOf(report.citations, 'citation', 'citations')} that say which names and events rest
+          on them. A citation the file repeats under several facts is counted once.
+        </p>
+      )}
       {kept > 0 && (
         <p className="dialog-text" data-testid="import-report-kept">
           {countOf(kept, 'item', 'items')} in the file are things the app has no screens for yet,
-          such as sources, notes and pictures. They are kept exactly as written and go back into a
-          GEDCOM file when you export the tree. Those that belong to a person are listed at the
-          bottom of that person’s page.
+          such as notes and pictures. They are kept exactly as written and go back into a GEDCOM
+          file when you export the tree. Those that belong to a person are listed at the bottom of
+          that person’s page.
         </p>
       )}
       {report.issueCount === 0 ? (

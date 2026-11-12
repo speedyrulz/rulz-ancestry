@@ -43,6 +43,9 @@ const TREE_TABLES = [
   'event_participant',
   'not_duplicate',
   'merged_record',
+  'source',
+  'citation',
+  'citation_link',
 ] as const;
 
 /**

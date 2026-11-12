@@ -1116,3 +1116,82 @@ ul.plain {
   padding: 0;
   list-style: none;
 }
+
+/* Sources and citations */
+
+/* What one citation says: each part on a line of its own. */
+.citation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.citation-quote,
+.citation-note {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dialog ul.citation-list {
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  list-style: none;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.citation-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.citation-list li:last-child {
+  border-bottom: none;
+}
+
+.citation-list .row-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.dialog .choice {
+  margin-bottom: 12px;
+}
+
+.dialog h3 {
+  margin: 20px 0 8px;
+}
+
+.dialog .actions {
+  margin-top: 12px;
+}
+
+.sources-box {
+  margin-top: 12px;
+  min-height: 120px;
+}
+
+.scroll-box .pad {
+  margin: 0;
+  padding: 12px;
+}
+
+.uses li {
+  padding: 1px 0;
+}
+
+.dialog details {
+  margin-top: 16px;
+}
