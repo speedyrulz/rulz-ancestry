@@ -10,6 +10,7 @@ export {
   pointerTo,
   rawLines,
   setChildValue,
+  structureKey,
   touch,
   touchAll,
   walk,
@@ -31,6 +32,18 @@ export {
   type CitationFields,
   type SourceFields,
 } from './sources';
+export {
+  MEDIA_RECORD_LIMITS,
+  embeddedMediaKey,
+  embeddedToRecord,
+  isEmbeddedMedia,
+  mediaPointer,
+  patchMediaRecord,
+  readMediaRecord,
+  type MediaFileReference,
+  type MediaRecordFields,
+  type MediaWriteOptions,
+} from './media';
 export {
   MAX_ISSUES,
   parseFragment,

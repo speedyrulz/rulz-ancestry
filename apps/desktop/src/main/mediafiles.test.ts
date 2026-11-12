@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { addMediaFiles, createPerson, openAppDatabase, type Db } from '@rulz/db';
+import { addMediaFiles, createPerson, listAllMedia, openAppDatabase, type Db } from '@rulz/db';
 import { mediaUrl } from '../shared/ipc';
 import { findMediaFile, parseMediaUrl } from './mediafiles';
 import { TreeSession } from './session';
@@ -126,5 +126,36 @@ describe('findMediaFile', () => {
 
     session.close();
     expect(findMediaFile(session, mediaUrl(id, 'thumb'))).toBeNull();
+  });
+
+  it('serves nothing from a path an imported file names, even where that file exists', () => {
+    // A picture that is really there, outside any tree.
+    const outside = join(root, 'outside.png');
+    writeFileSync(outside, PNG);
+    const gedcom = join(root, 'names a file.ged');
+    writeFileSync(
+      gedcom,
+      [
+        '0 HEAD',
+        '1 GEDC',
+        '2 VERS 5.5.1',
+        '0 @I1@ INDI',
+        '1 NAME Ann /Lee/',
+        '1 OBJE @M1@',
+        '0 @M1@ OBJE',
+        `1 FILE ${outside}`,
+        '2 FORM png',
+        '0 TRLR',
+        '',
+      ].join('\n'),
+    );
+    session.allowParentDir(join(root, 'Trees'));
+    session.importGedcom(gedcom, 'Imported', join(root, 'Trees'));
+    const [named] = listAllMedia(session.tree);
+    expect(named).toMatchObject({ origin: outside, sha256: null, mime: 'image/png' });
+
+    // The tree knows where the file is said to be. The page still gets nothing.
+    expect(findMediaFile(session, mediaUrl(named?.id ?? '', 'file'))).toBeNull();
+    expect(findMediaFile(session, mediaUrl(named?.id ?? '', 'thumb'))).toBeNull();
   });
 });

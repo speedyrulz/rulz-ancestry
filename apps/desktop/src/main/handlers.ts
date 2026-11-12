@@ -20,6 +20,7 @@ import {
   SchemaTooNewError,
   TreeLocationError,
   TreeRuleError,
+  ZipError,
   addChildOf,
   addCitation,
   addFamilyEvent,
@@ -58,6 +59,7 @@ import {
   listPersons,
   listSourceCitations,
   listSources,
+  locateMediaFiles,
   markNotDuplicate,
   mediaFilePath,
   mergePersons,
@@ -65,6 +67,7 @@ import {
   requireMedia,
   searchPersons,
   setChildPedigree,
+  setMediaFile,
   setPrimaryName,
   unlinkChild,
   unlinkCitation,
@@ -240,10 +243,22 @@ const mediaTarget = z.strictObject({
   id,
 });
 
-/** What the file dialogs for import and export offer. */
+/** What the file dialog for an import offers. A GEDZip file is a GEDCOM file with its pictures, zipped. */
+const IMPORT_FILTERS = [
+  { name: 'GEDCOM and GEDZip files', extensions: ['ged', 'gdz'] },
+  { name: 'All files', extensions: ['*'] },
+];
+
+/** What the file dialog for an export offers, for a GEDCOM file on its own. */
 const GEDCOM_FILTERS = [
   { name: 'GEDCOM files', extensions: ['ged'] },
   { name: 'All files', extensions: ['*'] },
+];
+
+/** The same for a GEDZip file. Other programs know it as a zip file. */
+const GEDZIP_FILTERS = [
+  { name: 'GEDZip files', extensions: ['gdz'] },
+  { name: 'Zip files', extensions: ['zip'] },
 ];
 
 /** What the file dialog for adding pictures and documents offers. Any file may be added. */
@@ -266,6 +281,8 @@ function mediaInfo(tree: Tree, media: Media): MediaInfo {
     fileName: media.fileName,
     title: media.title,
     description: media.description,
+    held: media.sha256 !== null,
+    origin: media.origin,
     present: isMediaPresent(tree, media),
     canOpen: canOpenOutside(media.ext),
   };
@@ -299,6 +316,11 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     const tree = session.tree;
     const media = requireMedia(tree, mediaId);
     const path = mediaFilePath(tree, media);
+    if (media.sha256 === null) {
+      throw new SessionError(
+        'the tree does not hold this file; the file it was imported from only names it',
+      );
+    }
     if (path === null || !isMediaPresent(tree, media)) {
       throw new SessionError(
         `${media.fileName} is not in the tree's media folder any more; add the file again to put it back`,
@@ -350,10 +372,10 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       async (input) => {
         // The page never names the file; the user picks it in the system dialog.
         const file = await platform.chooseFileToOpen({
-          title: 'Choose a GEDCOM file to import',
+          title: 'Choose a GEDCOM or GEDZip file to import',
           buttonLabel: 'Import',
           defaultPath: session.defaultParentDir,
-          filters: GEDCOM_FILTERS,
+          filters: IMPORT_FILTERS,
         });
         if (file === null) return null;
         const { state, report } = session.importGedcom(file, input.name, input.parentDir);
@@ -368,6 +390,8 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
             events: report.events,
             sources: report.sources,
             citations: report.citations,
+            media: report.media,
+            mediaHeld: report.mediaHeld,
             keptRecords: Object.values(report.keptRecords).reduce((sum, count) => sum + count, 0),
             keptLines: report.keptLines,
             issues: report.issues,
@@ -378,17 +402,27 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     ),
 
     exportGedcom: define<'exportGedcom'>(
-      z.tuple([z.strictObject({ version: z.enum(['5.5.1', '7.0']), includeLiving: z.boolean() })]),
-      async (request) => {
+      z.tuple([
+        z.strictObject({
+          version: z.enum(['5.5.1', '7.0']),
+          includeLiving: z.boolean(),
+          withFiles: z.boolean(),
+        }),
+      ]),
+      async ({ version, includeLiving, withFiles }) => {
         const chosen = await platform.chooseFileToSave({
-          title: 'Export this tree as a GEDCOM file',
+          title: withFiles
+            ? 'Export this tree with its pictures and documents'
+            : 'Export this tree as a GEDCOM file',
           buttonLabel: 'Export',
-          defaultPath: session.suggestedExportPath(),
-          filters: GEDCOM_FILTERS,
+          defaultPath: session.suggestedExportPath(withFiles),
+          filters: withFiles ? GEDZIP_FILTERS : GEDCOM_FILTERS,
         });
         if (chosen === null) return null;
         const result = session.exportGedcom(chosen, {
-          ...request,
+          version,
+          includeLiving,
+          files: withFiles,
           appVersion: platform.appInfo().appVersion,
         });
         return {
@@ -398,7 +432,11 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
           families: result.families,
           livingOmitted: result.livingOmitted,
           unconverted: Object.entries(result.unconverted).map(([what, count]) => ({ what, count })),
-          mediaNotWritten: result.mediaNotWritten,
+          withFiles,
+          media: result.media,
+          mediaFiles: result.files.length,
+          mediaNotHeld: result.mediaNotHeld,
+          mediaWithheld: result.mediaWithheld,
         };
       },
     ),
@@ -555,15 +593,17 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
         z.strictObject({
           query: text(200),
           unattached: z.boolean(),
+          notHeld: z.boolean(),
           offset: z.number().int().min(0),
           limit: z.number().int().min(1).max(500),
         }),
       ]),
-      ({ query, unattached, offset, limit }) => {
+      ({ query, unattached, notHeld, offset, limit }) => {
         const tree = session.tree;
         return {
-          total: countMedia(tree, { query, unattached }),
-          media: listAllMedia(tree, { query, unattached, offset, limit }).map((media) =>
+          total: countMedia(tree, { query, unattached, notHeld }),
+          notHeld: countMedia(tree, { notHeld: true }),
+          media: listAllMedia(tree, { query, unattached, notHeld, offset, limit }).map((media) =>
             mediaInfo(tree, media),
           ),
         };
@@ -736,6 +776,39 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       edit((tree) => deleteMedia(tree, mediaId)),
     ),
 
+    chooseMediaFile: define<'chooseMediaFile'>(z.tuple([id]), async (mediaId) => {
+      // Say that the file has gone, or that it needs none, before asking for one.
+      const wanted = requireMedia(session.tree, mediaId);
+      if (isMediaPresent(session.tree, wanted)) {
+        throw new SessionError('the tree holds this file already');
+      }
+      const files = await platform.chooseFilesToOpen({
+        title:
+          wanted.fileName === ''
+            ? 'Choose the file for this picture or document'
+            : `Choose the file for ${wanted.fileName}`,
+        buttonLabel: 'Use this file',
+        filters: MEDIA_FILTERS,
+      });
+      const [file] = files;
+      if (file === undefined) return null;
+      if (files.length > 1) throw new SessionError('choose one file, not several');
+      return edit((tree) => setMediaFile(tree, mediaId, file));
+    }),
+
+    findMediaFiles: define<'findMediaFiles'>(none, async () => {
+      // Without an open tree there is nothing to look for; say so before asking for a folder.
+      void session.tree;
+      const dir = await platform.chooseFolder({
+        title: 'Choose the folder that holds the pictures and documents',
+        buttonLabel: 'Look in this folder',
+        defaultPath: session.defaultParentDir,
+      });
+      if (dir === null) return null;
+      const result = session.change((tree) => locateMediaFiles(tree, dir));
+      return { tree: session.state(), ...result };
+    }),
+
     undo: define<'undo'>(none, () => session.undo()),
 
     redo: define<'redo'>(none, () => session.redo()),
@@ -782,6 +855,7 @@ const RULE_ERRORS = [
   BackupError,
   GedcomFileError,
   MediaFileError,
+  ZipError,
   SessionError,
 ] as const;
 

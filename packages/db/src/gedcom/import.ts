@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import {
   LIVING_TAG,
@@ -6,12 +6,14 @@ import {
   VOID_POINTER,
   decodeGedcom,
   isEventTag,
+  localRelativePath,
   newId,
   parseGedcom,
   pointerTarget,
   rawLines,
   readEvent,
   readLiving,
+  readMediaRecord,
   readName,
   readPedigree,
   readSex,
@@ -22,23 +24,27 @@ import {
   type GedcomIssue,
   type GedcomNode,
   type GedcomVersion,
+  type MediaRecordFields,
   type NameFields,
   type Sex,
   type SourceFields,
 } from '@rulz/core';
 import { sql } from '../connection';
 import { dateColumns } from '../events';
+import { MAX_MEDIA_BYTES, holdNamedFiles, type MediaFileSource, type NamedFile } from '../media';
 import type { Tree } from '../tree';
+import { ZipError, ZipReader } from '../zip';
 import { CitationLoader } from './citations';
+import { MediaLoader, insertNamedMedia } from './medialoader';
 import { GEDCOM_META, type PartKind, type RecordKind, type StoredPart } from './store';
 
 /**
  * Loads a GEDCOM file into an empty tree.
  *
  * People, their names and events, families and the links between them go into
- * the tree's own tables, and so do sources and the lines that cite them.
- * Everything else in the file (notes, media, other programs' own tags) is
- * kept as written beside them, so that an export gives the file back with
+ * the tree's own tables, and so do sources, the lines that cite them, and the
+ * pictures and documents the file names. Everything else in the file (notes,
+ * other programs' own tags) is kept as written beside them, so that an export gives the file back with
  * nothing lost. The lines of what did go into the tables are kept too: the
  * export writes an unchanged name, event, source or citation from them.
  *
@@ -68,6 +74,13 @@ export interface GedcomInput {
   lineEnding: string;
   /** Things the reader had to assume about the character set. */
   decodingIssues: string[];
+  /**
+   * Where the files the GEDCOM file names can be had from: the zip archive it
+   * came in. Left out for a GEDCOM file on its own, which only names them.
+   */
+  files?: MediaFileSource;
+  /** Lets go of the archive. Call it when the import is over, whether it worked or not. */
+  close?: () => void;
 }
 
 export interface GedcomImportReport {
@@ -83,6 +96,10 @@ export interface GedcomImportReport {
   sources: number;
   /** Citations of those sources. One that the file repeats under several facts is counted once. */
   citations: number;
+  /** Pictures and documents the file names. One that it describes again under several people is counted once. */
+  media: number;
+  /** How many of those files came with the GEDCOM file, in a zip archive, and are now in the tree. */
+  mediaHeld: number;
   /** Records the app keeps as written because it has no tables for them yet, counted by tag. */
   keptRecords: Record<string, number>;
   /** Lines under people and families (each with what is below it) that are kept as written. */
@@ -103,6 +120,15 @@ export function readGedcomFile(file: string): GedcomInput {
   let bytes: Buffer;
   try {
     const size = statSync(file).size;
+    // "PK" starts every zip file, and a GEDZip file (.gdz) is a zip file.
+    const start = Buffer.alloc(2);
+    const fd = openSync(file, 'r');
+    try {
+      readSync(fd, start, 0, 2, 0);
+    } finally {
+      closeSync(fd);
+    }
+    if (size >= 2 && start[0] === 0x50 && start[1] === 0x4b) return readGedzipFile(file);
     if (size > MAX_GEDCOM_BYTES) {
       throw new GedcomFileError(
         `the file is larger than ${MAX_GEDCOM_BYTES / (1024 * 1024)} MB, which is more than the app can import`,
@@ -113,14 +139,85 @@ export function readGedcomFile(file: string): GedcomInput {
     if (error instanceof GedcomFileError) throw error;
     throw new GedcomFileError(`the file cannot be read: ${(error as Error).message}`);
   }
-  if (bytes.length === 0) throw new GedcomFileError('the file is empty');
-  // "PK" starts every zip file, and a GEDZip file (.gdz) is a zip file.
-  if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
-    throw new GedcomFileError(
-      'this is a zip file; unzip it and import the .ged file inside it (GEDZip files cannot be imported yet)',
-    );
-  }
+  return parseGedcomBytes(bytes, basename(file));
+}
 
+/** The name of the GEDCOM file inside a GEDZip archive. */
+const GEDZIP_GEDCOM = 'gedcom.ged';
+
+/**
+ * Reads a GEDZip file: a zip archive that holds a GEDCOM file and the
+ * pictures and documents it names. The standard calls the GEDCOM file
+ * `gedcom.ged`; an archive made by hand, which holds one `.ged` file under
+ * another name, is read as well.
+ *
+ * Nothing is unpacked here. The input carries a way to get at a file by the
+ * path the GEDCOM file gives for it, and only a path that stays inside the
+ * archive is looked up.
+ */
+function readGedzipFile(file: string): GedcomInput {
+  let zip: ZipReader;
+  try {
+    zip = ZipReader.open(file);
+  } catch (error) {
+    throw new GedcomFileError((error as Error).message);
+  }
+  try {
+    let entry = zip.find(GEDZIP_GEDCOM);
+    if (!entry) {
+      const found = zip.entries.filter((candidate) => /\.ged$/i.test(candidate.name));
+      if (found.length > 1) {
+        throw new GedcomFileError(
+          'this zip file holds several GEDCOM files; unzip it and import the one you want',
+        );
+      }
+      entry = found[0];
+    }
+    if (!entry) {
+      throw new GedcomFileError('this zip file holds no GEDCOM file (a file called gedcom.ged)');
+    }
+    if (entry.size > MAX_GEDCOM_BYTES) {
+      throw new GedcomFileError(
+        `the GEDCOM file in this zip file is larger than ${MAX_GEDCOM_BYTES / (1024 * 1024)} MB, which is more than the app can import`,
+      );
+    }
+    const input = parseGedcomBytes(zip.read(entry, MAX_GEDCOM_BYTES), basename(file));
+    // Paths in the GEDCOM file count from the folder it is in.
+    const folder = entry.name.slice(0, entry.name.lastIndexOf('/') + 1);
+    const archive = zip;
+    input.files = {
+      open(reference) {
+        const path = localRelativePath(reference);
+        if (path === null) return null;
+        let found = archive.find(folder + path);
+        if (!found && path.includes('%')) {
+          try {
+            found = archive.find(folder + decodeURIComponent(path));
+          } catch {
+            // Not an encoded path after all.
+          }
+        }
+        if (!found) return null;
+        return {
+          fileName: found.name.slice(found.name.lastIndexOf('/') + 1),
+          read: archive.reader(found, MAX_MEDIA_BYTES),
+        };
+      },
+    };
+    input.close = () => {
+      archive.close();
+    };
+    return input;
+  } catch (error) {
+    zip.close();
+    if (error instanceof ZipError) throw new GedcomFileError(error.message);
+    throw error;
+  }
+}
+
+/** Decodes and parses the bytes of a GEDCOM file. */
+function parseGedcomBytes(bytes: Buffer, fileName: string): GedcomInput {
+  if (bytes.length === 0) throw new GedcomFileError('the file is empty');
   const decoded = decodeGedcom(bytes);
   const document = parseGedcom(decoded.text);
   const recognised = document.records.some(
@@ -131,7 +228,7 @@ export function readGedcomFile(file: string): GedcomInput {
   }
   return {
     document,
-    fileName: basename(file),
+    fileName,
     encoding: decoded.encoding,
     lineEnding: decoded.lineEnding,
     decodingIssues: decoded.issues,
@@ -154,13 +251,25 @@ interface SourceDraft {
   fields: SourceFields;
 }
 
+interface MediaDraft {
+  id: string;
+  fields: MediaRecordFields;
+}
+
 export interface GedcomImportOptions {
   /**
    * False keeps source records and the lines citing them as written, which is
    * what the app did before sources had tables (schema version 4). Only the
-   * tests of that migration ask for it.
+   * tests of that migration ask for it. It leaves pictures and documents as
+   * written too, since they had no tables then either.
    */
   sources?: boolean;
+  /**
+   * False keeps media records and the lines that name files as written, which
+   * is what the app did before they had rows (schema version 6). Only the
+   * tests of that migration ask for it.
+   */
+  media?: boolean;
 }
 
 interface PersonDraft {
@@ -309,6 +418,7 @@ export function importGedcom(
 ): GedcomImportReport {
   const started = Date.now();
   const modelSources = options.sources !== false;
+  const modelMedia = modelSources && options.media !== false;
   const doc = input.document;
   const version = doc.version;
   const issues = new IssueList([], 0);
@@ -325,6 +435,9 @@ export function importGedcom(
   const sourceByNode = new Map<GedcomNode, SourceDraft>();
   /** The id of each source, by its cross-reference id in the file. */
   const sourceIds = new Map<string, string>();
+  const mediaByNode = new Map<GedcomNode, MediaDraft>();
+  /** The id of each media record's file, by the record's cross-reference id in the file. */
+  const mediaIds = new Map<string, string>();
   const usedXrefs = new Set<string>();
   /** Records whose cross-reference id an earlier record already has. */
   const repeated = new Set<GedcomNode>();
@@ -383,6 +496,11 @@ export function importGedcom(
       const draft: SourceDraft = { id: newId(), fields: readSource(record) };
       sourceByNode.set(record, draft);
       sourceIds.set(record.xref, draft.id);
+    } else if (record.tag === 'OBJE' && record.xref !== null && modelMedia) {
+      // A media record without an id cannot be pointed at; it is kept as written.
+      const draft: MediaDraft = { id: newId(), fields: readMediaRecord(record) };
+      mediaByNode.set(record, draft);
+      mediaIds.set(record.xref, draft.id);
     }
   }
 
@@ -542,6 +660,8 @@ export function importGedcom(
     events: 0,
     sources: sourceByNode.size,
     citations: 0,
+    media: 0,
+    mediaHeld: 0,
     keptRecords: {},
     keptLines: 0,
     issues: [],
@@ -607,7 +727,11 @@ export function importGedcom(
       return id;
     };
 
-    // Sources first: the lines that cite them need their ids.
+    // Media records first of all: the lines that point at them need their ids.
+    for (const item of mediaByNode.values()) insertNamedMedia(db, item.id, item.fields, now);
+    const media = modelMedia ? new MediaLoader(db, mediaIds, now) : null;
+
+    // Then sources: the lines that cite them need their ids.
     for (const source of sourceByNode.values()) {
       const fields = source.fields;
       sql(
@@ -625,20 +749,37 @@ export function importGedcom(
         now,
       );
     }
+    for (const [record, source] of sourceByNode) {
+      media?.attachChildren(record, { source: source.id });
+    }
     const citations = new CitationLoader(db, sourceIds, now);
     /** Makes citations of the SOUR lines under a name or event that has just been stored. */
     const cite = (part: PartDraft, owner: { name: string } | { event: string }): void => {
       if (sourceIds.size === 0) return;
       const cites = citations.citeChildren(part.node, owner);
-      if (cites !== undefined) part.cites = cites;
+      if (cites === undefined) return;
+      part.cites = cites;
+      // A scan of the page a citation names belongs to the citation.
+      media?.attachUnderCitations(part.node, cites);
     };
-    /** Makes a citation of a SOUR line that stands directly under a person or family. */
-    const citeWhole = (part: PartDraft, owner: { person: string } | { family: string }): void => {
-      if (sourceIds.size === 0 || part.kind !== undefined || part.node.tag !== 'SOUR') return;
-      const id = citations.cite(part.node, owner);
-      if (id === null) return;
-      part.kind = 'citation';
-      part.ref = id;
+    /**
+     * Makes a citation of a SOUR line that stands directly under a person or
+     * family, and attaches a file from an OBJE line that stands there.
+     */
+    const whole = (part: PartDraft, owner: { person: string } | { family: string }): void => {
+      if (part.kind !== undefined) return;
+      if (part.node.tag === 'SOUR' && sourceIds.size > 0) {
+        const id = citations.cite(part.node, owner);
+        if (id === null) return;
+        part.kind = 'citation';
+        part.ref = id;
+        media?.attachChildren(part.node, { citation: id });
+      } else if (part.node.tag === 'OBJE' && media) {
+        const id = media.attach(part.node, owner);
+        if (id === null) return;
+        part.kind = 'media';
+        part.ref = id;
+      }
     };
 
     for (const person of persons.values()) {
@@ -673,8 +814,9 @@ export function importGedcom(
           part.ref = addEvent(part.event, person.id, null, events);
           events += 1;
           cite(part, { event: part.ref });
+          media?.attachChildren(part.node, { event: part.ref });
         } else {
-          citeWhole(part, { person: person.id });
+          whole(part, { person: person.id });
         }
       }
       report.names += names;
@@ -693,12 +835,14 @@ export function importGedcom(
           part.ref = addEvent(part.event, null, family.id, events);
           events += 1;
           cite(part, { event: part.ref });
+          media?.attachChildren(part.node, { event: part.ref });
         } else {
-          citeWhole(part, { family: family.id });
+          whole(part, { family: family.id });
         }
       }
     }
     report.citations = citations.citations;
+    report.media = mediaByNode.size + (media?.embedded.length ?? 0);
 
     const storeParts = (parts: readonly PartDraft[]): string => {
       const stored = parts.map((part): StoredPart => {
@@ -724,6 +868,7 @@ export function importGedcom(
       const person = personByNode.get(record);
       const family = familyByNode.get(record);
       const source = sourceByNode.get(record);
+      const item = mediaByNode.get(record);
       const xref = repeated.has(record) ? null : record.xref;
       let id: string;
       let kind: RecordKind;
@@ -743,6 +888,10 @@ export function importGedcom(
         id = source.id;
         kind = 'source';
         text = textOf(record, 0, version);
+      } else if (item) {
+        id = item.id;
+        kind = 'media';
+        text = textOf(record, 0, version);
       } else {
         id = newId();
         kind = record.tag === 'HEAD' && !headStored ? 'head' : 'kept';
@@ -759,6 +908,20 @@ export function importGedcom(
     tree.setMeta(GEDCOM_META.lineEnding, input.lineEnding);
     tree.setMeta(GEDCOM_META.fileName, input.fileName);
     tree.setMeta(GEDCOM_META.importedAt, String(now));
+
+    // The files themselves, when the GEDCOM file came with them in a zip archive.
+    if (input.files !== undefined) {
+      const named: NamedFile[] = [
+        ...[...mediaByNode.values()].map((draft) => ({
+          id: draft.id,
+          reference: draft.fields.file,
+        })),
+        ...(media?.embedded ?? []).map((made) => ({ id: made.id, reference: made.file })),
+      ].filter((file) => file.reference !== '');
+      const taken = holdNamedFiles(tree, named, input.files);
+      report.mediaHeld = taken.held;
+      for (const problem of taken.problems) issues.add(0, problem);
+    }
   });
 
   report.issues = issues.list;
@@ -769,5 +932,10 @@ export function importGedcom(
 
 /** Reads a GEDCOM file from disk and loads it into `tree`, which must be empty. */
 export function importGedcomFile(tree: Tree, file: string): GedcomImportReport {
-  return importGedcom(tree, readGedcomFile(file));
+  const input = readGedcomFile(file);
+  try {
+    return importGedcom(tree, input);
+  } finally {
+    input.close?.();
+  }
 }

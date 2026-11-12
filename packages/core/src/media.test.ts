@@ -5,9 +5,14 @@ import {
   cleanMediaFields,
   fileExtension,
   isSha256,
+  isWebAddress,
+  localRelativePath,
   mediaKind,
   mediaStorePath,
+  mediaTypeFromFormat,
   mediaTypeOf,
+  referenceFileName,
+  safeArchiveName,
   sniffMediaType,
 } from './media';
 
@@ -171,5 +176,74 @@ describe('cleanMediaFields', () => {
     const cleaned = cleanMediaFields({ title: 'x'.repeat(2000), description: 'y'.repeat(50_000) });
     expect(cleaned.title).toHaveLength(MEDIA_LIMITS.title);
     expect(cleaned.description).toHaveLength(MEDIA_LIMITS.description);
+  });
+});
+
+describe('what an imported file says of a file', () => {
+  it('tells the kind from a format of either GEDCOM version', () => {
+    expect(mediaTypeFromFormat('jpg', '')).toEqual({ ext: 'jpg', mime: 'image/jpeg' });
+    expect(mediaTypeFromFormat(' JPEG ', '')).toEqual({ ext: 'jpeg', mime: 'image/jpeg' });
+    expect(mediaTypeFromFormat('image/png', 'scan')).toEqual({ ext: 'png', mime: 'image/png' });
+    expect(mediaTypeFromFormat('application/x-odd', 'notes.odd')).toEqual({
+      ext: 'odd',
+      mime: 'application/x-odd',
+    });
+  });
+
+  it('falls back on the name of the file', () => {
+    expect(mediaTypeFromFormat('', 'will.PDF')).toEqual({ ext: 'pdf', mime: 'application/pdf' });
+    expect(mediaTypeFromFormat('a photograph', 'ann.jpg')).toEqual({
+      ext: 'jpg',
+      mime: 'image/jpeg',
+    });
+    expect(mediaTypeFromFormat('', '')).toEqual({ ext: '', mime: 'application/octet-stream' });
+  });
+
+  it('tells a web address from a path', () => {
+    expect(isWebAddress('https://example.com/a.jpg')).toBe(true);
+    expect(isWebAddress(' HTTP://example.com')).toBe(true);
+    expect(isWebAddress('C:\\Photos\\a.jpg')).toBe(false);
+    expect(isWebAddress('ftp://example.com/a.jpg')).toBe(false);
+  });
+
+  it('finds the file name at the end of a path or a web address', () => {
+    expect(referenceFileName('C:\\Users\\ann\\Tree Media\\wedding 1921.jpg')).toBe(
+      'wedding 1921.jpg',
+    );
+    expect(referenceFileName('photos/ann.jpg')).toBe('ann.jpg');
+    expect(referenceFileName('https://example.com/p/ann%20lee.jpg?size=2#top')).toBe('ann lee.jpg');
+    expect(referenceFileName('https://example.com/media/')).toBe('');
+    expect(referenceFileName('https://example.com')).toBe('');
+    expect(referenceFileName('100%.jpg')).toBe('100%.jpg');
+    expect(referenceFileName('')).toBe('');
+  });
+
+  it('accepts only a path that stays below a folder', () => {
+    expect(localRelativePath('media/ann.jpg')).toBe('media/ann.jpg');
+    expect(localRelativePath('.\\photos\\\\ann.jpg')).toBe('photos/ann.jpg');
+    expect(localRelativePath('ann.jpg')).toBe('ann.jpg');
+    for (const refused of [
+      '',
+      'C:\\Photos\\ann.jpg',
+      'c:ann.jpg',
+      '/home/ann/a.jpg',
+      '\\\\server\\share\\a.jpg',
+      '../ann.jpg',
+      'media/../../ann.jpg',
+      'https://example.com/a.jpg',
+      'file:///C:/a.jpg',
+    ]) {
+      expect(localRelativePath(refused)).toBeNull();
+    }
+  });
+
+  it('makes a name every program accepts', () => {
+    expect(safeArchiveName('Wedding 1921 (Ann & Tom).JPG', 'jpg', 'x')).toBe(
+      'Wedding_1921_Ann_Tom.jpg',
+    );
+    expect(safeArchiveName(`M${String.fromCharCode(252)}ller`, 'png', 'x')).toBe('Muller.png');
+    expect(safeArchiveName('...', 'pdf', 'file-1')).toBe('file-1.pdf');
+    expect(safeArchiveName('notes', '', 'x')).toBe('notes');
+    expect(safeArchiveName('a'.repeat(200), 'jpg', 'x')).toHaveLength(84);
   });
 });

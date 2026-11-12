@@ -13,6 +13,7 @@ import {
   type IpcError,
   type MediaAddResult,
   type MediaDetails,
+  type MediaFindResult,
   type MediaInfo,
   type MediaListPage,
   type MergeInfo,
@@ -177,8 +178,10 @@ describe('argument checks', () => {
       ['unlinkCitation', MISSING, MISSING],
       ['deleteCitation'],
       ['listMedia', { type: 'name', id: MISSING }],
-      ['listAllMedia', { query: '', unattached: false, offset: 0, limit: 100_000 }],
-      ['listAllMedia', { query: '', offset: 0, limit: 10 }],
+      ['listAllMedia', { query: '', unattached: false, notHeld: false, offset: 0, limit: 100_000 }],
+      ['listAllMedia', { query: '', notHeld: false, offset: 0, limit: 10 }],
+      ['listAllMedia', { query: '', unattached: false, offset: 0, limit: 10 }],
+      ['listAllMedia', { query: '', unattached: false, notHeld: 'yes', offset: 0, limit: 10 }],
       ['getMedia', '../../tree.db'],
       // The page cannot name a file to add; it can only say what to attach the chosen files to.
       ['addMedia', 'C:\\Windows\\win.ini'],
@@ -188,6 +191,11 @@ describe('argument checks', () => {
       ['updateMedia', MISSING, { fileName: 'other.png' }],
       ['unlinkMedia', MISSING, { type: 'person' }],
       ['deleteMedia', { id: MISSING }],
+      // Nor a file for a picture the tree only knows of, nor a folder to look in.
+      ['chooseMediaFile', 'C:\\Windows\\win.ini'],
+      ['chooseMediaFile', MISSING, 'C:\\Windows\\win.ini'],
+      ['chooseMediaFile'],
+      ['findMediaFiles', 'C:\\Users'],
       ['openMedia', 'C:\\Windows\\notepad.exe'],
       ['showMediaInFolder'],
       ['createTree', { name: 'x', parentDir: '' }],
@@ -700,6 +708,8 @@ describe('pictures and documents', () => {
       fileName: 'portrait.png',
       title: '',
       description: '',
+      held: true,
+      origin: '',
       present: true,
       canOpen: true,
     });
@@ -735,6 +745,7 @@ describe('pictures and documents', () => {
     const all = await call<MediaListPage>('listAllMedia', {
       query: '',
       unattached: false,
+      notHeld: false,
       offset: 0,
       limit: 2,
     });
@@ -743,6 +754,7 @@ describe('pictures and documents', () => {
     const loose = await call<MediaListPage>('listAllMedia', {
       query: 'LOOSE',
       unattached: true,
+      notHeld: false,
       offset: 0,
       limit: 10,
     });
@@ -854,17 +866,130 @@ describe('pictures and documents', () => {
     expect(session.state().media).toBe(0);
   });
 
-  it('says in an export how many files it left out', async () => {
+  it('names the files in a GEDCOM file, and carries them in a GEDZip file', async () => {
     const { personId } = await start();
     pickedFiles = [png('a.png'), png('b.png')];
     await call('addMedia', { type: 'person', id: personId });
+
     savePath = join(root, 'out.ged');
-    const info = await call<GedcomExportInfo>('exportGedcom', {
+    const named = await call<GedcomExportInfo>('exportGedcom', {
       version: '5.5.1',
       includeLiving: true,
+      withFiles: false,
     });
-    expect(info.mediaNotWritten).toBe(2);
-    expect(readFileSync(info.file, 'utf8')).not.toContain('OBJE');
+    expect(named).toMatchObject({ withFiles: false, media: 2, mediaFiles: 0, mediaNotHeld: 0 });
+    const text = readFileSync(named.file, 'utf8');
+    expect(text).toContain('1 FILE media/a.png');
+    expect(text).toContain('1 OBJE @M1@');
+
+    // A name typed without an extension gets .gdz, and the dialog starts on one.
+    savePath = join(root, 'with pictures');
+    const carried = await call<GedcomExportInfo>('exportGedcom', {
+      version: '7.0',
+      includeLiving: true,
+      withFiles: true,
+    });
+    expect(carried).toMatchObject({
+      file: join(root, 'with pictures.gdz'),
+      withFiles: true,
+      media: 2,
+      mediaFiles: 2,
+      mediaNotHeld: 0,
+    });
+    expect(dialogDefaults.at(-1)).toMatch(/\.gdz$/);
+    // A zip file starts with "PK".
+    expect(readFileSync(carried.file).subarray(0, 2).toString('latin1')).toBe('PK');
+  });
+
+  it('imports a GEDZip file with its pictures', async () => {
+    const { personId } = await start();
+    pickedFiles = [png('a.png'), png('b.png')];
+    await call('addMedia', { type: 'person', id: personId });
+    savePath = join(root, 'family.gdz');
+    await call('exportGedcom', { version: '5.5.1', includeLiving: true, withFiles: true });
+
+    pickedFile = savePath;
+    const result = await call<GedcomImportResult>('importGedcom', {
+      name: 'From a zip',
+      parentDir: join(root, 'Trees'),
+    });
+    expect(result.report).toMatchObject({ fileName: 'family.gdz', media: 2, mediaHeld: 2 });
+    expect(result.tree).toMatchObject({ name: 'From a zip', persons: 1, media: 2 });
+    const page = await call<MediaListPage>('listAllMedia', {
+      query: '',
+      unattached: false,
+      notHeld: false,
+      offset: 0,
+      limit: 10,
+    });
+    expect(page).toMatchObject({ total: 2, notHeld: 0 });
+    expect(page.media.every((media) => media.held && media.present)).toBe(true);
+    expect(page.media.map((media) => media.origin).sort()).toEqual(['media/a.png', 'media/b.png']);
+  });
+
+  it('knows of the files a GEDCOM file names, and takes them when they are given', async () => {
+    const { personId } = await start();
+    const first = png('a.png');
+    pickedFiles = [first, png('b.png')];
+    await call('addMedia', { type: 'person', id: personId });
+    savePath = join(root, 'names only.ged');
+    await call('exportGedcom', { version: '5.5.1', includeLiving: true, withFiles: false });
+
+    pickedFile = savePath;
+    const imported = await call<GedcomImportResult>('importGedcom', {
+      name: 'Names only',
+      parentDir: join(root, 'Trees'),
+    });
+    expect(imported.report).toMatchObject({ media: 2, mediaHeld: 0 });
+    const list = () =>
+      call<MediaListPage>('listAllMedia', {
+        query: '',
+        unattached: false,
+        notHeld: true,
+        offset: 0,
+        limit: 10,
+      });
+    const before = await list();
+    expect(before).toMatchObject({ total: 2, notHeld: 2 });
+    const one = before.media.find((media) => media.origin === 'media/a.png');
+    expect(one).toMatchObject({ held: false, present: false, kind: 'image', fileName: 'a.png' });
+    const mediaId = one?.id ?? '';
+    // There is nothing to open or to show in a folder yet.
+    expect(await errorOf('openMedia', mediaId)).toMatchObject({ code: 'rule' });
+    expect((await errorOf('showMediaInFolder', mediaId)).message).toMatch(
+      /does not hold this file/,
+    );
+
+    // One file is chosen by hand. A cancelled dialog changes nothing, and two files are one too many.
+    filesDialogs = 0;
+    pickedFiles = [];
+    expect(await call('chooseMediaFile', mediaId)).toBeNull();
+    pickedFiles = [first, png('b.png')];
+    expect(await errorOf('chooseMediaFile', mediaId)).toMatchObject({ code: 'rule' });
+    pickedFiles = [first];
+    const chosen = await call<TreeState>('chooseMediaFile', mediaId);
+    expect(chosen.undo).toBe('Add the file');
+    expect(filesDialogs).toBe(3);
+    expect((await call<MediaDetails>('getMedia', mediaId)).media).toMatchObject({
+      held: true,
+      present: true,
+      origin: 'media/a.png',
+    });
+    expect(await errorOf('chooseMediaFile', mediaId)).toMatchObject({ code: 'rule' });
+    expect(filesDialogs).toBe(3);
+    expect((await errorOf('chooseMediaFile', MISSING)).code).toBe('not-found');
+
+    // The other is found in a folder. A cancelled folder dialog changes nothing.
+    expect(await call('findMediaFiles')).toBeNull();
+    pickedFolder = root;
+    const found = await call<MediaFindResult>('findMediaFiles');
+    expect(found).toMatchObject({ wanted: 1, found: 1, ambiguous: 0, truncated: false });
+    expect(found.tree.undo).toBe('Find file');
+    expect(await list()).toMatchObject({ total: 0, notHeld: 0 });
+
+    await call('undo');
+    await call('undo');
+    expect(await list()).toMatchObject({ total: 2, notHeld: 2 });
   });
 
   it('needs an open tree, and does not show the file dialog without one', async () => {
@@ -872,13 +997,15 @@ describe('pictures and documents', () => {
     pickedFiles = [png('a.png')];
     for (const [method, ...args] of [
       ['listMedia', target],
-      ['listAllMedia', { query: '', unattached: false, offset: 0, limit: 10 }],
+      ['listAllMedia', { query: '', unattached: false, notHeld: false, offset: 0, limit: 10 }],
       ['getMedia', MISSING],
       ['addMedia', target],
       ['addMedia', null],
       ['updateMedia', MISSING, {}],
       ['unlinkMedia', MISSING, target],
       ['deleteMedia', MISSING],
+      ['chooseMediaFile', MISSING],
+      ['findMediaFiles'],
       ['openMedia', MISSING],
       ['showMediaInFolder', MISSING],
     ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
@@ -963,6 +1090,8 @@ describe('GEDCOM files', () => {
       events: 1,
       sources: 1,
       citations: 0,
+      media: 0,
+      mediaHeld: 0,
       keptRecords: 0,
       // The two lines of the first person, and the link to a family that is not in the file.
       keptLines: 3,
@@ -1029,7 +1158,9 @@ describe('GEDCOM files', () => {
     expect(await call<number>('countPresumedLiving')).toBe(1);
 
     // Cancelled: nothing is written.
-    expect(await call('exportGedcom', { version: '5.5.1', includeLiving: true })).toBeNull();
+    expect(
+      await call('exportGedcom', { version: '5.5.1', includeLiving: true, withFiles: false }),
+    ).toBeNull();
     expect(dialogDefaults[1]).toBe(join(root, 'Trees', 'Mine.ged'));
 
     // A name typed without an extension gets .ged.
@@ -1037,6 +1168,7 @@ describe('GEDCOM files', () => {
     const everyone = await call<GedcomExportInfo>('exportGedcom', {
       version: '5.5.1',
       includeLiving: true,
+      withFiles: false,
     });
     expect(everyone).toEqual({
       file: join(root, 'out.ged'),
@@ -1045,7 +1177,11 @@ describe('GEDCOM files', () => {
       families: 1,
       livingOmitted: 0,
       unconverted: [],
-      mediaNotWritten: 0,
+      withFiles: false,
+      media: 0,
+      mediaFiles: 0,
+      mediaNotHeld: 0,
+      mediaWithheld: 0,
     });
     const written = readFileSync(everyone.file, 'utf8');
     expect(written).toContain('2 VERS 1.2.3-test');
@@ -1057,6 +1193,7 @@ describe('GEDCOM files', () => {
     const shared = await call<GedcomExportInfo>('exportGedcom', {
       version: '7.0',
       includeLiving: false,
+      withFiles: false,
     });
     expect(shared).toMatchObject({ version: '7.0', persons: 1, families: 1, livingOmitted: 1 });
     expect(readFileSync(shared.file, 'utf8')).not.toContain('Young');
@@ -1068,17 +1205,20 @@ describe('GEDCOM files', () => {
   });
 
   it('checks what the page sends for an export, and needs an open tree', async () => {
-    expect((await errorOf('exportGedcom', { version: '5.5.1', includeLiving: true })).code).toBe(
-      'no-tree',
-    );
+    expect(
+      (await errorOf('exportGedcom', { version: '5.5.1', includeLiving: true, withFiles: false }))
+        .code,
+    ).toBe('no-tree');
     expect((await errorOf('countPresumedLiving')).code).toBe('no-tree');
     await openNewTree();
     savePath = join(root, 'out.ged');
     for (const bad of [
-      { version: '5.5', includeLiving: true },
-      { version: '7.0' },
-      { version: '7.0', includeLiving: 'yes' },
-      { version: '7.0', includeLiving: true, file: 'C:\\somewhere\\else.ged' },
+      { version: '5.5', includeLiving: true, withFiles: false },
+      { version: '7.0', withFiles: false },
+      { version: '7.0', includeLiving: 'yes', withFiles: false },
+      { version: '7.0', includeLiving: true },
+      { version: '7.0', includeLiving: true, withFiles: 1 },
+      { version: '7.0', includeLiving: true, withFiles: true, file: 'C:\\somewhere\\else.gdz' },
     ]) {
       expect((await errorOf('exportGedcom', bad)).code, JSON.stringify(bad)).toBe('invalid');
     }

@@ -178,7 +178,7 @@ export interface PersonPage {
   media: PersonMediaInfo[];
   /**
    * For a person who came from a GEDCOM file: the lines of their record that
-   * the app has no fields for (notes, media, other programs' own tags). They
+   * the app has no fields for (notes, other programs' own tags). They
    * are kept as written and go back into an export. Empty for anyone else.
    */
   keptLines: string[];
@@ -310,7 +310,7 @@ export interface MediaTarget {
   id: string;
 }
 
-/** A picture or a document the tree holds. */
+/** A picture or a document of the tree. */
 export interface MediaInfo {
   id: string;
   /** `image`: the app shows it itself, with zoom. `document`: it is opened in another program. */
@@ -326,7 +326,18 @@ export interface MediaInfo {
   title: string;
   /** What the file shows. May have several lines. */
   description: string;
-  /** False when the file is no longer in the tree's media folder. */
+  /**
+   * False for a file that an imported GEDCOM file names and the tree does not
+   * hold. The tree then knows its title and what it belongs to, and nothing
+   * of the file itself.
+   */
+  held: boolean;
+  /**
+   * Where the imported file says the file is: a path or a web address. Empty
+   * for a file that was added in the app.
+   */
+  origin: string;
+  /** False when the file is not in the tree's media folder: it has gone from it, or was never there. */
   present: boolean;
   /** True when the file may be handed to the program Windows opens its kind with. */
   canOpen: boolean;
@@ -364,6 +375,8 @@ export interface MediaListRequest {
   query: string;
   /** True lists only the files that are attached to nothing. */
   unattached: boolean;
+  /** True lists only the files the tree knows of and does not hold. */
+  notHeld: boolean;
   offset: number;
   limit: number;
 }
@@ -371,7 +384,24 @@ export interface MediaListRequest {
 export interface MediaListPage {
   /** How many files match in total, not just on this page. */
   total: number;
+  /** How many files of the whole tree it knows of and does not hold. */
+  notHeld: number;
   media: MediaInfo[];
+}
+
+/** What looking in a folder for the files of an imported tree did. */
+export interface MediaFindResult {
+  tree: TreeState;
+  /** Files the tree knew of and did not hold, before the search. */
+  wanted: number;
+  /** How many of them were found and taken into the tree. */
+  found: number;
+  /** How many were left because two or more files in the folder fit equally well. */
+  ambiguous: number;
+  /** Files the search looked at. */
+  scanned: number;
+  /** True when the folder holds more files than the search looks at. */
+  truncated: boolean;
 }
 
 /** What adding files did. */
@@ -473,7 +503,11 @@ export interface GedcomImportInfo {
   sources: number;
   /** Citations of those sources. One that the file repeats under several facts is counted once. */
   citations: number;
-  /** Records the app keeps as written because it has no screens for them yet: notes, media. */
+  /** Pictures and documents the file names. */
+  media: number;
+  /** How many of those came with the file, in a GEDZip archive, and are now in the tree. */
+  mediaHeld: number;
+  /** Records the app keeps as written because it has no screens for them yet, such as notes. */
   keptRecords: number;
   /** Lines under people and families that are kept as written for the same reason. */
   keptLines: number;
@@ -492,6 +526,12 @@ export interface GedcomExportRequest {
   version: GedcomVersion;
   /** False leaves out everyone who may be living. */
   includeLiving: boolean;
+  /**
+   * True writes a GEDZip file: a zip archive with the GEDCOM file and the
+   * pictures and documents the tree holds. False writes the GEDCOM file
+   * alone, which names the files and does not carry them.
+   */
+  withFiles: boolean;
 }
 
 /** What an export to a GEDCOM file wrote. */
@@ -508,8 +548,16 @@ export interface GedcomExportInfo {
    * written as they are. Empty when the file is in the version it was imported in.
    */
   unconverted: { what: string; count: number }[];
-  /** Pictures and documents added in the app, which the file does not mention yet. */
-  mediaNotWritten: number;
+  /** True when a GEDZip file was written, with the files in it. */
+  withFiles: boolean;
+  /** Pictures and documents the file names. */
+  media: number;
+  /** How many files went into the archive. Zero for a GEDCOM file on its own. */
+  mediaFiles: number;
+  /** Of the pictures and documents named, those the tree does not hold, so that no archive can carry them. */
+  mediaNotHeld: number;
+  /** Pictures and documents left out because everything they are attached to was left out. */
+  mediaWithheld: number;
 }
 
 /** What a chart of one person is drawn from. */
@@ -601,8 +649,8 @@ export interface RulzApi {
 
   // GEDCOM files, the format other family tree programs read and write.
   /**
-   * Shows the system file picker, makes a new tree from the GEDCOM file chosen
-   * and opens it. The tree's folder is made inside `parentDir`, as for
+   * Shows the system file picker, makes a new tree from the GEDCOM or GEDZip
+   * file chosen and opens it. The tree's folder is made inside `parentDir`, as for
    * `createTree`; an empty `name` names the tree after the file. Null when cancelled.
    */
   importGedcom(input: { name: string; parentDir: string }): Promise<GedcomImportResult | null>;
@@ -696,6 +744,18 @@ export interface RulzApi {
   unlinkMedia(mediaId: string, target: MediaTarget): Promise<TreeState>;
   /** Deletes a file from the tree, wherever it is attached. Its copy stays in the tree folder for Undo. */
   deleteMedia(mediaId: string): Promise<TreeState>;
+  /**
+   * Shows the system file picker and gives the file chosen to a row whose
+   * file is not in the tree: one an imported GEDCOM file names, or one whose
+   * copy has gone from the media folder. Null when cancelled.
+   */
+  chooseMediaFile(mediaId: string): Promise<TreeState | null>;
+  /**
+   * Shows the system folder picker and looks in the folder chosen, and the
+   * folders inside it, for the files the tree knows of and does not hold.
+   * Those it finds are taken into the tree as one undo step. Null when cancelled.
+   */
+  findMediaFiles(): Promise<MediaFindResult | null>;
   undo(): Promise<TreeState>;
   redo(): Promise<TreeState>;
 
@@ -774,6 +834,8 @@ export const API_METHODS = [
   'updateMedia',
   'unlinkMedia',
   'deleteMedia',
+  'chooseMediaFile',
+  'findMediaFiles',
   'undo',
   'redo',
   'listBackups',

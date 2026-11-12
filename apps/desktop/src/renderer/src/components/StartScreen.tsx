@@ -127,7 +127,8 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
         <p>
           Ancestry, Family Tree Maker, RootsMagic, MyHeritage and most other family tree programs
           can save a tree as a GEDCOM file (a file ending in .ged). The app reads the file into a
-          new tree here. The file itself is not changed.
+          new tree here. The file itself is not changed. A GEDCOM file names pictures and does not
+          hold them; a GEDZip file (ending in .gdz) holds both and is read as well.
         </p>
         <form
           noValidate
@@ -148,7 +149,7 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
           </p>
           <div className="actions">
             <button type="submit" disabled={busy} data-testid="import-gedcom">
-              Choose a GEDCOM file…
+              Choose a GEDCOM or GEDZip file…
             </button>
           </div>
           {importing && (

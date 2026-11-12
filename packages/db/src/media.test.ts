@@ -15,6 +15,7 @@ import { BACKUP_DIR_NAME, listBackups } from './backup';
 import { UNTRACKED_WRITE_MESSAGE } from './changelog';
 import { openDatabase } from './connection';
 import { addFamilyEvent, deleteEvent, listPersonEvents } from './events';
+import { file as gedcomFile, importText } from './gedcom/testing';
 import {
   MAX_MEDIA_FILES_AT_ONCE,
   MEDIA_DIR_NAME,
@@ -29,7 +30,9 @@ import {
   listMedia,
   listMediaUses,
   listPersonMedia,
+  locateMediaFiles,
   mediaFilePath,
+  setMediaFile,
   unlinkMedia,
   updateMedia,
   type Media,
@@ -608,5 +611,236 @@ describe('a tree made before files could be attached', () => {
     add(tree, file, { type: 'source', id: sourceId });
     expect(count(tree, 'media')).toBe(1);
     expect(count(tree, 'media_link')).toBe(2);
+  });
+});
+
+const sha256Of = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+
+/** A GEDCOM file that names four files and holds none, as every GEDCOM file does. */
+const NAMED = gedcomFile(
+  '5.5.1',
+  '0 @I1@ INDI',
+  '1 NAME Ann /Lee/',
+  '1 OBJE @M1@',
+  '1 OBJE @M2@',
+  '1 OBJE @M3@',
+  '1 OBJE @M4@',
+  '0 @M1@ OBJE',
+  '1 FILE C:/Old PC/Tree Media/1921/wedding.png',
+  '2 TITL The wedding',
+  '0 @M2@ OBJE',
+  '1 FILE C:/Old PC/Tree Media/1930/wedding.png',
+  '2 TITL Another wedding',
+  '0 @M3@ OBJE',
+  '1 FILE https://example.com/scans/Register.PNG?size=full',
+  '0 @M4@ OBJE',
+  '1 FILE portrait.png',
+);
+
+interface Named {
+  tree: Tree;
+  /** The id of the file with this cross-reference id. */
+  id: (xref: string) => string;
+}
+
+function named(text = NAMED): Named {
+  const tree = track(createTree(tempDir(), { name: 'Named' }));
+  importText(tree, text);
+  const id = (xref: string) =>
+    tree.db.prepare('SELECT id FROM gedcom_record WHERE xref = ?').pluck().get(xref) as string;
+  return { tree, id };
+}
+
+describe('a file an imported GEDCOM file names', () => {
+  it('is in the tree without its file until the file is given', () => {
+    const { tree, id } = named();
+    const wedding = getMedia(tree, id('M1')) as Media;
+    expect(wedding).toMatchObject({ sha256: null, size: 0, title: 'The wedding' });
+    expect(mediaFilePath(tree, wedding)).toBeNull();
+    expect(isMediaPresent(tree, wedding)).toBe(false);
+    expect(countMedia(tree)).toBe(4);
+    expect(countMedia(tree, { notHeld: true })).toBe(4);
+    expect(listAllMedia(tree, { notHeld: true, query: 'another' }).map((m) => m.title)).toEqual([
+      'Another wedding',
+    ]);
+    expect(storedFiles(tree)).toEqual([]);
+  });
+
+  it('holds the file the user points at, as one step that can be undone', () => {
+    const { tree, id } = named();
+    const bytes = pngBytes(12, 9, 4);
+    const chosen = fileIn(tempDir(), 'scan of the wedding.png', bytes);
+    const before = undoDepth(tree);
+
+    const held = setMediaFile(tree, id('M1'), chosen);
+    expect(held).toMatchObject({
+      sha256: sha256Of(bytes),
+      ext: 'png',
+      mime: 'image/png',
+      size: bytes.length,
+      fileName: 'scan of the wedding.png',
+      title: 'The wedding',
+      origin: 'C:/Old PC/Tree Media/1921/wedding.png',
+    });
+    expect(isMediaPresent(tree, held)).toBe(true);
+    expect(undoDepth(tree)).toBe(before + 1);
+    expect(tree.undoStatus().undo?.label).toBe('Add the file');
+    expect(countMedia(tree, { notHeld: true })).toBe(3);
+    expect(() => setMediaFile(tree, id('M1'), chosen)).toThrow(TreeRuleError);
+
+    tree.undo();
+    expect(getMedia(tree, id('M1'))).toMatchObject({
+      sha256: null,
+      size: 0,
+      fileName: 'wedding.png',
+    });
+    // The copy stays, so that Redo finds it.
+    expect(storedFiles(tree)).toHaveLength(1);
+    tree.redo();
+    expect(isMediaPresent(tree, getMedia(tree, id('M1')) as Media)).toBe(true);
+  });
+
+  it('takes back a file that went from the folder only when it is the same file', () => {
+    const { tree, files, person } = start();
+    const bytes = pngBytes(9, 9, 1);
+    const media = add(tree, fileIn(files, 'a.png', bytes), person);
+    rmSync(mediaFilePath(tree, media) ?? '');
+    const depth = undoDepth(tree);
+
+    const other = fileIn(files, 'b.png', pngBytes(9, 9, 2));
+    expect(() => setMediaFile(tree, media.id, other)).toThrow(MediaFileError);
+    expect(() => setMediaFile(tree, media.id, other)).toThrow(/contents are different/);
+    expect(isMediaPresent(tree, media)).toBe(false);
+    // Nothing of the refused file is left behind.
+    expect(storedFiles(tree)).toEqual([]);
+
+    setMediaFile(tree, media.id, fileIn(files, 'renamed.png', bytes));
+    expect(isMediaPresent(tree, media)).toBe(true);
+    expect(getMedia(tree, media.id)).toMatchObject({ fileName: 'a.png' });
+    // The row did not change, so there is nothing to undo.
+    expect(undoDepth(tree)).toBe(depth);
+  });
+
+  it('is refused for a tree in memory and for a file that cannot be read', () => {
+    const tree = memoryTree();
+    importText(tree, NAMED);
+    const id = tree.db.prepare("SELECT id FROM gedcom_record WHERE xref = 'M1'").pluck().get();
+    expect(() => setMediaFile(tree, id as string, 'anything.png')).toThrow(TreeRuleError);
+    expect(() => locateMediaFiles(tree, tempDir())).toThrow(TreeRuleError);
+
+    const onDisk = named();
+    expect(() => setMediaFile(onDisk.tree, MISSING, 'a.png')).toThrow(NotFoundError);
+    expect(() => setMediaFile(onDisk.tree, onDisk.id('M1'), join(tempDir(), 'none.png'))).toThrow(
+      MediaFileError,
+    );
+  });
+});
+
+describe('looking for the files of an imported tree in a folder', () => {
+  /** A folder laid out as the computer the GEDCOM file came from had it, under another name. */
+  function folder(): { dir: string; first: Buffer; second: Buffer; register: Buffer } {
+    const dir = tempDir();
+    const first = pngBytes(10, 10, 1);
+    const second = pngBytes(10, 10, 2);
+    const register = pngBytes(10, 10, 3);
+    for (const path of ['Tree Media/1921', 'Tree Media/1930', 'scans', 'x', 'y']) {
+      mkdirSync(join(dir, path), { recursive: true });
+    }
+    fileIn(join(dir, 'Tree Media', '1921'), 'wedding.png', first);
+    fileIn(join(dir, 'Tree Media', '1930'), 'wedding.png', second);
+    fileIn(join(dir, 'scans'), 'register.png', register);
+    fileIn(join(dir, 'x'), 'portrait.png', pngBytes(10, 10, 4));
+    fileIn(join(dir, 'y'), 'portrait.png', pngBytes(10, 10, 5));
+    return { dir, first, second, register };
+  }
+
+  it('finds each by its name, and by its folders where two have one name', () => {
+    const { tree, id } = named();
+    const { dir, first, second, register } = folder();
+    const before = undoDepth(tree);
+
+    expect(locateMediaFiles(tree, dir)).toEqual({
+      wanted: 4,
+      found: 3,
+      ambiguous: 1,
+      scanned: 5,
+      truncated: false,
+    });
+    expect(getMedia(tree, id('M1'))?.sha256).toBe(sha256Of(first));
+    expect(getMedia(tree, id('M2'))?.sha256).toBe(sha256Of(second));
+    // A web address ends in a name too, and upper and lower case do not matter.
+    expect(getMedia(tree, id('M3'))).toMatchObject({
+      sha256: sha256Of(register),
+      fileName: 'register.png',
+      origin: 'https://example.com/scans/Register.PNG?size=full',
+    });
+    // Two files are called portrait.png and nothing tells them apart.
+    expect(getMedia(tree, id('M4'))?.sha256).toBeNull();
+    expect(storedFiles(tree)).toHaveLength(3);
+
+    // All of it is one step.
+    expect(undoDepth(tree)).toBe(before + 1);
+    expect(tree.undoStatus().undo?.label).toBe('Find files');
+    tree.undo();
+    expect(countMedia(tree, { notHeld: true })).toBe(4);
+    tree.redo();
+    expect(countMedia(tree, { notHeld: true })).toBe(1);
+
+    // With one of the two out of the way, the last file is found as well.
+    rmSync(join(dir, 'y', 'portrait.png'));
+    expect(locateMediaFiles(tree, dir)).toMatchObject({ wanted: 1, found: 1, ambiguous: 0 });
+    expect(tree.undoStatus().undo?.label).toBe('Find file');
+    expect(locateMediaFiles(tree, dir)).toMatchObject({ wanted: 0, found: 0, scanned: 0 });
+  });
+
+  it('finds nothing in a folder that is empty, missing, or the tree itself', () => {
+    const { tree } = named();
+    const depth = undoDepth(tree);
+    expect(locateMediaFiles(tree, tempDir())).toMatchObject({ wanted: 4, found: 0, scanned: 0 });
+    expect(locateMediaFiles(tree, join(tempDir(), 'not there'))).toMatchObject({ found: 0 });
+    expect(locateMediaFiles(tree, tree.dir ?? '')).toMatchObject({ found: 0, ambiguous: 0 });
+    expect(undoDepth(tree)).toBe(depth);
+  });
+
+  it('passes over a file it cannot take and takes the others', () => {
+    const { tree, id } = named();
+    const dir = tempDir();
+    fileIn(dir, 'portrait.png', Buffer.alloc(0));
+    mkdirSync(join(dir, '1921'));
+    fileIn(join(dir, '1921'), 'wedding.png', pngBytes(6, 6));
+    mkdirSync(join(dir, '1930'));
+    fileIn(join(dir, '1930'), 'wedding.png', Buffer.alloc(5000, 1));
+    expect(locateMediaFiles(tree, dir, { maxBytes: 1000 })).toMatchObject({ wanted: 4, found: 1 });
+    expect(getMedia(tree, id('M1'))?.sha256).not.toBeNull();
+    expect(storedFiles(tree)).toHaveLength(1);
+  });
+
+  it('lets two records hold the same picture, as the imported file has them', () => {
+    const { tree, id } = named(
+      gedcomFile(
+        '5.5.1',
+        '0 @I1@ INDI',
+        '1 NAME Ann /Lee/',
+        '1 OBJE @M1@',
+        '0 @M1@ OBJE',
+        '1 FILE one.png',
+        '0 @M2@ OBJE',
+        '1 FILE two.png',
+      ),
+    );
+    const dir = tempDir();
+    const bytes = pngBytes(7, 7);
+    fileIn(dir, 'one.png', bytes);
+    fileIn(dir, 'two.png', bytes);
+    expect(locateMediaFiles(tree, dir)).toMatchObject({ wanted: 2, found: 2 });
+    expect(getMedia(tree, id('M1'))?.sha256).toBe(sha256Of(bytes));
+    expect(getMedia(tree, id('M2'))?.sha256).toBe(sha256Of(bytes));
+    // One copy in the folder serves both.
+    expect(storedFiles(tree)).toHaveLength(1);
+
+    // Added in the app, the same picture is the record that came first.
+    const added = addMediaFiles(tree, [fileIn(dir, 'three.png', bytes)], null);
+    expect(added[0]).toMatchObject({ isNew: false, media: { id: id('M1') } });
+    expect(count(tree, 'media')).toBe(2);
   });
 });

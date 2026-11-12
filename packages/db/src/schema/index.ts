@@ -4,6 +4,7 @@ import { gedcomRecords } from './002-gedcom';
 import { mergeRecords } from './003-merge';
 import { sources } from './004-sources';
 import { media } from './005-media';
+import { gedcomMedia } from './006-gedcom-media';
 
 /** The schema history of a tree database, oldest first. Only ever append to this list. */
 export const treeMigrations: readonly Migration[] = [
@@ -12,4 +13,5 @@ export const treeMigrations: readonly Migration[] = [
   mergeRecords,
   sources,
   media,
+  gedcomMedia,
 ];

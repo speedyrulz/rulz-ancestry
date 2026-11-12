@@ -789,9 +789,9 @@ export function PersonPageView({
               {countOf(page.keptLines.length, 'item', 'items')} that the app has no fields for yet
             </summary>
             <p className="hint">
-              These are notes, pictures and other details from the file this person was imported
-              from. The app keeps them exactly as they were written and puts them back when the tree
-              is exported. They cannot be edited here yet.
+              These are notes and other details from the file this person was imported from. The app
+              keeps them exactly as they were written and puts them back when the tree is exported.
+              They cannot be edited here yet.
             </p>
             {page.keptLines.map((lines, index) => (
               <pre key={index} className="kept-lines" data-testid="kept-lines">

@@ -582,8 +582,21 @@ describe('exporting in the other version', () => {
     const tree = memoryTree();
     importText(
       tree,
-      file('5.5.1', '0 @I1@ INDI', '1 NAME A /B/', '1 OBJE', '2 FILE a.xyz', '2 FORM xyz'),
+      file(
+        '5.5.1',
+        '0 @I1@ INDI',
+        '1 NAME A /B/',
+        '1 OBJE',
+        '2 FILE a.xyz',
+        '2 FORM xyz',
+        '1 NOTE See the picture',
+        '2 OBJE',
+        '3 TITL Under a note, which the app keeps as written',
+      ),
     );
+    // The first picture is a file of the tree and becomes a record, as 7.0
+    // wants. Its format is one 7.0 has no name for. The second names no file
+    // and stays as it was written.
     expect(exportGedcom(tree, { ...EXPORT_DEFAULTS, version: '7.0' }).unconverted).toEqual({
       'media item described in place': 1,
       'file format': 1,

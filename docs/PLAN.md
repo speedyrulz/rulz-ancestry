@@ -111,6 +111,18 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - **A picture with zoom needs no library.** The viewer is one `<img>` moved and scaled with a CSS transform inside a clipped area (`ImageStage` in `apps/desktop/src/renderer/src/components/media.tsx`). The wheel needs a listener of its own, because React listens for it passively and cannot stop the dialog from scrolling.
 - Measured in the unit tests, on a solid-state disk and with the files just written (so partly from memory): 40 files of 5 MB each are taken into a tree in 0.33 seconds, one file of 200 MB in 0.22 seconds, and a person's page with 41 files reads in 0.3 ms.
 
+### Findings from Phase 2c that later phases rely on
+
+- **A GEDCOM file names a picture in one of two ways.** A media record (`0 @M1@ OBJE`) with lines that point at it is what GEDCOM 7.0 requires and what the sample written in Ancestry's style has. GEDCOM 5.5.1 also allows the description in place, under each person on the photograph (`1 OBJE` with a `2 FILE` line), and several desktop programs are said to write that form. Both are read (`packages/core/src/gedcom/media.ts`). Descriptions in place that say the same in the same words are one file with several links. Which program writes which form was taken from the standards and from memory of such files, not from real exports: none has been tried.
+- **Below the first level of a record, the export works out which file a line stands for; it stores no mark.** A pointer names a media record, and a description in place is found by its wording, in the table `gedcom_media`. Only a line directly under a person or a family is marked, like a citation there, because the person's page must know that it is not a line "kept as written". This needed far less bookkeeping than the marks citations have, and a line that a file repeats is handled without a special case.
+- **A file the tree only knows of is a row without a hash.** `media.sha256` is NULL until the file itself is given: from the zip archive the GEDCOM file came in, from a file the user points at, or from a folder the user has the app look in. `media.origin` keeps the path or web address the imported file gave. The page is never served anything for such a row, whatever path it names.
+- **One file may now be two rows.** Two records of an imported file may name the same picture, and both are kept, so that the file can be written back as it was. The index on `sha256` is therefore no longer unique. A file added in the app is still one row: it attaches the oldest row that has its contents.
+- **An import copies no file from a path a GEDCOM file names.** Such a path can be anything on the computer, and a file from someone else must not be able to pull a document into a tree that is later shared. Files come only from the archive the GEDCOM file came in, by a path that stays inside it, or from a file or folder the user picks in the system dialog.
+- **A zip archive is read and written without a library** (`packages/db/src/zip.ts`, on `node:zlib`). The reader never writes a file under a name from an archive: it hands out bytes, and the media folder files them under their hash, so an archive cannot place a file anywhere. An entry is refused when it is larger than it was told to take, whatever size the archive states. Files written by it were opened with Windows' own tools, and a zip made by Windows was read. ZIP64 (over 4 GB) is neither read nor written.
+- **A migration that writes to a tracked table takes the triggers off first** (`untrackChanges`), writes, and puts them back with `trackChanges`, which also picks up a new column. Rows logged before the column existed are still undone correctly, because undo writes only the columns a logged row has.
+- **GEDCOM 7.0 has no place for a description in place,** so an export to 7.0 turns each into a record with pointers. The lines the app has no fields for come along into the record.
+- Measured in the unit tests, on a solid-state disk and with the files just written: a GEDZip file with 100 files of 5 MB each (500 MB) is written in 0.7 seconds and imported in 1.1 seconds, and those 100 files are found in a folder and taken in 1.1 seconds. Upgrading the 10,000-person sample tree, which has 1,000 lines that point at one portrait, takes 0.4 seconds. The import and the export of that sample take as long as before this part, measured three times each on the same day: 4.0 to 4.6 seconds and 1.2 to 1.5 seconds in the unit test, on a busier machine than the earlier figures were taken on. In the app the import took 4.9 seconds on the production build and 3.4 seconds on the packaged app, in one run each.
+
 ## 3. Architecture
 
 ```
@@ -313,13 +325,26 @@ and a link by "type and id"; the path is worked out from the hash instead, and
 the link has one column per kind of owner, as `citation_link` does. A region of
 a picture (a face, one entry on a page) is not a column yet.
 
+Changed in schema version 6 (`packages/db/src/schema/006-gedcom-media.ts`):
+
+```sql
+media gains: origin  -- where an imported GEDCOM file says the file is: a path or a web address
+media.sha256         -- no longer unique; NULL for a file the tree knows of and does not hold
+gedcom_record.kind   -- gains 'media': the record a file was imported from, under the file's id
+gedcom_media(media_id, key)
+  -- the file each media item written in place became, by its wording; written by an import only
+```
+
+`gedcom_media` is not in the change log, like `gedcom_record`: an import
+writes it and no edit changes it.
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
 place(id, name, parent_id, geonames_id, lat, lon)            -- Phase 2; event gains place_id
 source gains: repository_id, connector_id, url
 citation gains: url, accessed_at, external_record_id
-media gains: the file reference of an imported record; media_link gains: a region of the picture
+media_link gains: a region of the picture
 external_id(person_id, connector_id, external_key)
 external_record(id, connector_id, external_key, record_type, payload_json, fetched_at, expires_at)
 hint(id, person_id, external_record_id, origin, score, features_json, rationale_json,
@@ -336,10 +361,9 @@ codes were planned as columns on `person_name`; part 1d works them out in memory
 during a scan instead, which needed no schema change. They become columns only
 if the hints of Phase 4 need to look names up by sound in the database. Sources
 and citations got their tables in part 2a, and a migration made their rows for
-trees imported earlier. Notes are still kept as written, and so are the media
-records of an imported file: part 2b made the tables for files added in the
-app, and part 2c fills them from imported files, with a migration for trees
-imported earlier.
+trees imported earlier. Part 2b made the tables for files added in the app, and
+part 2c fills them from imported files, with a migration for trees imported
+earlier. Notes are still kept as written.
 
 The application database (`app.db` in the profile folder, schema in
 `packages/db/src/appdb.ts`) is separate from any tree. Built, in its schema
@@ -355,7 +379,7 @@ Rules:
 - **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. The cross-reference ids of an imported GEDCOM file (`@I1@`) are kept in `gedcom_record.xref` and used again on export; a person added later gets the first free `I` number, a family the first free `F` number.
 - **Dates** keep the text as typed, plus a normalized day-number range, a qualifier (about, before, between) and a calendar. `parseDate()` in `packages/core` reads GEDCOM 5.5.1 and 7.0 dates and common English forms. Text it cannot read is kept as a phrase with no range.
 - **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten.
-- **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event, a family link, a source or a citation together with the id of what it became, and every other line (notes, media, repositories, other programs' own tags) exactly as it was. The export puts each line back in its place. A name, event, source or citation that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
+- **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event, a family link, a source, a citation or a file together with the id of what it became, and every other line (notes, repositories, other programs' own tags) exactly as it was. The export puts each line back in its place. A name, event, source, citation or file that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
 - **A citation is one place in a source, and can support several facts.** It is linked to a person or a family as a whole, to an event, or to a name. Editing it changes it for every fact it supports. In a GEDCOM file it is written out under each of them.
 - **A citation exists only while it supports something.** When its last link goes, the citation goes too, whether the user removed the link or deleted the event, name, person or family. GEDCOM has no place to write a citation that supports nothing, so such a citation would be lost in an export without anyone being told. The source stays, and Undo brings the citation back.
 - **Deleting a source deletes its citations.** The app says how many before it does.
@@ -364,7 +388,11 @@ Rules:
 - **A file can be attached to several things, and stays when it is attached to none.** A person or a family as a whole, an event, a citation and a source can each have files. Unlike a citation, a file that is attached to nothing is kept: it is worth keeping on its own, and "Media" on the tree screen lists it.
 - **The page never names a file by its path.** The user picks files in the system dialog; from then on a file is known to the page by the id of its row. The main process works out the path from the row, and serves a picture only from the open tree's media folder.
 - **Opening a file never runs it.** Only kinds on a fixed list (pictures, documents, sound, film) are handed to the program Windows opens them with. Any other file is shown in its folder.
-- **An export says what it leaves out.** Until media records are written (part 2c), the export counts the files added in the app and says that the GEDCOM file does not mention them.
+- **A GEDCOM file names files; a GEDZip file holds them.** An import of a GEDCOM file makes a row for every picture and document it names, attached to what the file attaches it to, and holds none of them. An import of a GEDZip file (a zip archive with the GEDCOM file and the files it names) takes the files in as well. An export writes either: the GEDCOM file alone, or a GEDZip file with the files the tree holds.
+- **A file is taken into a tree only from where the user says.** The path an imported file gives for a picture is shown and never opened. The files come from the archive the GEDCOM file came in, from one file the user chooses for one row, or from a folder the user has the app look in, where a file is found by its name and, among files of one name, by the folders at the end of the path the imported file gave. When two fit equally well, neither is taken.
+- **A file keeps the name the imported file gave it.** A GEDCOM file written without the files gives the path or address it was imported with, so that an untouched import still exports line for line. A file that goes into an archive is named by its path there, and so is a file added in the app, which has no other name: `media/` and its file name, with only letters, digits, dots, dashes and underscores.
+- **Not every OBJE line becomes a file.** A line that points at no media record of the file, a description that names no file, a media record without an id, and a media line under something other than a person, a family, an event, a citation or a source record stay as lines kept as written. Only the first file of a record that names several is the file; the other lines are kept.
+- **An export says what it leaves out.** It says how many pictures and documents it names, how many of them it holds, and how many it left out because everything they are attached to was left out, as the pictures of people who may be living are. A picture attached to nothing is written.
 - **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it. The duplicate detection that needs exists since part 1d; bringing a file into an existing tree is still to be built.
 - **Nothing is merged automatically.** The app lists pairs of people who may be one person, with a score and its reasons. Two records become one only when the user compares them and says so, and a pair the user marks as different people is not offered again.
 - **A merge loses nothing but exact repeats.** The person kept receives the other record's names, events, parents, partners and children. A name or event is dropped only when the person kept already has it word for word and the imported file says nothing more about it. Two families with the same two partners become one. The whole merge is one undo step.
@@ -381,7 +409,7 @@ Rules:
 ## 6. Features by module
 
 1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge. Built in parts 1b and 1d.
-2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c, apart from GEDZip (a 7.0 file zipped together with its media), which waits for the media store in Phase 2.
+2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c. Part 2c added the pictures and documents a file names, and GEDZip (a GEDCOM file zipped together with its media), both ways.
 3. **Sources and media:** citation management, a viewer with zoom, face-region tags, optional local OCR with `tesseract.js`. Sources and citations were built in part 2a, and the media store with its viewer in part 2b. The viewer shows files of the tree; record images served by an archive (IIIF) come with the search of Phase 3. Face regions and OCR are not built.
 4. **Search:** one query form sent to Tier A connectors and installed packs, results grouped by source with attribution, plus a row of Tier C links.
 5. **Hints:** background jobs query sources for each person, direct ancestors first. Scoring is Fellegi-Sunter style over name similarity, phonetic codes, date gaps, place hierarchy overlap and relatives' names. Results go to a hints inbox with a side-by-side compare. Accepted facts get a citation, rejected hints never resurface, and nothing merges automatically.
@@ -483,17 +511,17 @@ data in and return plain data, so these tools are thin wrappers around them.
 
 Durations are rough estimates for one developer working with AI assistance.
 
-| Phase                       | Scope                                                                                                                                                                                                                     | Done when                                                                                                                                                                             | Estimate  |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 0. Foundations              | Repo, monorepo, CI, packaging; connector manifests; access checklist                                                                                                                                                      | An installer builds and the packaged app opens a window. **Done 2026-11-11**                                                                                                          | 1 week    |
-| 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff. Met in part 1c on a file written in Ancestry's style; a real export is still to be tried    | 3–4 weeks |
-| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom. Met in part 2b on 2026-11-12, for a scan added in the app; three parts are still to do, see "Phase 2 breakdown"      | 2–3 weeks |
-| 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                        | 3–4 weeks |
-| 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                    | 2–3 weeks |
-| 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set | 2–3 weeks |
-| 5. Packs and more sources   | Pack manager, 1950 census index, Open Archives dumps; Geni, regional newspapers, FamilySearch if approved                                                                                                                 | Packs install, search offline, and uninstall cleanly                                                                                                                                  | 2–3 weeks |
-| 6. Release                  | Reports, accessibility, app icon, auto-update, MSIX, Store submission, user docs                                                                                                                                          | Installable from the Store and GitHub Releases                                                                                                                                        | 2 weeks   |
-| 7. DNA and extras           | DNA tools; transcription of record images, locally or through the AI assistant                                                                                                                                            | Open-ended                                                                                                                                                                            | —         |
+| Phase                       | Scope                                                                                                                                                                                                                     | Done when                                                                                                                                                                                                                               | Estimate  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0. Foundations              | Repo, monorepo, CI, packaging; connector manifests; access checklist                                                                                                                                                      | An installer builds and the packaged app opens a window. **Done 2026-11-11**                                                                                                                                                            | 1 week    |
+| 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff. Met in part 1c on a file written in Ancestry's style; a real export is still to be tried                                                      | 3–4 weeks |
+| 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom. Met in part 2b on 2026-11-12, for a scan added in the app, and since part 2c for a scan a GEDZip file brings along; two parts are still to do, see "Phase 2 breakdown" | 2–3 weeks |
+| 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                                                                          | 3–4 weeks |
+| 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                                                                      | 2–3 weeks |
+| 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set                                                   | 2–3 weeks |
+| 5. Packs and more sources   | Pack manager, 1950 census index, Open Archives dumps; Geni, regional newspapers, FamilySearch if approved                                                                                                                 | Packs install, search offline, and uninstall cleanly                                                                                                                                                                                    | 2–3 weeks |
+| 6. Release                  | Reports, accessibility, app icon, auto-update, MSIX, Store submission, user docs                                                                                                                                          | Installable from the Store and GitHub Releases                                                                                                                                                                                          | 2 weeks   |
+| 7. DNA and extras           | DNA tools; transcription of record images, locally or through the AI assistant                                                                                                                                            | Open-ended                                                                                                                                                                                                                              | —         |
 
 ### Phase 0 outcome
 
@@ -652,8 +680,8 @@ Not done, and why:
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
 | 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12** |
 | 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12** |
-| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | Next                |
-| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Planned             |
+| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12** |
+| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Next                |
 | 2e   | Map of a person's events, and the life timeline                                                                                            | Planned             |
 
 The phase's test ("a scanned record can be attached, cited and viewed at full
@@ -661,7 +689,9 @@ zoom") is met by parts 2a and 2b for a scan added in the app. Part 2b was first
 planned to include GEDCOM media records and GEDZip. They became part 2c: the
 store, the screens and the viewer are useful on their own, and reading media
 records needs the same three things together as sources did (an import, a
-migration for trees imported earlier, and a test that the two agree). Two
+migration for trees imported earlier, and a test that the two agree). With
+part 2c a scan that comes with an imported tree is attached, cited and viewed
+in the same way. Two
 things decide how 2d and 2e are built and need the owner: whether the GeoNames
 gazetteer may be bundled or downloaded (its licence is still on the "to
 confirm" list in section 4), and where map tiles come from, since free tile
@@ -745,6 +775,45 @@ Not done, and why:
 - **The new screens were checked by eye in light colours only,** in one window of about 1,100 by 570 points.
 - **Real photographs and scans were not tried.** The test pictures are generated patterns, and no JPEG from a camera or scanner went through the viewer.
 
+### Phase 2c outcome
+
+Delivered:
+
+- **The pictures and documents an imported file names.** A media record, and a description written in place under a person, a family, an event, a citation or a source record, becomes a file of the tree with its title and its note, attached to what the file attaches it to. It shows on the person's page, under its citation and in "Media" like a file added in the app. Until the file itself is given, its tile says "Not in the tree" and the viewer shows the path or web address the imported file gave.
+- **Giving the tree the files.** "Find the files in a folder" under "Media" looks in a folder the user picks, and the folders inside it, and takes a copy of each file it finds, as one undo step. The viewer has "Choose the file" for one file, and a link for a web address, which opens in the browser like every other link of the app (the tests check the link, and do not click it). A filter lists only the files that are not in the tree.
+- **GEDZip, both ways.** The import reads a `.gdz` file, or any zip file that holds one GEDCOM file, and takes the pictures in it into the tree. The export dialog offers "A GEDZip file", which packs the GEDCOM file with every file the tree holds.
+- **Export.** A GEDCOM file names the files of the tree: the imported ones as they were written, line for line when nothing was edited, and the ones added in the app as new records. A title or note that was edited changes one line, or one line in each place a description stands. A file taken away from something loses its line there; a deleted file loses its record and every line that pointed at it. In GEDCOM 7.0 a description in place becomes a record.
+- **Trees imported before this part are upgraded** when they are opened, after a copy is put in the backups folder: their media records and media lines, which were kept as written, become files and attachments exactly as a fresh import of the same file would make them. Files attached in the app before the upgrade stay first in each list.
+- **Living people.** A picture that is attached only to people and things an export leaves out is left out too, and the export says how many.
+- **Tests.** Unit tests went from 599 to 680 and end-to-end tests from 31 to 32.
+
+Changed from earlier parts:
+
+- **The tree schema is at version 6.** An earlier build cannot open a tree once this build has opened it; a copy is put in the backups folder first.
+- **"One file is one row" now holds only for files added in the app.** Two records of an imported file that name the same picture are two rows, as in the file.
+- **An import report counts pictures and documents,** and no longer counts media records among what is kept as written. A person's page no longer lists media lines under "items the app has no fields for".
+- **An export writes the files added in the app,** which part 2b left out and said so.
+- **GEDZip files are no longer refused.**
+- **The contract between the page and the main process has 62 functions,** two more than before: choosing the file for one row, and looking in a folder. Exporting takes one more choice, and the list of files one more filter.
+
+Not done, and why:
+
+- **No real export from any program has been tried,** and here it matters most. How Ancestry, Family Tree Maker, RootsMagic, Gramps and the others write media was taken from the two standards and from memory of such files. The sample in Ancestry's style has one media record. A file that names its pictures in a way not thought of keeps those lines as written, which loses nothing, but shows no picture.
+- **No GEDZip file made by another program was read.** The archives in the tests were written by this app, and one by Windows' own zip tool. A file from FamilySearch or another GEDCOM 7.0 program may name its files in a way the import does not follow.
+- **Archives over 4 GB are neither read nor written** (the ZIP64 format), nor are more than 65,534 files in one archive. A tree with more pictures than that can still be copied as a folder. The export stops when it reaches the limit, says so, and leaves no half-written file behind.
+- **Nothing is downloaded.** A picture that an imported file names by a web address, as Ancestry's exports do, has to be saved by the user and then chosen or found in a folder. The address opens in the browser.
+- **A file is found by its name only.** A picture that was renamed since the GEDCOM file was written is not found, and two files of one name in folders that fit equally well are both left. There is no way yet to pick between them, other than choosing the file for each row by hand.
+- **The folder search looks at 50,000 files and 12 folders deep at most,** and blocks the window while it copies, as adding files does.
+- **Only the first file of a media record that names several is the file.** The other FILE lines are kept and exported, and shown nowhere.
+- **What a media line carries beyond the pointer is not shown:** a cropping, a title for that one use (GEDCOM 7.0), a program's own "main picture" mark. It is kept and exported.
+- **A description in place that differs in one line is another file.** Two people with the same photograph, one of them marked as the main picture, get two rows that name one file. Both hold it once it is found.
+- **Media under a note, an association, a submitter or a name is not attached to anything;** the line is kept as written. So is the second of two equal citations of one fact, with the media under it.
+- **A file's kind is guessed until the tree holds it,** from the format the GEDCOM file states or the ending of the name. A wrong guess corrects itself when the file is taken in.
+- **An export to 5.5.1 of a tree imported as 7.0 keeps records,** which 5.5.1 allows. An export to 7.0 writes file names as they are; 7.0 wants a path with special characters written in a coded form, and only the names this app makes are sure to need none.
+- **The Backups dialog counts every picture and document as a file in the media folder,** also those the tree only knows of.
+- **The new screens were checked by eye in light colours only,** in one window of about 1,100 by 570 points.
+- **The upgrade from version 5 was tested on trees built by the tests,** not on a file saved by the earlier build.
+
 ## 9. Risks
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
@@ -760,6 +829,8 @@ Not done, and why:
 - **One citation for several facts is not how every program thinks.** A user who edits a citation under a birth may not expect the name's citation to change with it. The edit form says when a citation supports more than one fact; whether that is enough has not been tried with a user.
 - **A tree is now more than one file.** The pictures and documents are in the media folder, not in `tree.db`, and backups do not hold them. A user who copies only `tree.db`, or relies on the backups folder alone, loses the files. The app shows a lost file as missing and takes it back when it is added again, and the Backups dialog and the README say to copy the whole folder. A backup that includes the media folder is still to be designed.
 - **The media folder only grows.** Nothing is removed from it, so a tree can become much larger than what it shows. See "Disk space is never freed" under part 2b.
+- **A file from someone else can name any path and hold any archive.** A GEDCOM file may give `C:\Users\…` for a picture, and a zip file may claim sizes it does not have. The import opens no path a GEDCOM file names, takes from an archive only what the GEDCOM file names by a path inside it, never writes under a name from an archive, and unpacks no entry beyond 500 MB. An archive that names very many large files can still fill the disk of whoever imports it; nothing limits the total yet.
+- **The zip code is the app's own.** It was written for this part, with no library behind it, and has met two other tools: Windows' own unpacker and bsdtar read what it writes, and it read one archive Windows wrote. Archives from other programs may use features it refuses (ZIP64, encryption, other packing methods); it says so and imports nothing.
 - **A test that fails now and then hides real failures.** The 10,000-person GEDCOM unit test has stopped with a native crash twice in about 35 full runs, with no cause found. If it becomes more frequent, find the cause before adding more tests around it.
 - **Coverage.** Users with mostly US ancestors before 1940 will do much of their record searching through links to FamilySearch's own site.
 

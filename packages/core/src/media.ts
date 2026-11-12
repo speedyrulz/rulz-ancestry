@@ -155,6 +155,79 @@ export function mediaTypeOf(fileName: string, head: Uint8Array): MediaType {
   return { ext, mime: MIME_BY_EXTENSION[ext] ?? UNKNOWN_MIME };
 }
 
+const MEDIA_TYPE = /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/;
+
+/**
+ * The kind of a file the tree does not hold, from what an imported file says
+ * of it: its format (`jpg` in GEDCOM 5.5.1, `image/jpeg` in 7.0) and, failing
+ * that, the extension of its name. A guess, replaced by what the file's own
+ * bytes say once the tree holds it.
+ */
+export function mediaTypeFromFormat(format: string, fileName: string): MediaType {
+  const stated = format.trim().toLowerCase();
+  if (MEDIA_TYPE.test(stated)) {
+    const known = Object.entries(MIME_BY_EXTENSION).find(([, mime]) => mime === stated);
+    return { ext: known ? known[0] : fileExtension(fileName), mime: stated };
+  }
+  const ext = /^[a-z0-9]{1,8}$/.test(stated) ? stated : fileExtension(fileName);
+  return { ext, mime: MIME_BY_EXTENSION[ext] ?? UNKNOWN_MIME };
+}
+
+/** True for a file reference that is a web address. */
+export function isWebAddress(reference: string): boolean {
+  return /^https?:\/\//i.test(reference.trim());
+}
+
+/**
+ * The file name at the end of a path or a web address, as far as one can be
+ * told: `C:\Photos\ann.jpg` and `https://example.com/p/ann.jpg?size=2` both
+ * give `ann.jpg`. Empty when the reference ends in none.
+ */
+export function referenceFileName(reference: string): string {
+  let text = reference.trim();
+  if (isWebAddress(text)) {
+    try {
+      text = decodeURIComponent(new URL(text).pathname);
+    } catch {
+      text = text.replace(/[?#].*$/, '').replace(/^https?:\/\/[^/]*/i, '');
+    }
+    if (text.endsWith('/')) return '';
+  }
+  const parts = text.split(/[\\/]/).filter((part) => part !== '');
+  return (parts[parts.length - 1] ?? '').slice(0, MEDIA_LIMITS.fileName);
+}
+
+/**
+ * A file reference as a path below some folder, with forward slashes, or
+ * null when it is not one: a web address, a path with a drive letter or from
+ * the root of a disk, or a path that steps out of the folder with `..`.
+ */
+export function localRelativePath(reference: string): string | null {
+  const text = reference.trim().replace(/\\/g, '/');
+  // A scheme (`https:`, `file:`) or a drive letter (`C:`).
+  if (text === '' || /^[a-z][a-z0-9+.-]*:/i.test(text) || text.startsWith('/')) return null;
+  const parts = text.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.length === 0 || parts.includes('..')) return null;
+  return parts.join('/');
+}
+
+/**
+ * A name for a file inside an archive that every program and file system
+ * accepts: letters without accents, digits, dots, dashes and underscores.
+ * `fallback` is used when nothing of the name is left.
+ */
+export function safeArchiveName(fileName: string, ext: string, fallback: string): string {
+  const dot = fileName.lastIndexOf('.');
+  const stem = (dot > 0 ? fileName.slice(0, dot) : fileName)
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 80);
+  const base = /[A-Za-z0-9]/.test(stem) ? stem : fallback;
+  return ext === '' ? base : `${base}.${ext}`;
+}
+
 /** The pictures the app shows itself. Other kinds, such as TIFF and HEIC, are not drawn by the window. */
 const VIEWABLE = new Set([
   'image/jpeg',

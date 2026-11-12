@@ -6,6 +6,7 @@ import {
   makeNode,
   pointerTarget,
   pointerTo,
+  structureKey,
   touch,
   type GedcomNode,
 } from './node';
@@ -117,7 +118,12 @@ export function readSource(node: GedcomNode): SourceFields {
  * there is none. An empty value removes that first child. Further children
  * with the same tag are left alone: a citation may quote a source twice.
  */
-function setFirst(parent: GedcomNode, tag: string, value: string, order: readonly string[]): void {
+export function setFirst(
+  parent: GedcomNode,
+  tag: string,
+  value: string,
+  order: readonly string[],
+): void {
   const first = findChild(parent, tag);
   if (value === '') {
     if (first) parent.children = parent.children.filter((child) => child !== first);
@@ -170,8 +176,8 @@ export function citedSource(node: GedcomNode): string | null {
   return node.tag === 'SOUR' ? pointerTarget(node.value) : null;
 }
 
-/** The first note written under a citation itself, as opposed to a pointer to a note record. */
-function ownNote(node: GedcomNode): GedcomNode | undefined {
+/** The first note written under a structure itself, as opposed to a pointer to a note record. */
+export function ownNote(node: GedcomNode): GedcomNode | undefined {
   return node.children.find(
     (child) =>
       child.tag === 'NOTE' && pointerTarget(child.value) === null && child.value.trim() !== '',
@@ -255,6 +261,5 @@ export function patchCitation(
  * under an event (level 2) compare as equal. The caller adds the source.
  */
 export function citationKey(node: GedcomNode): string {
-  const shape = (line: GedcomNode): unknown => [line.tag, line.value, line.children.map(shape)];
-  return JSON.stringify(node.children.map(shape));
+  return structureKey(node);
 }

@@ -1384,6 +1384,22 @@ ul.media-grid,
   text-align: center;
 }
 
+.viewer-message .actions {
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.viewer-message a {
+  color: var(--accent);
+}
+
+/* A path or a web address can be one long word. */
+.viewer-message .path,
+.facts .path {
+  overflow-wrap: anywhere;
+}
+
 .viewer-side {
   display: flex;
   flex-direction: column;

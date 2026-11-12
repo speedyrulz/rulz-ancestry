@@ -5,24 +5,29 @@ import {
   fstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readSync,
   renameSync,
   rmSync,
   writeSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import {
   MEDIA_LIMITS,
   MEDIA_SNIFF_BYTES,
   cleanMediaFields,
+  isWebAddress,
   mediaStorePath,
   mediaTypeOf,
   newId,
+  referenceFileName,
   type MediaFields,
+  type MediaType,
 } from '@rulz/core';
 import { sql } from './connection';
 import { listCitationUses } from './sources';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
+import { ZipError } from './zip';
 
 /**
  * Pictures and documents.
@@ -36,6 +41,11 @@ import { NotFoundError, TreeRuleError, type Tree } from './tree';
  * A file is attached to a person or a family as a whole, an event, a
  * citation or a source, and may be attached to several of them. See
  * schema/005-media.ts.
+ *
+ * An imported GEDCOM file names files without holding them. Such a row has no
+ * `sha256` until the file itself is given to the tree: from the zip archive
+ * the GEDCOM file came in, from a file the user points at, or from a folder
+ * the user has the app look in. See schema/006-gedcom-media.ts.
  */
 
 /** The folder inside a tree folder that holds the files. */
@@ -66,6 +76,11 @@ export interface Media extends MediaFields {
   size: number;
   /** The name the file had where it was added from. */
   fileName: string;
+  /**
+   * Where an imported GEDCOM file says the file is: a path or a web address.
+   * Empty for a file that was added in the app.
+   */
+  origin: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -113,12 +128,13 @@ interface MediaRow {
   file_name: string;
   title: string;
   description: string;
+  origin: string;
   created_at: number;
   updated_at: number;
 }
 
 const MEDIA_COLUMNS =
-  'id, sha256, ext, mime, size, file_name, title, description, created_at, updated_at';
+  'id, sha256, ext, mime, size, file_name, title, description, origin, created_at, updated_at';
 
 const LINK_COLUMN = {
   person: 'person_id',
@@ -146,6 +162,7 @@ function toMedia(row: MediaRow): Media {
     fileName: row.file_name,
     title: row.title,
     description: row.description,
+    origin: row.origin,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -200,42 +217,36 @@ function megabytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / (1024 * 1024))).toLocaleString('en-GB')} MB`;
 }
 
+/** Where the bytes of a file come from: a file on disk, or an entry of a zip archive. */
+export interface ByteSource {
+  /** The name the file has where it comes from, without a folder. */
+  fileName: string;
+  /** Fills the buffer with the next bytes and returns how many it gave; 0 at the end. */
+  read(buffer: Buffer): number;
+}
+
 /**
- * Copies a file into the media folder under a temporary name, working out
- * its SHA-256 as it goes. Nothing in the tree refers to the copy yet.
+ * Copies the bytes of a file into the media folder under a temporary name,
+ * working out their SHA-256 on the way. Nothing in the tree refers to the
+ * copy yet.
  */
-function stageFile(mediaDir: string, file: string, maxBytes: number): StagedFile {
-  const fileName = basename(file);
+function stageFrom(mediaDir: string, source: ByteSource, maxBytes: number): StagedFile {
+  const fileName = source.fileName;
   const temp = join(mediaDir, `incoming-${newId()}.tmp`);
-  let source: number | null = null;
   let target: number | null = null;
   try {
-    try {
-      source = openSync(file, 'r');
-    } catch {
-      throw new MediaFileError(`${fileName} could not be opened`);
-    }
-    const stat = fstatSync(source);
-    if (!stat.isFile()) throw new MediaFileError(`${fileName} is not a file`);
-    if (stat.size === 0) throw new MediaFileError(`${fileName} is empty`);
-    if (stat.size > maxBytes) {
-      throw new MediaFileError(
-        `${fileName} is ${megabytes(stat.size)}; the largest file a tree takes is ${megabytes(maxBytes)}`,
-      );
-    }
-
     target = openSync(temp, 'wx');
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let head: Uint8Array = new Uint8Array(0);
     let size = 0;
     for (;;) {
-      const read = readSync(source, buffer, 0, buffer.length, null);
+      const read = source.read(buffer);
       if (read === 0) break;
       const chunk = buffer.subarray(0, read);
       if (size === 0) head = Uint8Array.from(chunk.subarray(0, MEDIA_SNIFF_BYTES));
       size += read;
-      // The file may have grown since its size was read.
+      // A file on disk may have grown since its size was read.
       if (size > maxBytes) {
         throw new MediaFileError(
           `${fileName} is larger than ${megabytes(maxBytes)}, the largest file a tree takes`,
@@ -262,9 +273,63 @@ function stageFile(mediaDir: string, file: string, maxBytes: number): StagedFile
     if (error instanceof MediaFileError) throw error;
     throw new MediaFileError(`${fileName} could not be copied: ${(error as Error).message}`);
   } finally {
-    if (source !== null) closeSync(source);
     if (target !== null) closeSync(target);
   }
+}
+
+/** Stages a file on disk; see {@link stageFrom}. */
+function stageFile(mediaDir: string, file: string, maxBytes: number): StagedFile {
+  const fileName = basename(file);
+  let source: number;
+  try {
+    source = openSync(file, 'r');
+  } catch {
+    throw new MediaFileError(`${fileName} could not be opened`);
+  }
+  try {
+    const stat = fstatSync(source);
+    if (!stat.isFile()) throw new MediaFileError(`${fileName} is not a file`);
+    if (stat.size === 0) throw new MediaFileError(`${fileName} is empty`);
+    if (stat.size > maxBytes) {
+      throw new MediaFileError(
+        `${fileName} is ${megabytes(stat.size)}; the largest file a tree takes is ${megabytes(maxBytes)}`,
+      );
+    }
+    return stageFrom(
+      mediaDir,
+      { fileName, read: (buffer) => readSync(source, buffer, 0, buffer.length, null) },
+      maxBytes,
+    );
+  } finally {
+    closeSync(source);
+  }
+}
+
+/**
+ * Moves a staged copy to its place in the media folder, unless the folder
+ * holds that file already, and says what kind of file it is.
+ */
+function placeStaged(mediaDir: string, file: StagedFile): MediaType {
+  const type = mediaTypeOf(file.fileName, file.head);
+  const path = join(mediaDir, ...mediaStorePath(file.sha256, type.ext).split('/'));
+  if (!existsSync(path)) {
+    mkdirSync(dirname(path), { recursive: true });
+    renameSync(file.temp, path);
+  }
+  return type;
+}
+
+/**
+ * Makes a row that so far only named a file hold it: the staged copy goes
+ * into the media folder, and the row says what the file is.
+ */
+function holdStaged(tree: Tree, mediaDir: string, mediaId: string, file: StagedFile): void {
+  const type = placeStaged(mediaDir, file);
+  sql(
+    tree.db,
+    `UPDATE media SET sha256 = ?, ext = ?, mime = ?, size = ?, file_name = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(file.sha256, type.ext, type.mime, file.size, file.fileName, Date.now(), mediaId);
 }
 
 function requireTarget(tree: Tree, target: MediaTarget): void {
@@ -332,7 +397,11 @@ export function addMediaFiles(
 
     return tree.transact(files.length === 1 ? 'Add file' : 'Add files', () => {
       if (target !== null) requireTarget(tree, target);
-      const bySha = sql(tree.db, `SELECT ${MEDIA_COLUMNS} FROM media WHERE sha256 = ?`);
+      // An imported file may name one picture in two records; the older row is used.
+      const bySha = sql(
+        tree.db,
+        `SELECT ${MEDIA_COLUMNS} FROM media WHERE sha256 = ? ORDER BY id LIMIT 1`,
+      );
       return staged.map((file): AddedMedia => {
         const existing = bySha.get(file.sha256) as MediaRow | undefined;
         let media: Media;
@@ -349,8 +418,20 @@ export function addMediaFiles(
           const now = Date.now();
           sql(
             tree.db,
-            `INSERT INTO media (${MEDIA_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).run(id, file.sha256, type.ext, type.mime, file.size, file.fileName, '', '', now, now);
+            `INSERT INTO media (${MEDIA_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).run(
+            id,
+            file.sha256,
+            type.ext,
+            type.mime,
+            file.size,
+            file.fileName,
+            '',
+            '',
+            '',
+            now,
+            now,
+          );
           media = requireMedia(tree, id);
         }
         // A row may name a file that has gone from the folder; adding the file again puts it back.
@@ -421,6 +502,249 @@ export function unlinkMedia(tree: Tree, mediaId: string, target: MediaTarget): v
       mediaId,
     );
   });
+}
+
+/** A row that names a file the tree does not hold, with where the file is said to be. */
+export interface NamedFile {
+  id: string;
+  /** The path or web address the imported file gives. */
+  reference: string;
+}
+
+/** Somewhere the files an imported GEDCOM file names can be had from, such as the zip archive it came in. */
+export interface MediaFileSource {
+  /** The bytes of the file a reference names, or null when the source does not have it. */
+  open(reference: string): ByteSource | null;
+}
+
+/**
+ * Takes the files that rows name into the tree, from `source`, as far as it
+ * has them. This writes without an undo step of its own: it is for an import,
+ * which fills an empty tree. Returns how many files the tree now holds, and a
+ * line for each file that could not be taken.
+ */
+export function holdNamedFiles(
+  tree: Tree,
+  named: readonly NamedFile[],
+  source: MediaFileSource,
+  options: AddMediaOptions = {},
+): { held: number; problems: string[] } {
+  const problems: string[] = [];
+  if (tree.dir === null || named.length === 0) return { held: 0, problems };
+  const mediaDir = join(tree.dir, MEDIA_DIR_NAME);
+  const maxBytes = options.maxBytes ?? MAX_MEDIA_BYTES;
+  let held = 0;
+  let made = false;
+  for (const item of named) {
+    let staged: StagedFile | null = null;
+    try {
+      const bytes = source.open(item.reference);
+      if (bytes === null) continue;
+      if (!made) {
+        mkdirSync(mediaDir, { recursive: true });
+        made = true;
+      }
+      staged = stageFrom(mediaDir, bytes, maxBytes);
+      holdStaged(tree, mediaDir, item.id, staged);
+      held += 1;
+    } catch (error) {
+      // One picture that cannot be taken does not stop the import; anything else does.
+      if (!(error instanceof MediaFileError) && !(error instanceof ZipError)) throw error;
+      problems.push(error.message);
+    } finally {
+      if (staged !== null) rmSync(staged.temp, { force: true });
+    }
+  }
+  return { held, problems };
+}
+
+/**
+ * Gives a row the file it names. For a row of an imported GEDCOM file, which
+ * the tree knows of and does not hold, any file the user points at is taken.
+ * For a row whose file has gone from the media folder, only that same file
+ * is, told by its contents.
+ */
+export function setMediaFile(
+  tree: Tree,
+  mediaId: string,
+  file: string,
+  options: AddMediaOptions = {},
+): Media {
+  const mediaDir = mediaDirOf(tree);
+  const current = requireMedia(tree, mediaId);
+  if (isMediaPresent(tree, current)) throw new TreeRuleError('the tree holds this file already');
+  mkdirSync(mediaDir, { recursive: true });
+  const staged = stageFile(mediaDir, file, options.maxBytes ?? MAX_MEDIA_BYTES);
+  try {
+    if (current.sha256 !== null && current.sha256 !== staged.sha256) {
+      throw new MediaFileError(
+        `${staged.fileName} is not the file the tree had: its contents are different`,
+      );
+    }
+    return tree.transact('Add the file', () => {
+      const row = requireMedia(tree, mediaId);
+      if (row.sha256 === null) holdStaged(tree, mediaDir, mediaId, staged);
+      else placeStaged(mediaDir, staged);
+      return requireMedia(tree, mediaId);
+    });
+  } finally {
+    rmSync(staged.temp, { force: true });
+  }
+}
+
+/** How many files {@link locateMediaFiles} looks at in a folder before it stops. */
+export const MAX_LOCATE_FILES = 50_000;
+/** How many folders deep it looks. */
+const MAX_LOCATE_DEPTH = 12;
+
+export interface LocateResult {
+  /** Files the tree knew of and did not hold, before the search. */
+  wanted: number;
+  /** How many of them were found and taken into the tree. */
+  found: number;
+  /** How many were left because two or more files in the folder fit equally well. */
+  ambiguous: number;
+  /** Files the search looked at. */
+  scanned: number;
+  /** True when the folder holds more files than the search looks at. */
+  truncated: boolean;
+}
+
+/** The parts of a path, in lower case: `C:\Photos\Ann.JPG` gives `c:`, `photos`, `ann.jpg`. */
+function pathParts(path: string): string[] {
+  return path
+    .toLowerCase()
+    .split(/[\\/]/)
+    .filter((part) => part !== '' && part !== '.');
+}
+
+/**
+ * Looks in a folder, and the folders inside it, for the files the tree knows
+ * of and does not hold, and takes those it finds into the tree as one undo
+ * step.
+ *
+ * A file is found by its name. Where several files have that name, the one
+ * whose folders match the end of the path the imported file gives wins:
+ * `C:\Old PC\Tree Media\1921\ann.jpg` is `1921\ann.jpg` in the folder
+ * `Tree Media`, wherever that folder is now. When two fit equally well, none
+ * is taken.
+ */
+export function locateMediaFiles(
+  tree: Tree,
+  folder: string,
+  options: AddMediaOptions = {},
+): LocateResult {
+  const mediaDir = mediaDirOf(tree);
+  const wanted = sql(
+    tree.db,
+    'SELECT id, origin, file_name FROM media WHERE sha256 IS NULL ORDER BY id',
+  ).all() as { id: string; origin: string; file_name: string }[];
+  const result: LocateResult = {
+    wanted: wanted.length,
+    found: 0,
+    ambiguous: 0,
+    scanned: 0,
+    truncated: false,
+  };
+  if (wanted.length === 0) return result;
+
+  // Every file below the folder, by its name in lower case.
+  const byName = new Map<string, { path: string; parts: string[] }[]>();
+  const own = resolve(mediaDir).toLowerCase();
+  const pending: { dir: string; depth: number }[] = [{ dir: resolve(folder), depth: 0 }];
+  while (pending.length > 0 && !result.truncated) {
+    const next = pending.pop();
+    if (!next || next.dir.toLowerCase() === own) continue;
+    let entries;
+    try {
+      entries = readdirSync(next.dir, { withFileTypes: true });
+    } catch {
+      // A folder that cannot be read is passed over.
+      continue;
+    }
+    for (const entry of entries) {
+      const path = join(next.dir, entry.name);
+      if (entry.isDirectory()) {
+        if (next.depth < MAX_LOCATE_DEPTH) pending.push({ dir: path, depth: next.depth + 1 });
+      } else if (entry.isFile()) {
+        if (result.scanned >= MAX_LOCATE_FILES) {
+          result.truncated = true;
+          break;
+        }
+        result.scanned += 1;
+        const name = entry.name.toLowerCase();
+        const found = { path, parts: pathParts(path) };
+        const list = byName.get(name);
+        if (list) list.push(found);
+        else byName.set(name, [found]);
+      }
+    }
+  }
+
+  const matches: { id: string; path: string }[] = [];
+  for (const row of wanted) {
+    const web = isWebAddress(row.origin);
+    const named = web ? [] : pathParts(row.origin);
+    const name = (
+      named[named.length - 1] ??
+      (row.file_name === '' ? referenceFileName(row.origin) : row.file_name)
+    ).toLowerCase();
+    const candidates = name === '' ? [] : (byName.get(name) ?? []);
+    if (candidates.length === 0) continue;
+    /** How many folders and names at the end of the two paths are the same. */
+    const fit = (parts: readonly string[]): number => {
+      let same = 0;
+      while (
+        same < parts.length &&
+        same < named.length &&
+        parts[parts.length - 1 - same] === named[named.length - 1 - same]
+      ) {
+        same += 1;
+      }
+      return same;
+    };
+    let best: { path: string; fit: number } | null = null;
+    let tie = false;
+    for (const candidate of candidates) {
+      const score = fit(candidate.parts);
+      if (best === null || score > best.fit) {
+        best = { path: candidate.path, fit: score };
+        tie = false;
+      } else if (score === best.fit) {
+        tie = true;
+      }
+    }
+    if (best === null) continue;
+    if (tie) result.ambiguous += 1;
+    else matches.push({ id: row.id, path: best.path });
+  }
+  if (matches.length === 0) return result;
+
+  mkdirSync(mediaDir, { recursive: true });
+  const maxBytes = options.maxBytes ?? MAX_MEDIA_BYTES;
+  const staged: { id: string; file: StagedFile }[] = [];
+  try {
+    for (const match of matches) {
+      try {
+        staged.push({ id: match.id, file: stageFile(mediaDir, match.path, maxBytes) });
+      } catch (error) {
+        // A file that cannot be read, or is too large, is left where it is.
+        if (!(error instanceof MediaFileError)) throw error;
+      }
+    }
+    if (staged.length === 0) return result;
+    tree.transact(staged.length === 1 ? 'Find file' : 'Find files', () => {
+      for (const item of staged) {
+        const row = getMedia(tree, item.id);
+        if (row === null || row.sha256 !== null) continue;
+        holdStaged(tree, mediaDir, item.id, item.file);
+        result.found += 1;
+      }
+    });
+    return result;
+  } finally {
+    for (const item of staged) rmSync(item.file.temp, { force: true });
+  }
 }
 
 /** The files attached to one thing, in the order they were attached. */
@@ -610,6 +934,8 @@ export interface MediaListOptions {
   query?: string;
   /** True lists only the files that are attached to nothing. */
   unattached?: boolean;
+  /** True lists only the files the tree knows of and does not hold. */
+  notHeld?: boolean;
   offset?: number;
   limit?: number;
 }
@@ -622,18 +948,21 @@ function likePattern(query: string): string {
 const MEDIA_FILTER = `(@all = 1 OR title LIKE @like ESCAPE '!' OR file_name LIKE @like ESCAPE '!'
     OR description LIKE @like ESCAPE '!')
   AND (@unattached = 0
-    OR NOT EXISTS (SELECT 1 FROM media_link WHERE media_link.media_id = media.id))`;
+    OR NOT EXISTS (SELECT 1 FROM media_link WHERE media_link.media_id = media.id))
+  AND (@notHeld = 0 OR sha256 IS NULL)`;
 
 function filterValues(options: MediaListOptions): {
   all: number;
   like: string;
   unattached: number;
+  notHeld: number;
 } {
   const query = options.query ?? '';
   return {
     all: query.trim() === '' ? 1 : 0,
     like: likePattern(query),
     unattached: options.unattached === true ? 1 : 0,
+    notHeld: options.notHeld === true ? 1 : 0,
   };
 }
 

@@ -84,6 +84,20 @@ export function trackChanges(db: Db, table: string): void {
   `);
 }
 
+/**
+ * Removes the guard and logging triggers of a table, so that a migration can
+ * write rows to it: a migration is not an edit, and leaves nothing to undo.
+ * The migration calls {@link trackChanges} again when it has finished.
+ */
+export function untrackChanges(db: Db, table: string): void {
+  assertIdentifier(table);
+  db.exec(
+    ['guard_insert', 'guard_update', 'guard_delete', 'log_insert', 'log_update', 'log_delete']
+      .map((trigger) => `DROP TRIGGER IF EXISTS ${table}_${trigger};`)
+      .join('\n'),
+  );
+}
+
 /** One undoable step: everything written by a single change transaction. */
 export interface ChangeTx {
   id: number;

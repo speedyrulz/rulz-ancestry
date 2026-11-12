@@ -11,6 +11,7 @@ import {
   mediaUrl,
   type MediaAddResult,
   type MediaDetails,
+  type MediaFindResult,
   type MediaInfo,
   type MediaListPage,
   type MediaTarget,
@@ -48,6 +49,13 @@ function kindLabel(media: MediaInfo): string {
 /** The small picture of a file, or a tile saying what it is when there is no picture to show. */
 function Preview({ media }: { media: MediaInfo }) {
   const [failed, setFailed] = useState(false);
+  if (!media.held) {
+    return (
+      <span className="media-none" data-testid="media-not-held">
+        Not in the tree
+      </span>
+    );
+  }
   if (!media.present) {
     return (
       <span className="media-none" data-testid="media-missing">
@@ -701,17 +709,73 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
         onSelect(personId);
       }
     : undefined;
+  /** Asks for the file itself, for a file the tree only knows of or has lost. Null means cancelled. */
+  const chooseFile = () =>
+    attempt(
+      api.chooseMediaFile(media.id).then((tree) => {
+        if (tree !== null) onTree(tree);
+      }),
+    );
 
   return (
     <Dialog title={mediaTitle(media)} onClose={onClose} testId="media-viewer" full>
       <div className="viewer">
-        {!media.present ? (
+        {!media.held ? (
           <div className="viewer-main">
-            <p className="viewer-message" data-testid="media-absent">
-              The file <span className="path">{media.fileName}</span> is no longer in the media
-              folder of this tree. It may have been moved or deleted outside the app. Adding the
-              same file again puts it back; its title and what it is attached to are kept.
-            </p>
+            <div className="viewer-message" data-testid="media-not-held-message">
+              <p>
+                The file this tree was imported from names this picture or document and does not
+                hold it. The tree knows its title and what it belongs to, and has no copy of the
+                file itself.
+              </p>
+              {media.origin !== '' && (
+                <p>
+                  The imported file gives it as{' '}
+                  <span className="path" data-testid="media-origin">
+                    {media.origin}
+                  </span>
+                </p>
+              )}
+              <p>
+                If you have the file, choose it and the tree takes a copy. To look for many files at
+                once, use “Find the files in a folder” under “Media” on the tree screen.
+              </p>
+              <div className="actions">
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={chooseFile}
+                  data-testid="media-choose"
+                >
+                  Choose the file…
+                </button>
+                {/^https:\/\//i.test(media.origin) && (
+                  <a
+                    href={media.origin}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid="media-origin-link"
+                  >
+                    Open the address in your browser
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : !media.present ? (
+          <div className="viewer-main">
+            <div className="viewer-message" data-testid="media-absent">
+              <p>
+                The file <span className="path">{media.fileName}</span> is no longer in the media
+                folder of this tree. It may have been moved or deleted outside the app. Choosing the
+                same file again puts it back; its title and what it is attached to are kept.
+              </p>
+              <div className="actions">
+                <button type="button" onClick={chooseFile} data-testid="media-choose">
+                  Choose the file…
+                </button>
+              </div>
+            </div>
           </div>
         ) : media.kind === 'image' ? (
           <ImageStage
@@ -779,11 +843,20 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
 
           <dl className="facts" data-testid="media-facts">
             <dt>File</dt>
-            <dd className="path">{media.fileName}</dd>
+            <dd className="path">{media.fileName === '' ? 'No name given' : media.fileName}</dd>
             <dt>Kind</dt>
             <dd>
-              {kindLabel(media)}, {formatSize(media.size)}
+              {kindLabel(media)}
+              {media.held ? `, ${formatSize(media.size)}` : ', not in the tree'}
             </dd>
+            {media.held && media.origin !== '' && (
+              <>
+                <dt>Named in the imported file as</dt>
+                <dd className="path" data-testid="media-origin">
+                  {media.origin}
+                </dd>
+              </>
+            )}
             {pixels !== null && (
               <>
                 <dt>Size</dt>
@@ -947,6 +1020,27 @@ export function PersonMediaSection({
   );
 }
 
+/** A sentence or two on what looking in a folder for files did. */
+function findSummary(result: MediaFindResult): string {
+  const wanted = countOf(result.wanted, 'file', 'files');
+  const parts = [
+    result.found === 0
+      ? `None of the ${wanted} was found in that folder.`
+      : `Found ${result.found.toLocaleString()} of ${wanted} and took a copy of each.`,
+  ];
+  if (result.ambiguous > 0) {
+    parts.push(
+      `${countOf(result.ambiguous, 'file was', 'files were')} left, because the folder holds more than one file of that name and nothing tells them apart.`,
+    );
+  }
+  if (result.truncated) {
+    parts.push(
+      `The folder holds more files than the app looks at (${result.scanned.toLocaleString()}). Try a folder nearer to the pictures.`,
+    );
+  }
+  return parts.join(' ');
+}
+
 /** How many files the list of all files shows at first, and how many more each time. */
 const LIBRARY_PAGE = 60;
 
@@ -963,11 +1057,14 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
   const [text, setText] = useState('');
   const [query, setQuery] = useState('');
   const [unattached, setUnattached] = useState(false);
+  const [notHeld, setNotHeld] = useState(false);
+  const [finding, setFinding] = useState(false);
+  const [found, setFound] = useState<{ text: string; error: boolean } | null>(null);
   const [limit, setLimit] = useState(LIBRARY_PAGE);
   const [loaded, setLoaded] = useState<{ filter: string; page: MediaListPage } | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const adding = useAddMedia(onTree);
-  const filter = `${query}|${unattached}`;
+  const filter = `${query}|${unattached}|${notHeld}`;
 
   // Search once typing pauses, not on every key.
   useEffect(() => {
@@ -980,20 +1077,38 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
 
   useEffect(() => {
     let cancelled = false;
-    api.listAllMedia({ query, unattached, offset: 0, limit }).then(
+    const asked = `${query}|${unattached}|${notHeld}`;
+    api.listAllMedia({ query, unattached, notHeld, offset: 0, limit }).then(
       (page) => {
-        if (!cancelled) setLoaded({ filter: `${query}|${unattached}`, page });
+        if (!cancelled) setLoaded({ filter: asked, page });
       },
       () => {
-        if (!cancelled) {
-          setLoaded({ filter: `${query}|${unattached}`, page: { total: 0, media: [] } });
-        }
+        if (!cancelled) setLoaded({ filter: asked, page: { total: 0, notHeld: 0, media: [] } });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [query, unattached, limit, tree.revision]);
+  }, [query, unattached, notHeld, limit, tree.revision]);
+
+  /** How many files the tree only knows of. Kept from the last answer while a new one is on its way. */
+  const named = loaded?.page.notHeld ?? 0;
+  const find = async () => {
+    setFinding(true);
+    setFound(null);
+    try {
+      const result = await api.findMediaFiles();
+      // Null means the folder picker was cancelled.
+      if (result !== null) {
+        onTree(result.tree);
+        setFound({ text: findSummary(result), error: false });
+      }
+    } catch (failure) {
+      setFound({ text: errorMessage(failure), error: true });
+    } finally {
+      setFinding(false);
+    }
+  };
 
   // Only the answer to what is asked now is shown; an older one could be clicked by mistake.
   const page = loaded !== null && loaded.filter === filter ? loaded.page : null;
@@ -1026,7 +1141,28 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
               />
               Only those attached to nothing
             </label>
+            {(named > 0 || notHeld) && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={notHeld}
+                  onChange={(event) => {
+                    setNotHeld(event.target.checked);
+                    setLimit(LIBRARY_PAGE);
+                  }}
+                  data-testid="library-not-held"
+                />
+                Only those not in the tree
+              </label>
+            )}
           </div>
+          {named > 0 && (
+            <p className="dialog-text" data-testid="library-named">
+              {countOf(named, 'file is', 'files are')} named by the file this tree was imported
+              from, and not in the tree. “Find the files in a folder” looks for them by name in a
+              folder you choose, and takes a copy of each one it finds.
+            </p>
+          )}
           <div className="scroll-box tall" data-testid="library-list">
             {page === null && <p className="muted">Looking…</p>}
             {page !== null && page.media.length === 0 && (
@@ -1060,7 +1196,26 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
         </>
       )}
       <AddMessage message={adding.message} />
+      {found !== null && (
+        <p
+          className={found.error ? 'error' : 'dialog-text'}
+          role={found.error ? 'alert' : 'status'}
+          data-testid="library-found"
+        >
+          {found.text}
+        </p>
+      )}
       <div className="dialog-actions">
+        {named > 0 && (
+          <button
+            type="button"
+            disabled={finding}
+            onClick={() => void find()}
+            data-testid="library-find"
+          >
+            Find the files in a folder…
+          </button>
+        )}
         <button
           type="button"
           disabled={adding.busy}

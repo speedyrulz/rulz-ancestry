@@ -45,8 +45,12 @@ describe('a 10,000-person file written the way Ancestry writes them', () => {
     expect(countPersons(tree)).toBe(PEOPLE);
     expect(report.names).toBe(PEOPLE);
     expect(report.events).toBeGreaterThan(PEOPLE * 2);
-    expect(report.keptRecords).toEqual({ SUBM: 1, REPO: 1, OBJE: 1 });
+    expect(report.keptRecords).toEqual({ SUBM: 1, REPO: 1 });
     expect(report.sources).toBe(20);
+    // One portrait, which every tenth person points at.
+    expect(report.media).toBe(1);
+    expect(report.mediaHeld).toBe(0);
+    expect(tree.db.prepare('SELECT count(*) FROM media_link').pluck().get()).toBe(PEOPLE / 10);
     // Each person's name and birth cite the same census entry: one citation, two links.
     expect(report.citations).toBe(PEOPLE);
     expect(tree.db.prepare('SELECT count(*) FROM citation_link').pluck().get()).toBe(PEOPLE * 2);

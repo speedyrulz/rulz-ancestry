@@ -158,3 +158,14 @@ export function setChildValue(
   }
   return first;
 }
+
+/**
+ * Text that is the same for two structures exactly when everything under them
+ * says the same in the same words, in the same order. The line itself is left
+ * out, so that a structure at level 1 and the same one at level 2 compare as
+ * equal.
+ */
+export function structureKey(node: GedcomNode): string {
+  const shape = (line: GedcomNode): unknown => [line.tag, line.value, line.children.map(shape)];
+  return JSON.stringify(node.children.map(shape));
+}

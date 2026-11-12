@@ -12,15 +12,16 @@ can draw four kinds of chart, ask how two people are related, and find and
 merge people who were entered twice. You can record the sources a tree rests
 on and say which names and events each one supports. You can attach pictures
 and documents to people, events, families, citations and sources, and look at
-a picture at full size. The open check is to try the import on a real export
-from Ancestry. Reading and writing pictures in GEDCOM files (part 2c) is next;
-there is no record search yet. See
+a picture at full size. The pictures and documents a GEDCOM file names are read
+and written, and a GEDZip file takes the files themselves along. The open check
+is to try the import on a real export from Ancestry. Notes and places (part 2d)
+are next; there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
 
-A tree is a folder holding `tree.db`, a `backups` folder and, once a picture or
-document has been added, a `media` folder. By default it is made in
+A tree is a folder holding `tree.db`, a `backups` folder and, once the tree
+holds a picture or document, a `media` folder. By default it is made in
 `Documents\RulZ Ancestry`. To move a tree, move its folder and open it again
 with "Open a tree folder". To keep a tree safe, copy the whole folder: the
 backups hold the tree's data, not its pictures and documents.
@@ -29,8 +30,8 @@ GEDCOM is the file format family tree programs use to pass a tree to one
 another. The app reads versions 5.5.1 and 7.0 and writes both.
 
 - **Import** always makes a new tree; the file itself is not changed. Details
-  the app has no screens for yet (notes, pictures, other programs' own tags)
-  are kept exactly as written and go back into an export.
+  the app has no screens for yet (notes, other programs' own tags) are kept
+  exactly as written and go back into an export.
 - **Export** in the version the file came in gives the same file again, line
   for line, apart from its header. After edits, only the edited lines differ.
 - **Living people are left out of an export** unless you choose to include
@@ -85,8 +86,29 @@ Pictures and documents:
   opened in the program Windows uses for them.
 - **Deleting a file from the tree leaves its copy on the disk,** so that Undo
   can bring it back. The app does not free that space yet.
-- **A GEDCOM export does not mention these files yet,** and says so. The
-  pictures named in an imported file are still kept as written and not shown.
+- **One file is one entry,** however often it is added in the app. Only an
+  imported file that lists one picture twice gives two entries.
+
+Pictures and documents in GEDCOM files:
+
+- **A GEDCOM file names files; it does not hold them.** After an import the
+  tree knows each picture by its title and by what it belongs to, and shows
+  "Not in the tree" until it has the file.
+- **"Find the files in a folder"** under "Media" looks in a folder you choose,
+  and the folders inside it, for the files by name, and takes a copy of each
+  one it finds. "Choose the file" in the viewer does the same for one file.
+- **The app opens no path a GEDCOM file gives.** It shows the path or web
+  address, and takes a file only from a place you point at.
+- **A GEDZip file** (`.gdz`) is a zip file with a GEDCOM file and the files it
+  names. The import reads one and takes its pictures into the tree. The export
+  dialog writes one with every file the tree holds.
+- **A GEDCOM file written on its own** names every picture and document: those
+  that were imported as they were written, those added in the app as new
+  records.
+- **Pictures that belong only to people an export leaves out are left out
+  too,** and the export says how many.
+- Archives over 4 GB are not read or written. Nothing is downloaded from a web
+  address. No GEDZip file from another program has been tried.
 
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
@@ -126,7 +148,7 @@ Run these from the repository root.
 ```
 apps/desktop          Electron app: main process, preload script, React UI, e2e tests
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
-packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder
+packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
 docs/                 Plan and access checklist
 ```
@@ -175,6 +197,14 @@ docs/                 Plan and access checklist
 - **Opening a file never runs it.** Only kinds on a fixed list in
   `packages/core/src/media.ts` are handed to another program; anything else
   is shown in its folder.
+- **A file comes into a tree only from where the user says.** The import
+  opens no path a GEDCOM file names. Files come from the archive the GEDCOM
+  file came in, by a path that stays inside it, or from a file or folder
+  picked in the system dialog.
+- **Nothing is written under a name from an archive.** The zip reader in
+  `packages/db/src/zip.ts` hands out bytes, and the media folder files them
+  under their hash. An entry larger than the limit is not unpacked, whatever
+  size the archive states.
 - **Schema changes are migrations.** A change to the tree database is a new
   numbered file in `packages/db/src/schema`; a migration that has shipped is
   never edited. A tree is copied to its backups folder before a migration

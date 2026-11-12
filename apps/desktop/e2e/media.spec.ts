@@ -283,15 +283,17 @@ test('keeps the pictures and documents of a person, takes them away and brings t
   await window.getByTestId('media-close').click();
   expect(await handedOver(app)).toHaveLength(2);
 
-  // An export says that it leaves the files out.
+  // A GEDCOM file names the files and says that it does not hold them.
   await window.getByTestId('open-export').click();
   await answerSaveDialog(app, join(userDataDir, 'album.ged'));
+  await expect(window.getByTestId('export-without-files')).toBeChecked();
   await window.getByTestId('export-include-living').check();
   await window.getByTestId('export-submit').click();
-  await expect(window.getByTestId('export-media')).toContainText(
-    'does not mention the 4 pictures and documents',
+  await expect(window.getByTestId('export-media')).toHaveText(
+    'The file names 4 pictures and documents and does not hold them. Export a GEDZip file to take them along.',
   );
   await window.getByTestId('export-close').click();
+  expect(readFileSync(join(userDataDir, 'album.ged'), 'utf8')).toContain('0 @M1@ OBJE');
 
   // So do the backups: they hold the tree's data, not the files.
   await window.getByTestId('open-backups').click();

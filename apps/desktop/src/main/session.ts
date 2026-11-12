@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import {
   BACKUP_DIR_NAME,
+  MEDIA_DIR_NAME,
   TREE_FILE_NAME,
   backupTree,
   createTree,
@@ -23,6 +24,7 @@ import {
   type GedcomExportOptions,
   type GedcomExportResult,
   type GedcomImportReport,
+  type GedcomInput,
   type Tree,
 } from '@rulz/db';
 import type { RecentTreeInfo, StartInfo, TreeState } from '../shared/ipc';
@@ -206,6 +208,19 @@ export class TreeSession {
   ): { state: TreeState; report: GedcomImportReport } {
     const parent = this.#allowedParent(parentDir);
     const input = readGedcomFile(file);
+    try {
+      return this.#importInto(parent, name, input);
+    } finally {
+      // A GEDZip file is an archive, which stays open while its pictures are taken out.
+      input.close?.();
+    }
+  }
+
+  #importInto(
+    parent: string,
+    name: string,
+    input: GedcomInput,
+  ): { state: TreeState; report: GedcomImportReport } {
     const stated = name.trim().replace(/\s+/g, ' ');
     const fromFile = basename(input.fileName, extname(input.fileName)).trim();
     const treeName = (stated !== '' ? stated : fromFile).slice(0, 100).trim() || 'Imported tree';
@@ -221,6 +236,8 @@ export class TreeSession {
       for (const suffix of ['', '-wal', '-shm']) {
         rmSync(join(dir, TREE_FILE_NAME + suffix), { force: true });
       }
+      // Pictures that came out of a GEDZip file before the import failed.
+      rmSync(join(dir, MEDIA_DIR_NAME), { recursive: true, force: true });
       if (!existed) {
         try {
           rmdirSync(dir);
@@ -235,19 +252,27 @@ export class TreeSession {
     return { state: this.state(), report };
   }
 
-  /** Where the save dialog for an export starts: beside the tree's folder, named after the tree. */
-  suggestedExportPath(): string {
+  /**
+   * Where the save dialog for an export starts: beside the tree's folder,
+   * named after the tree. A GEDZip file, which carries the pictures and
+   * documents, ends in `.gdz`.
+   */
+  suggestedExportPath(withFiles = false): string {
     const tree = this.tree;
     const folder = tree.dir === null ? this.defaultParentDir : dirname(tree.dir);
-    return join(folder, `${treeFolderName(tree.info().name)}.ged`);
+    return join(folder, `${treeFolderName(tree.info().name)}.${withFiles ? 'gdz' : 'ged'}`);
   }
 
-  /** Writes the open tree to a GEDCOM file. A name with no extension gets `.ged`. */
+  /**
+   * Writes the open tree to a GEDCOM file or, with `files`, to a GEDZip file.
+   * A name with no extension gets `.ged` or `.gdz`.
+   */
   exportGedcom(
     file: string,
-    options: Pick<GedcomExportOptions, 'version' | 'includeLiving' | 'appVersion'>,
+    options: Pick<GedcomExportOptions, 'version' | 'includeLiving' | 'appVersion' | 'files'>,
   ): GedcomExportResult & { file: string } {
-    const target = extname(file) === '' ? `${file}.ged` : file;
+    const extension = options.files === true ? 'gdz' : 'ged';
+    const target = extname(file) === '' ? `${file}.${extension}` : file;
     const result = exportGedcomFile(this.tree, target, { ...options, now: this.#now() });
     return { ...result, file: target };
   }

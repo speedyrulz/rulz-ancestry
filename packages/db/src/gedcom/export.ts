@@ -1,9 +1,13 @@
-import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import {
   cloneNode,
   convertVersion,
+  embeddedMediaKey,
+  embeddedToRecord,
   encodeGedcom,
+  isEmbeddedMedia,
+  localRelativePath,
   makeNode,
   parseFragment,
   patchChildLine,
@@ -11,12 +15,14 @@ import {
   patchCitation,
   patchEvent,
   patchLiving,
+  patchMediaRecord,
   patchName,
   patchSex,
   patchSource,
   pointerTarget,
   pointerTo,
   readPedigree,
+  safeArchiveName,
   touch,
   touchAll,
   writeGedcom,
@@ -25,15 +31,20 @@ import {
   type EventOwner,
   type GedcomNode,
   type GedcomVersion,
+  type MediaFields,
+  type MediaFileReference,
   type NameFields,
   type Sex,
   type SourceFields,
 } from '@rulz/core';
 import { sql } from '../connection';
 import { presumedLivingIds } from '../living';
+import { mediaFilePath } from '../media';
 import type { Tree } from '../tree';
+import { writeZip } from '../zip';
 import {
   getGedcomSource,
+  listEmbeddedMedia,
   listMergedRecords,
   listStoredRecords,
   type PartKind,
@@ -50,6 +61,11 @@ import {
  * lines the app has no model for are put back where they were. So exporting an
  * untouched import in the version it came in gives the same file again, apart
  * from the header, which names this app as the writer.
+ *
+ * A GEDCOM file names pictures and documents; it does not hold them. With
+ * `files`, the export also lists the files the tree holds and the path each is
+ * to have in a zip archive beside the GEDCOM file, which is what a GEDZip
+ * file is.
  */
 
 export interface GedcomExportOptions {
@@ -62,6 +78,20 @@ export interface GedcomExportOptions {
   now?: number;
   /** The name of the file being written, for the header of a 5.5.1 file. */
   fileName?: string;
+  /**
+   * True when the files go along in a zip archive. A picture the tree holds
+   * is then named by its path in the archive. Without it, a file that came
+   * from an imported GEDCOM file keeps the path or address that file gave.
+   */
+  files?: boolean;
+}
+
+/** A file to pack beside the GEDCOM file. */
+export interface ExportedFile {
+  /** The path the GEDCOM file gives for it, which is its path in the archive. */
+  path: string;
+  /** Where the file is on disk, in the tree's media folder. */
+  source: string;
 }
 
 export interface GedcomExportResult {
@@ -78,12 +108,21 @@ export interface GedcomExportResult {
    * written in the version it was imported in.
    */
   unconverted: Record<string, number>;
+  /** Pictures and documents the file names. */
+  media: number;
   /**
-   * Pictures and documents added in the app. The file does not mention them:
-   * writing them as media records is not built yet, and until it is, an
-   * export must say what it left out.
+   * Of those, the ones that do not go along as files. Without `files` that is
+   * every one the tree knows of and does not hold; with it, also one whose
+   * file has gone from the media folder.
    */
-  mediaNotWritten: number;
+  mediaNotHeld: number;
+  /**
+   * Pictures and documents left out because everything they are attached to
+   * was left out: the files of people who may be living.
+   */
+  mediaWithheld: number;
+  /** With `files`: the files to pack beside the GEDCOM file. Empty otherwise. */
+  files: ExportedFile[];
 }
 
 interface PersonRow {
@@ -125,6 +164,24 @@ interface SourceRow extends SourceFields {
 interface CitationRow extends CitationFields {
   id: string;
   source_id: string;
+}
+
+interface MediaRow extends MediaFields {
+  id: string;
+  sha256: string | null;
+  ext: string;
+  mime: string;
+  file_name: string;
+  origin: string;
+}
+
+interface MediaLinkRow {
+  media_id: string;
+  person_id: string | null;
+  family_id: string | null;
+  event_id: string | null;
+  citation_id: string | null;
+  source_id: string | null;
 }
 
 interface CitationLinkRow {
@@ -226,9 +283,10 @@ const PERSON_SECTIONS: readonly PartKind[] = [
   'child-of',
   'partner-in',
   'citation',
+  'media',
 ];
 /** The same for a family record. */
-const FAMILY_SECTIONS: readonly PartKind[] = ['partner', 'event', 'child', 'citation'];
+const FAMILY_SECTIONS: readonly PartKind[] = ['partner', 'event', 'child', 'citation', 'media'];
 
 /**
  * Works out where lines go that have no original line of their own (a name
@@ -361,6 +419,28 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     if (list) list.push(link.citation_id);
     else citedBy.set(owner, [link.citation_id]);
   }
+  const mediaRows = sql(
+    db,
+    'SELECT id, sha256, ext, mime, file_name, title, description, origin FROM media ORDER BY id',
+  ).all() as MediaRow[];
+  const mediaById = new Map(mediaRows.map((media) => [media.id, media]));
+  /** The files of each person, family, event, citation and source, in the order of that owner's list. */
+  const mediaOf = new Map<string, string[]>();
+  /** How many things each file is attached to. */
+  const attachedTo = new Map<string, number>();
+  for (const link of sql(
+    db,
+    `SELECT media_id, person_id, family_id, event_id, citation_id, source_id FROM media_link
+     ORDER BY sort_order, id`,
+  ).all() as MediaLinkRow[]) {
+    const owner =
+      link.person_id ?? link.family_id ?? link.event_id ?? link.citation_id ?? link.source_id;
+    if (owner === null) continue;
+    const list = mediaOf.get(owner);
+    if (list) list.push(link.media_id);
+    else mediaOf.set(owner, [link.media_id]);
+    attachedTo.set(link.media_id, (attachedTo.get(link.media_id) ?? 0) + 1);
+  }
 
   // Who is left out.
   const omitted = options.includeLiving ? new Set<string>() : presumedLivingIds(tree, now);
@@ -424,9 +504,16 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     stored.map((record) => record.xref).filter((xref): xref is string => xref !== null),
   );
   const xrefOf = new Map<string, string>();
+  /** The file of each media record, by the record's cross-reference id. */
+  const mediaIdByXref = new Map<string, string>();
   for (const record of stored) {
-    const own = record.kind === 'person' || record.kind === 'family' || record.kind === 'source';
+    const own =
+      record.kind === 'person' ||
+      record.kind === 'family' ||
+      record.kind === 'source' ||
+      record.kind === 'media';
     if (own && record.xref !== null) xrefOf.set(record.id, record.xref);
+    if (record.kind === 'media' && record.xref !== null) mediaIdByXref.set(record.xref, record.id);
   }
   for (const person of persons) {
     if (!xrefOf.has(person.id)) xrefOf.set(person.id, xrefs.make('I'));
@@ -438,6 +525,161 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     if (!xrefOf.has(source.id)) xrefOf.set(source.id, xrefs.make('S'));
   }
   const xref = (id: string): string => xrefOf.get(id) ?? 'VOID';
+  /** The cross-reference id of a file's record; a file that has no record yet gets one when first asked for. */
+  const mediaXref = (id: string): string => {
+    let made = xrefOf.get(id);
+    if (made === undefined) {
+      made = xrefs.make('M');
+      xrefOf.set(id, made);
+    }
+    return made;
+  };
+
+  // Pictures and documents.
+  const withFiles = options.files === true;
+  /** The file each media item written in place became, by its wording. */
+  const embeddedIds = listEmbeddedMedia(tree);
+  const writtenInPlace = new Set(embeddedIds.values());
+  /**
+   * GEDCOM 7.0 has media records only. A media item written in place stays
+   * where it is unless the file is being turned into 7.0 from another version.
+   */
+  const keepInPlace = sameVersion || target === '5.5.1';
+  /** The first structure each media item written in place was read from. */
+  const inPlaceModel = new Map<string, GedcomNode>();
+  if (embeddedIds.size > 0) {
+    const look = (node: GedcomNode): void => {
+      if (isEmbeddedMedia(node)) {
+        const id = embeddedIds.get(embeddedMediaKey(node));
+        if (id !== undefined && !inPlaceModel.has(id)) inPlaceModel.set(id, node);
+        return;
+      }
+      node.children.forEach(look);
+    };
+    for (const record of stored) {
+      if (record.kind === 'source') parseFragment(record.text, sourceVersion).forEach(look);
+      else parsedById.get(record.id)?.nodes.forEach((node) => node && look(node));
+    }
+  }
+  /** The file an OBJE line stands for, or null for a line that is kept as written. */
+  const mediaIdOf = (node: GedcomNode): string | null => {
+    if (node.tag !== 'OBJE') return null;
+    const pointer = pointerTarget(node.value);
+    if (pointer !== null) return mediaIdByXref.get(pointer) ?? null;
+    if (embeddedIds.size === 0 || !isEmbeddedMedia(node)) return null;
+    return embeddedIds.get(embeddedMediaKey(node)) ?? null;
+  };
+
+  /** The path of each file in the archive, and the paths taken. */
+  const archivePaths = new Map<string, string>();
+  const takenPaths = new Set<string>(['gedcom.ged']);
+  const archivePathOf = (media: MediaRow): string => {
+    const known = archivePaths.get(media.id);
+    if (known !== undefined) return known;
+    // A path the imported file gave is kept when every program can read it,
+    // so that a file exported again names its files as before.
+    const given = media.origin === '' ? null : localRelativePath(media.origin);
+    const name = safeArchiveName(
+      media.file_name === '' ? media.title : media.file_name,
+      media.ext,
+      (media.sha256 ?? media.id).slice(0, 12),
+    );
+    const wanted = given !== null && /^[A-Za-z0-9._/-]+$/.test(given) ? given : `media/${name}`;
+    const dot = wanted.lastIndexOf('.');
+    const cut = dot > wanted.lastIndexOf('/') ? dot : wanted.length;
+    let path = wanted;
+    for (let number = 2; takenPaths.has(path.toLowerCase()); number += 1) {
+      path = `${wanted.slice(0, cut)}-${number}${wanted.slice(cut)}`;
+    }
+    takenPaths.add(path.toLowerCase());
+    archivePaths.set(media.id, path);
+    return path;
+  };
+  const filesToPack: ExportedFile[] = [];
+  const packed = new Set<string>();
+  /**
+   * What the FILE line of a picture or document is to say. A file that goes
+   * along in the archive is named by its path there. A file added in the app
+   * is named the same way even when no archive is written: it has no other
+   * name. A file that came from an imported GEDCOM file and does not go along
+   * keeps the path or address that file gave, so nothing is said here.
+   */
+  const fileOf = (media: MediaRow): { file?: MediaFileReference } => {
+    const stored = withFiles ? mediaFilePath(tree, media) : null;
+    const carried = stored !== null && existsSync(stored);
+    if (!carried && media.origin !== '') return {};
+    const path = archivePathOf(media);
+    if (carried && !packed.has(media.id)) {
+      packed.add(media.id);
+      filesToPack.push({ path, source: stored });
+    }
+    return { file: { reference: path, ext: media.ext, mime: media.mime } };
+  };
+  /** How many lines were written for each file. */
+  const linesFor = new Map<string, number>();
+
+  /**
+   * The OBJE line that attaches a file to something: the line it was
+   * imported with, a copy of the description a file written in place had, or
+   * a pointer to the file's record. Null when the file has gone.
+   */
+  const mediaLine = (mediaId: string, original: GedcomNode | null): GedcomNode | null => {
+    const media = mediaById.get(mediaId);
+    if (!media) return null;
+    linesFor.set(mediaId, (linesFor.get(mediaId) ?? 0) + 1);
+    if (keepInPlace && writtenInPlace.has(mediaId)) {
+      let base = original !== null && isEmbeddedMedia(original) ? original : null;
+      if (base === null) {
+        const model = inPlaceModel.get(mediaId);
+        if (model) {
+          // Written at another place, and perhaps another level, than it was read from.
+          base = cloneNode(model);
+          touchAll(base);
+        }
+      }
+      if (base !== null)
+        return patchMediaRecord(base, media, { version: target, ...fileOf(media) });
+    }
+    if (original !== null && pointerTarget(original.value) !== null) return original;
+    return makeNode('OBJE', pointerTo(mediaXref(mediaId)));
+  };
+
+  /**
+   * Brings the OBJE lines under an event, a citation or a source record in
+   * step with the tree: a line whose file is no longer attached there goes,
+   * a file written in place whose title was edited is rewritten, and files
+   * attached since follow the last of them. Lines that never became a file
+   * stay as they are.
+   */
+  const syncMedia = (node: GedcomNode, ownerId: string): void => {
+    const wanted = mediaOf.get(ownerId) ?? [];
+    if (wanted.length === 0 && !node.children.some((child) => child.tag === 'OBJE')) return;
+    const alive = new Set(wanted);
+    const done = new Set<string>();
+    const children: GedcomNode[] = [];
+    let last = -1;
+    for (const child of node.children) {
+      const id = mediaIdOf(child);
+      if (id === null) {
+        children.push(child);
+        if (child.tag === 'OBJE') last = children.length - 1;
+        continue;
+      }
+      if (!alive.has(id)) continue;
+      const line = mediaLine(id, child);
+      if (!line) continue;
+      done.add(id);
+      children.push(line);
+      last = children.length - 1;
+    }
+    const added = wanted
+      .filter((id) => !done.has(id))
+      .map((id) => mediaLine(id, null))
+      .filter((line) => line !== null);
+    if (last === -1) children.push(...added);
+    else children.splice(last + 1, 0, ...added);
+    node.children = children;
+  };
 
   /**
    * The lines each imported citation was first written with. A citation that
@@ -476,7 +718,10 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
         touchAll(base);
       }
     }
-    return patchCitation(base, citation, sourceXref);
+    const line = patchCitation(base, citation, sourceXref);
+    // The scans of the page a citation names stand under it.
+    syncMedia(line, citationId);
+    return line;
   };
 
   /**
@@ -593,6 +838,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       (row, original, cites) => {
         const node = patchEvent(original, eventFields(row), owner, target);
         cite(node, cites, row.id);
+        syncMedia(node, row.id);
         return node;
       },
       absorbed,
@@ -633,6 +879,46 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     }
   };
 
+  /**
+   * Places the files of a person or family as a whole, in the same way: the
+   * imported lines where they stood, those of records merged into this one
+   * after its own lines, and files attached since after the last of their kind.
+   */
+  const placeMedia = (
+    layout: Layout,
+    parsed: ParsedRecord | null,
+    absorbed: readonly ParsedRecord[],
+    ownerId: string,
+  ): void => {
+    const wanted = mediaOf.get(ownerId) ?? [];
+    const alive = new Set(wanted);
+    const written = new Set<string>();
+    const original = (
+      record: ParsedRecord,
+      once: boolean,
+      put: (node: GedcomNode, index: number) => void,
+    ) => {
+      record.stored.parts?.forEach((part, index) => {
+        const node = record.nodes[index];
+        if (part.k !== 'media' || part.r === undefined || !node) return;
+        if (!alive.has(part.r) || (once && written.has(part.r))) return;
+        const line = mediaLine(part.r, node);
+        if (!line) return;
+        written.add(part.r);
+        put(line, index);
+      });
+    };
+    // A record that names a file twice gets both lines back; a file that two
+    // merged records had is written once.
+    if (parsed) original(parsed, false, (node, index) => layout.at(index, node));
+    for (const other of absorbed) original(other, true, (node) => layout.end(node));
+    for (const id of wanted) {
+      if (written.has(id)) continue;
+      const line = mediaLine(id, null);
+      if (line) layout.add('media', line);
+    }
+  };
+
   /** Puts the kept lines of records merged into this one after its own lines. */
   const placeAbsorbed = (layout: Layout, absorbed: readonly ParsedRecord[]): void => {
     for (const other of absorbed) {
@@ -659,6 +945,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     placeKept(layout, parsed);
     placeAbsorbed(layout, absorbed);
     placeCitations(layout, parsed, absorbed, person.id);
+    placeMedia(layout, parsed, absorbed, person.id);
 
     placeInOrder(
       layout,
@@ -743,6 +1030,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       placeKept(layout, parsed);
       placeAbsorbed(layout, absorbed);
       placeCitations(layout, parsed, absorbed, family.id);
+      placeMedia(layout, parsed, absorbed, family.id);
       placeEvents(layout, parsed, familyEvents.get(family.id) ?? [], 'family', absorbed);
     }
 
@@ -783,6 +1071,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   let lastPerson = -1;
   let lastFamily = -1;
   let lastSource = -1;
+  let lastMedia = -1;
   let headPosition = -1;
   let head: StoredRecord | null = null;
 
@@ -805,11 +1094,13 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
       const source = sourceById.get(record.id);
       if (source) {
         const original = parseFragment(record.text, sourceVersion)[0] ?? null;
-        records.push({
-          key: [record.position, 0, 0],
-          node: patchSource(original, source, xref(source.id)),
-        });
+        const node = patchSource(original, source, xref(source.id));
+        syncMedia(node, source.id);
+        records.push({ key: [record.position, 0, 0], node });
       }
+    } else if (record.kind === 'media') {
+      // Written further down, once it is known which files are still pointed at.
+      lastMedia = record.position;
     } else {
       parseFragment(record.text, sourceVersion).forEach((node, index) => {
         records.push({ key: [record.position, 0, index], node });
@@ -832,9 +1123,67 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   }
   for (const source of sources) {
     if (imported.has(source.id)) continue;
+    const node = patchSource(null, source, xref(source.id));
+    syncMedia(node, source.id);
+    records.push({ key: [afterSources, 3, added], node });
+    added += 1;
+  }
+
+  // Pictures and documents, now that every line that attaches one is written.
+  const afterMedia = lastMedia === -1 ? afterSources : lastMedia;
+  /** Files the GEDCOM file names, as a record or in place. */
+  const named = new Set<string>();
+  /** Cross-reference ids of media records that are left out. */
+  const mediaGone = new Set<string>();
+  let mediaWithheld = 0;
+  /**
+   * True for a file that is attached to something, when none of the lines
+   * that attach it was written: everything it belongs to was left out, which
+   * happens to the pictures of people who may be living.
+   */
+  const withheld = (id: string): boolean =>
+    (attachedTo.get(id) ?? 0) > 0 && (linesFor.get(id) ?? 0) === 0;
+  for (const record of stored) {
+    if (record.kind !== 'media') continue;
+    const media = mediaById.get(record.id);
+    if (!media || withheld(media.id)) {
+      if (media) mediaWithheld += 1;
+      if (record.xref !== null) mediaGone.add(record.xref);
+      continue;
+    }
+    const original = parseFragment(record.text, sourceVersion)[0] ?? null;
     records.push({
-      key: [afterSources, 3, added],
-      node: patchSource(null, source, xref(source.id)),
+      key: [record.position, 0, 0],
+      node: patchMediaRecord(original, media, {
+        version: target,
+        xref: mediaXref(media.id),
+        ...fileOf(media),
+      }),
+    });
+    named.add(media.id);
+  }
+  for (const media of mediaRows) {
+    if (imported.has(media.id)) continue;
+    if (withheld(media.id)) {
+      mediaWithheld += 1;
+      continue;
+    }
+    const inPlace = writtenInPlace.has(media.id);
+    named.add(media.id);
+    // A file whose description stands in place, under what it belongs to, needs no record.
+    if (inPlace && keepInPlace && (linesFor.get(media.id) ?? 0) > 0) continue;
+    // A record: for a file added in the app, for a file that was written in
+    // place and is now attached to nothing, and for every file written in
+    // place when the file is turned into GEDCOM 7.0.
+    const model = inPlace ? inPlaceModel.get(media.id) : undefined;
+    const base = model ? embeddedToRecord(model, mediaXref(media.id)) : null;
+    records.push({
+      key: [afterMedia, 4, added],
+      node: patchMediaRecord(base, media, {
+        version: target,
+        xref: mediaXref(media.id),
+        ...fileOf(media),
+      }),
     });
     added += 1;
   }
@@ -863,7 +1212,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
 
   // Nothing may point at a person or family that was left out, or at a
   // person, family or source that has been deleted since the import.
-  const gone = new Set<string>();
+  const gone = new Set<string>(mediaGone);
   for (const person of persons) if (!shown(person.id)) gone.add(xref(person.id));
   for (const family of families) if (!familyShown.has(family.id)) gone.add(xref(family.id));
   for (const record of stored) {
@@ -942,24 +1291,42 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     families: exportedFamilies.length,
     livingOmitted: omitted.size,
     unconverted: conversion.unconverted,
-    mediaNotWritten: sql(db, 'SELECT count(*) FROM media').pluck().get() as number,
+    media: named.size,
+    mediaNotHeld: [...named].filter((id) =>
+      withFiles ? !packed.has(id) : mediaById.get(id)?.sha256 === null,
+    ).length,
+    mediaWithheld,
+    files: filesToPack,
   };
 }
 
+/** The name of the GEDCOM file inside a GEDZip archive, as the standard gives it. */
+const GEDZIP_GEDCOM = 'gedcom.ged';
+
 /**
- * Writes a tree to a GEDCOM file. The file is written under a temporary name
- * and renamed when complete, so a failure never leaves half a file under the
- * name that was asked for.
+ * Writes a tree to a GEDCOM file or, with `files`, to a GEDZip file: a zip
+ * archive that holds the GEDCOM file and the pictures and documents the tree
+ * holds. The file is written under a temporary name and renamed when
+ * complete, so a failure never leaves half a file under the name that was
+ * asked for.
  */
 export function exportGedcomFile(
   tree: Tree,
   file: string,
   options: Omit<GedcomExportOptions, 'fileName'>,
 ): GedcomExportResult {
-  const result = exportGedcom(tree, { ...options, fileName: file });
+  const zipped = options.files === true;
+  const result = exportGedcom(tree, { ...options, fileName: zipped ? GEDZIP_GEDCOM : file });
   const staging = `${file}.tmp`;
   try {
-    writeFileSync(staging, encodeGedcom(result.text));
+    if (zipped) {
+      writeZip(staging, [
+        { name: GEDZIP_GEDCOM, data: encodeGedcom(result.text) },
+        ...result.files.map((packed) => ({ name: packed.path, file: packed.source })),
+      ]);
+    } else {
+      writeFileSync(staging, encodeGedcom(result.text));
+    }
     renameSync(staging, file);
   } catch (error) {
     rmSync(staging, { force: true });

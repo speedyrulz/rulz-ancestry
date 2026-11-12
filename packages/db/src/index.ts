@@ -182,6 +182,7 @@ export {
   type SourceSummary,
 } from './sources';
 export {
+  MAX_LOCATE_FILES,
   MAX_MEDIA_BYTES,
   MAX_MEDIA_FILES_AT_ONCE,
   MEDIA_DIR_NAME,
@@ -190,19 +191,26 @@ export {
   countMedia,
   deleteMedia,
   getMedia,
+  holdNamedFiles,
   isMediaPresent,
   linkMedia,
   listAllMedia,
   listMedia,
   listMediaUses,
   listPersonMedia,
+  locateMediaFiles,
   mediaFilePath,
   requireMedia,
+  setMediaFile,
   unlinkMedia,
   updateMedia,
   type AddMediaOptions,
   type AddedMedia,
+  type ByteSource,
+  type LocateResult,
   type Media,
+  type MediaFileSource,
+  type NamedFile,
   type MediaInput,
   type MediaListOptions,
   type MediaTarget,
@@ -221,9 +229,12 @@ export {
   type GedcomInput,
 } from './gedcom/import';
 export { CitationLoader, extractSources, type CitationOwner } from './gedcom/citations';
+export { MediaLoader, extractMedia, type MediaOwner } from './gedcom/medialoader';
+export { ZipError, ZipReader, writeZip, type ZipEntry, type ZipInput } from './zip';
 export {
   exportGedcom,
   exportGedcomFile,
+  type ExportedFile,
   type GedcomExportOptions,
   type GedcomExportResult,
 } from './gedcom/export';
@@ -231,6 +242,7 @@ export {
   getGedcomSource,
   getStoredRecord,
   keptLinesOf,
+  listEmbeddedMedia,
   listMergedRecords,
   listStoredRecords,
   type GedcomSource,

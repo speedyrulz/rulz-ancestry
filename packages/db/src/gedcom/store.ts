@@ -15,7 +15,14 @@ import type { Tree } from '../tree';
  * - family records: `partner` (HUSB or WIFE, with the person's id), `child`
  *   (CHIL, with the person's id) and `event`;
  * - both: `citation` (a SOUR line that cites a source record for the person
- *   or family as a whole, with the citation's id).
+ *   or family as a whole, with the citation's id) and `media` (an OBJE line
+ *   that attaches a picture or document to the person or family as a whole,
+ *   with the id of the `media` row).
+ *
+ * The OBJE lines further down, under an event, a citation or a source, carry
+ * no mark. The export tells which file each stands for from the line itself:
+ * a pointer names a media record, and a media item written in place is found
+ * by its wording (see `listEmbeddedMedia`).
  */
 export type PartKind =
   | 'name'
@@ -26,13 +33,14 @@ export type PartKind =
   | 'partner-in'
   | 'partner'
   | 'child'
-  | 'citation';
+  | 'citation'
+  | 'media';
 
 /** One line under a record, with everything below it. */
 export interface StoredPart {
   /** What the line became. Left out for a line the app keeps as written. */
   k?: PartKind;
-  /** The id of the name, event, family, person or citation the line became. */
+  /** The id of the name, event, family, person, citation or file the line became. */
   r?: string;
   /** The line and everything under it, as written in the file. */
   t: string;
@@ -45,10 +53,10 @@ export interface StoredPart {
   c?: (string | null)[];
 }
 
-export type RecordKind = 'head' | 'person' | 'family' | 'source' | 'kept';
+export type RecordKind = 'head' | 'person' | 'family' | 'source' | 'media' | 'kept';
 
 export interface StoredRecord {
-  /** For a person, family or source record: the id of that person, family or source. */
+  /** For a person, family, source or media record: the id of that person, family, source or file. */
   id: string;
   position: number;
   tag: string;
@@ -118,6 +126,18 @@ export function keptLinesOf(tree: Tree, id: string): string[] {
       .filter((part) => part.k === undefined)
       .map((part) => part.t),
   );
+}
+
+/**
+ * The file each media item written in place became, by its wording (see
+ * `embeddedMediaKey` in `@rulz/core`). Empty for a tree whose file had none.
+ */
+export function listEmbeddedMedia(tree: Tree): Map<string, string> {
+  const rows = sql(tree.db, 'SELECT key, media_id FROM gedcom_media').all() as {
+    key: string;
+    media_id: string;
+  }[];
+  return new Map(rows.map((row) => [row.key, row.media_id]));
 }
 
 /** `tree_meta` keys that describe the file a tree was imported from. */

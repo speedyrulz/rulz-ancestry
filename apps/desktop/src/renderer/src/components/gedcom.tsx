@@ -42,12 +42,24 @@ export function ImportReportDialog({ report, onClose }: ImportReportDialogProps)
           on them. A citation the file repeats under several facts is counted once.
         </p>
       )}
+      {report.media > 0 && (
+        <p className="dialog-text" data-testid="import-report-media">
+          The file names {countOf(report.media, 'picture or document', 'pictures and documents')}.{' '}
+          {report.mediaHeld === 0
+            ? 'A GEDCOM file does not hold the files themselves.'
+            : report.mediaHeld === report.media
+              ? 'They came with the file and are in the tree.'
+              : `${report.mediaHeld.toLocaleString()} of them came with the file and are in the tree.`}
+          {report.mediaHeld < report.media &&
+            ' Those the tree does not hold are listed under “Media” with what they belong to. If you have the files, “Find the files in a folder” there looks for them.'}
+        </p>
+      )}
       {kept > 0 && (
         <p className="dialog-text" data-testid="import-report-kept">
           {countOf(kept, 'item', 'items')} in the file are things the app has no screens for yet,
-          such as notes and pictures. They are kept exactly as written and go back into a GEDCOM
-          file when you export the tree. Those that belong to a person are listed at the bottom of
-          that person’s page.
+          such as notes. They are kept exactly as written and go back into a GEDCOM file when you
+          export the tree. Those that belong to a person are listed at the bottom of that person’s
+          page.
         </p>
       )}
       {report.issueCount === 0 ? (
@@ -104,6 +116,7 @@ interface ExportDialogProps {
 export function ExportDialog({ tree, onClose }: ExportDialogProps) {
   const [version, setVersion] = useState<GedcomVersion>('5.5.1');
   const [includeLiving, setIncludeLiving] = useState(false);
+  const [withFiles, setWithFiles] = useState(false);
   const [living, setLiving] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +142,11 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      const result = await api.exportGedcom({ version, includeLiving });
+      const result = await api.exportGedcom({
+        version,
+        includeLiving,
+        withFiles: withFiles && tree.media > 0,
+      });
       // Null means the save dialog was cancelled; the choices stay as they were.
       if (result !== null) setDone(result);
     } catch (failure) {
@@ -155,11 +172,21 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
             {done.livingOmitted === 1 ? 'was' : 'were'} left out.
           </p>
         )}
-        {done.mediaNotWritten > 0 && (
+        {done.media > 0 && (
           <p className="dialog-text" data-testid="export-media">
-            The file does not mention the{' '}
-            {countOf(done.mediaNotWritten, 'picture or document', 'pictures and documents')} added
-            in this app. Writing them to a GEDCOM file is not built yet. They are still in the tree.
+            {done.withFiles
+              ? `The file holds ${countOf(done.mediaFiles, 'picture or document', 'pictures and documents')}.`
+              : `The file names ${countOf(done.media, 'picture or document', 'pictures and documents')} and does not hold them. Export a GEDZip file to take them along.`}
+            {done.withFiles &&
+              done.mediaNotHeld > 0 &&
+              ` ${countOf(done.mediaNotHeld, 'more is', 'more are')} only named, because the tree does not hold the file.`}
+          </p>
+        )}
+        {done.mediaWithheld > 0 && (
+          <p className="dialog-text" data-testid="export-media-withheld">
+            {countOf(done.mediaWithheld, 'picture or document', 'pictures and documents')} that{' '}
+            {done.mediaWithheld === 1 ? 'belongs' : 'belong'} only to people who were left out{' '}
+            {done.mediaWithheld === 1 ? 'was' : 'were'} left out too.
           </p>
         )}
         {done.unconverted.length > 0 && (
@@ -220,6 +247,42 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
           </span>
         </label>
       </fieldset>
+
+      {tree.media > 0 && (
+        <fieldset className="options">
+          <legend>Pictures and documents</legend>
+          <label>
+            <input
+              type="radio"
+              name={`${group}-files`}
+              checked={!withFiles}
+              onChange={() => setWithFiles(false)}
+              data-testid="export-without-files"
+            />
+            <span>
+              <strong>The GEDCOM file alone</strong> (.ged). It names the pictures and documents and
+              does not hold them
+            </span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              name={`${group}-files`}
+              checked={withFiles}
+              onChange={() => setWithFiles(true)}
+              data-testid="export-with-files"
+            />
+            <span>
+              <strong>A GEDZip file</strong> (.gdz): the GEDCOM file and the pictures and documents
+              this tree holds, in one zip file
+            </span>
+          </label>
+          <p className="hint">
+            Few programs open a GEDZip file themselves. Any program can use it once it is unzipped:
+            the GEDCOM file inside names each picture by its place in the zip file.
+          </p>
+        </fieldset>
+      )}
 
       <fieldset className="options">
         <legend>Who to include</legend>
