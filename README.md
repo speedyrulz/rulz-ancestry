@@ -6,7 +6,12 @@ data sources. Everything is stored on your own PC.
 Status: **Phase 0 complete** (project foundations). The app opens a window and
 runs a system check; tree features start in Phase 1. See [docs/PLAN.md](docs/PLAN.md)
 for the full plan and [docs/ACCESS.md](docs/ACCESS.md) for the API keys and
-applications that only you can request.
+applications that only the project owner can request.
+
+The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
+architecture, data sources, development guide and changelog. It is updated after
+every push or merge to `main`; `.claude/hooks/wiki-reminder.cjs` reminds Claude
+Code sessions to do so.
 
 ## Requirements
 

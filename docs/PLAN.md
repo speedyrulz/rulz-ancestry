@@ -174,8 +174,7 @@ connector manifests, and [ACCESS.md](ACCESS.md).
 
 Not done, and why:
 
-- **Keys and applications** (NARA, FamilySearch, others) need the owner's own accounts. See [ACCESS.md](ACCESS.md).
-- **CI has never run.** The repository has no remote yet.
+- **Keys** (NARA and others) need the owner's own accounts. The FamilySearch application was submitted on 2026-11-11 and is awaiting a response. See [ACCESS.md](ACCESS.md).
 - **The installer itself was not executed.** Tests ran against its unpacked contents (`release/win-unpacked`), which is what the installer copies.
 - **No app icon.** The default Electron icon is used until Phase 6.
 - **MSIX packaging** needs the Store identity, so it belongs to Phase 6.
@@ -191,6 +190,6 @@ Not done, and why:
 
 ## 9. Open decisions
 
-1. **Open source or private.** The repository carries an MIT license as the default. Change it before the first push if you want the project private.
+1. **Open source or private.** Decided 2026-11-11: the repository is public on GitHub under the MIT license.
 2. **Region priority,** which sets connector order. Default: US, then Netherlands, UK and Ireland, Australia and New Zealand.
-3. **FamilySearch.** Whether to apply. Recommended, since the review takes time and costs nothing.
+3. **FamilySearch.** Decided 2026-11-11: applied. Awaiting a response; the connector stays optional either way.

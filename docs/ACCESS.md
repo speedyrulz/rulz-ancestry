@@ -21,7 +21,9 @@ No key is needed for WikiTree, the Library of Congress, or Open Archives.
 
 ## Worth starting now because approval takes time
 
-- [ ] **FamilySearch developer account and app registration** (optional connector)
+- [x] **FamilySearch developer account and app registration** (optional connector)
+  - **Application submitted 2026-11-11. Waiting for FamilySearch to respond.**
+  - When a key arrives: keep it out of this repository, and confirm the environment hostnames and throttling rules from the Authentication guide so the connector manifest can be completed.
   - Create a developer account and register an app at <https://developers.familysearch.org>. A Beta key is enabled automatically.
   - Read "App Approval Considerations" before applying: <https://developers.familysearch.org/main/docs/app-approval-considerations>
   - Production access requires acceptance into the Compatible Solution Program and a compatibility review. Reviewers favour apps that add value to Family Tree and do not put unusual load on it.
@@ -42,7 +44,7 @@ on the date above. Confirm before building the connector.
 ## Needed before Phase 6 (release)
 
 - [ ] **Microsoft Store developer account.** Free for individuals since September 2025; register at <https://storedeveloper.microsoft.com> with a personal Microsoft account. The Store signs MSIX packages, so no paid certificate is needed.
-- [ ] **GitHub repository**, if you want CI and release downloads. The workflow in `.github/workflows/ci.yml` has not run yet because the project has no remote.
+- [x] **GitHub repository.** Public since 2026-11-11. The workflow in `.github/workflows/ci.yml` runs on every push to `main` and on pull requests; its first run passed.
 - [ ] **App icon.** The installer currently uses the default Electron icon. Put a 256x256 `icon.ico` in `apps/desktop/build/`.
 
 ## Sources that must stay link-only
