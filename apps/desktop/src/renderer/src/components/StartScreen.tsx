@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { RecentTreeInfo, StartInfo, TreeState } from '../../../shared/ipc';
+import type { GedcomImportResult, RecentTreeInfo, StartInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { formatWhen } from '../format';
 import { SystemCheck } from './SystemCheck';
@@ -10,11 +10,15 @@ interface StartScreenProps {
   /** Something to tell the user that happened before this screen appeared. */
   notice: string | null;
   onOpened: (tree: TreeState) => void;
+  /** Called when a tree was made from a GEDCOM file and opened. */
+  onImported: (result: GedcomImportResult) => void;
 }
 
-/** The screen shown while no tree is open: start a new tree, or open an existing one. */
-export function StartScreen({ info, notice, onOpened }: StartScreenProps) {
+/** The screen shown while no tree is open: start a new tree, import one, or open an existing one. */
+export function StartScreen({ info, notice, onOpened, onImported }: StartScreenProps) {
   const [name, setName] = useState('');
+  const [importName, setImportName] = useState('');
+  const [importing, setImporting] = useState(false);
   const [parentDir, setParentDir] = useState(info.defaultParentDir);
   const [recent, setRecent] = useState<RecentTreeInfo[]>(info.recent);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +51,15 @@ export function StartScreen({ info, notice, onOpened }: StartScreenProps) {
       const chosen = await api.chooseParentFolder();
       if (chosen !== null) setParentDir(chosen);
     });
+
+  const importFile = async () => {
+    setImporting(true);
+    await run(async () => {
+      const result = await api.importGedcom({ name: importName, parentDir });
+      if (result !== null) onImported(result);
+    });
+    setImporting(false);
+  };
 
   const openFromDialog = () =>
     run(async () => {
@@ -106,6 +119,44 @@ export function StartScreen({ info, notice, onOpened }: StartScreenProps) {
               Keep it somewhere else…
             </button>
           </div>
+        </form>
+      </section>
+
+      <section className="card">
+        <h2>Bring in a tree from another program</h2>
+        <p>
+          Ancestry, Family Tree Maker, RootsMagic, MyHeritage and most other family tree programs
+          can save a tree as a GEDCOM file (a file ending in .ged). The app reads the file into a
+          new tree here. The file itself is not changed.
+        </p>
+        <form
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!busy) void importFile();
+          }}
+        >
+          <TextField
+            label="Name of the tree (leave empty to use the file’s name)"
+            value={importName}
+            onChange={setImportName}
+            testId="import-tree-name"
+            maxLength={100}
+          />
+          <p className="hint">
+            It will be kept in a new folder inside <span className="path">{parentDir}</span>
+          </p>
+          <div className="actions">
+            <button type="submit" disabled={busy} data-testid="import-gedcom">
+              Choose a GEDCOM file…
+            </button>
+          </div>
+          {importing && (
+            <p className="muted" role="status" data-testid="importing">
+              Choose the file in the window that opened. Reading a large file then takes a few
+              seconds.
+            </p>
+          )}
         </form>
       </section>
 

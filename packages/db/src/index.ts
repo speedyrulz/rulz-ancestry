@@ -3,6 +3,7 @@ export { SchemaTooNewError, migrate, schemaVersion, type Migration } from './mig
 export { treeMigrations } from './schema';
 export { UNTRACKED_WRITE_MESSAGE, type ChangeTx } from './changelog';
 export {
+  LOADED_AT_KEY,
   NoTreeError,
   NotATreeError,
   NotFoundError,
@@ -127,3 +128,29 @@ export {
   type VitalEvent,
 } from './search';
 export { checkTreeEngine, type TreeEngineCheck } from './selfcheck';
+export { PRESUMED_LIVING_YEARS, presumedLivingIds } from './living';
+export {
+  GedcomFileError,
+  MAX_GEDCOM_BYTES,
+  importGedcom,
+  importGedcomFile,
+  readGedcomFile,
+  type GedcomImportReport,
+  type GedcomInput,
+} from './gedcom/import';
+export {
+  exportGedcom,
+  exportGedcomFile,
+  type GedcomExportOptions,
+  type GedcomExportResult,
+} from './gedcom/export';
+export {
+  getGedcomSource,
+  getStoredRecord,
+  keptLinesOf,
+  listStoredRecords,
+  type GedcomSource,
+  type PartKind,
+  type StoredPart,
+  type StoredRecord,
+} from './gedcom/store';

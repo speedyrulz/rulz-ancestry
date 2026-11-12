@@ -24,6 +24,11 @@ export function openDatabase(file: string): Db {
     // SQLite does not enforce foreign keys unless asked, per connection.
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
+    // Every statement that a trigger may abort gets a "statement journal" so
+    // it can be taken back on its own. By default that is a temporary file,
+    // and creating one per statement made a 10,000-person import three times
+    // slower on disk than in memory. Each journal is small, so keep it in memory.
+    db.pragma('temp_store = MEMORY');
   } catch (error) {
     // SQLite only reads the file at the first statement, so this is where a
     // file that is not a database is found out. Let go of it, or Windows will

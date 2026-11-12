@@ -1,6 +1,7 @@
 import { NAME_TYPES, PEDIGREES, SEXES } from '@rulz/core';
 import {
   BackupError,
+  GedcomFileError,
   NoTreeError,
   NotATreeError,
   NotFoundError,
@@ -20,7 +21,9 @@ import {
   deleteName,
   deletePerson,
   getPersonPage,
+  keptLinesOf,
   listPersons,
+  presumedLivingIds,
   searchPersons,
   setChildPedigree,
   setPrimaryName,
@@ -50,10 +53,23 @@ export interface FolderPickerOptions {
   defaultPath: string;
 }
 
+export interface FilePickerOptions {
+  title: string;
+  buttonLabel: string;
+  /** The folder the dialog starts in, or the file it suggests. */
+  defaultPath: string;
+  /** The kinds of file offered, e.g. `{ name: 'GEDCOM files', extensions: ['ged'] }`. */
+  filters: { name: string; extensions: string[] }[];
+}
+
 export interface Platform {
   appInfo(): AppInfo;
   /** Shows the system folder picker. Resolves to null when the user cancels. */
   chooseFolder(options: FolderPickerOptions): Promise<string | null>;
+  /** Shows the system dialog for opening one file. Resolves to null when the user cancels. */
+  chooseFileToOpen(options: FilePickerOptions): Promise<string | null>;
+  /** Shows the system dialog for saving a file. Resolves to null when the user cancels. */
+  chooseFileToSave(options: FilePickerOptions): Promise<string | null>;
   /** Shows a folder in File Explorer. */
   openFolder(dir: string): Promise<void>;
 }
@@ -122,6 +138,12 @@ const eventInput = z.strictObject({
   description: text(5000).exactOptional(),
 });
 
+/** What the file dialogs for import and export offer. */
+const GEDCOM_FILTERS = [
+  { name: 'GEDCOM files', extensions: ['ged'] },
+  { name: 'All files', extensions: ['*'] },
+];
+
 const familyOption = z.strictObject({ familyId: id.exactOptional() });
 const childOptions = z.strictObject({
   familyId: id.exactOptional(),
@@ -178,6 +200,66 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
 
     closeTree: define<'closeTree'>(none, () => session.close()),
 
+    importGedcom: define<'importGedcom'>(
+      z.tuple([z.strictObject({ name: text(100), parentDir: text(1000).min(1) })]),
+      async (input) => {
+        // The page never names the file; the user picks it in the system dialog.
+        const file = await platform.chooseFileToOpen({
+          title: 'Choose a GEDCOM file to import',
+          buttonLabel: 'Import',
+          defaultPath: session.defaultParentDir,
+          filters: GEDCOM_FILTERS,
+        });
+        if (file === null) return null;
+        const { state, report } = session.importGedcom(file, input.name, input.parentDir);
+        return {
+          tree: state,
+          report: {
+            fileName: report.fileName,
+            version: report.version,
+            encoding: report.encoding,
+            persons: report.persons,
+            families: report.families,
+            events: report.events,
+            keptRecords: Object.values(report.keptRecords).reduce((sum, count) => sum + count, 0),
+            keptLines: report.keptLines,
+            issues: report.issues,
+            issueCount: report.issueCount,
+          },
+        };
+      },
+    ),
+
+    exportGedcom: define<'exportGedcom'>(
+      z.tuple([z.strictObject({ version: z.enum(['5.5.1', '7.0']), includeLiving: z.boolean() })]),
+      async (request) => {
+        const chosen = await platform.chooseFileToSave({
+          title: 'Export this tree as a GEDCOM file',
+          buttonLabel: 'Export',
+          defaultPath: session.suggestedExportPath(),
+          filters: GEDCOM_FILTERS,
+        });
+        if (chosen === null) return null;
+        const result = session.exportGedcom(chosen, {
+          ...request,
+          appVersion: platform.appInfo().appVersion,
+        });
+        return {
+          file: result.file,
+          version: result.version,
+          persons: result.persons,
+          families: result.families,
+          livingOmitted: result.livingOmitted,
+          unconverted: Object.entries(result.unconverted).map(([what, count]) => ({ what, count })),
+        };
+      },
+    ),
+
+    countPresumedLiving: define<'countPresumedLiving'>(
+      none,
+      () => presumedLivingIds(session.tree).size,
+    ),
+
     listPersons: define<'listPersons'>(
       z.tuple([
         z.strictObject({
@@ -198,9 +280,10 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       },
     ),
 
-    getPersonPage: define<'getPersonPage'>(z.tuple([id]), (personId) =>
-      getPersonPage(session.tree, personId),
-    ),
+    getPersonPage: define<'getPersonPage'>(z.tuple([id]), (personId) => {
+      const page = getPersonPage(session.tree, personId);
+      return page === null ? null : { ...page, keptLines: keptLinesOf(session.tree, personId) };
+    }),
 
     addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
       link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
@@ -304,6 +387,7 @@ const RULE_ERRORS = [
   NotATreeError,
   SchemaTooNewError,
   BackupError,
+  GedcomFileError,
   SessionError,
 ] as const;
 

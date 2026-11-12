@@ -1,21 +1,28 @@
-import { mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import {
   BACKUP_DIR_NAME,
+  TREE_FILE_NAME,
   backupTree,
   createTree,
+  exportGedcomFile,
   forgetTree,
   getSetting,
   hasTree,
+  importGedcom,
   listBackups,
   listRecentTrees,
   openExistingTree,
+  readGedcomFile,
   rememberTree,
   restoreBackup,
   setSetting,
   treeFolderName,
   type BackupInfo,
   type Db,
+  type GedcomExportOptions,
+  type GedcomExportResult,
+  type GedcomImportReport,
   type Tree,
 } from '@rulz/db';
 import type { RecentTreeInfo, StartInfo, TreeState } from '../shared/ipc';
@@ -64,6 +71,24 @@ function pathKey(path: string): string {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * A folder inside `parent` for a new tree, named `folder` or, when a folder of
+ * that name is already in use, `folder (2)`, `folder (3)` and so on. An import
+ * names the tree after the file, and the same file may be imported twice.
+ */
+function freeTreeDir(parent: string, folder: string): string {
+  for (let copy = 1; copy < 1000; copy += 1) {
+    const dir = join(parent, copy === 1 ? folder : `${folder} (${copy})`);
+    if (!existsSync(dir)) return dir;
+    try {
+      if (readdirSync(dir).length === 0) return dir;
+    } catch {
+      // Not a folder, or not readable: try the next name.
+    }
+  }
+  throw new SessionError(`there are too many folders named ${folder} in ${parent}`);
 }
 
 export class TreeSession {
@@ -158,15 +183,71 @@ export class TreeSession {
    * the page cannot make the app write to a path of its own choosing.
    */
   create(name: string, parentDir: string): TreeState {
-    const parent = resolve(parentDir);
-    const allowed =
-      pathKey(parent) === pathKey(this.defaultParentDir) ||
-      this.#chosenParentDirs.has(pathKey(parent));
-    if (!allowed) throw new SessionError('choose the folder for the new tree again');
+    const parent = this.#allowedParent(parentDir);
     const tree = createTree(join(parent, treeFolderName(name)), { name });
     this.#closeCurrent();
     this.#adopt(tree);
     return this.state();
+  }
+
+  /**
+   * Makes a new tree from a GEDCOM file and opens it. The tree is named
+   * `name`, or after the file when `name` is empty, and its folder is made
+   * inside `parentDir` under the same rule as {@link create}. The file is read
+   * and checked before any folder is made, and a tree that could not be
+   * filled is removed again.
+   */
+  importGedcom(
+    file: string,
+    name: string,
+    parentDir: string,
+  ): { state: TreeState; report: GedcomImportReport } {
+    const parent = this.#allowedParent(parentDir);
+    const input = readGedcomFile(file);
+    const stated = name.trim().replace(/\s+/g, ' ');
+    const fromFile = basename(input.fileName, extname(input.fileName)).trim();
+    const treeName = (stated !== '' ? stated : fromFile).slice(0, 100).trim() || 'Imported tree';
+
+    const dir = freeTreeDir(parent, treeFolderName(treeName));
+    const existed = existsSync(dir);
+    const tree = createTree(dir, { name: treeName });
+    let report: GedcomImportReport;
+    try {
+      report = importGedcom(tree, input);
+    } catch (error) {
+      tree.close();
+      for (const suffix of ['', '-wal', '-shm']) {
+        rmSync(join(dir, TREE_FILE_NAME + suffix), { force: true });
+      }
+      if (!existed) {
+        try {
+          rmdirSync(dir);
+        } catch {
+          // Something else is in the folder already; leave it.
+        }
+      }
+      throw error;
+    }
+    this.#closeCurrent();
+    this.#adopt(tree);
+    return { state: this.state(), report };
+  }
+
+  /** Where the save dialog for an export starts: beside the tree's folder, named after the tree. */
+  suggestedExportPath(): string {
+    const tree = this.tree;
+    const folder = tree.dir === null ? this.defaultParentDir : dirname(tree.dir);
+    return join(folder, `${treeFolderName(tree.info().name)}.ged`);
+  }
+
+  /** Writes the open tree to a GEDCOM file. A name with no extension gets `.ged`. */
+  exportGedcom(
+    file: string,
+    options: Pick<GedcomExportOptions, 'version' | 'includeLiving' | 'appVersion'>,
+  ): GedcomExportResult & { file: string } {
+    const target = extname(file) === '' ? `${file}.ged` : file;
+    const result = exportGedcomFile(this.tree, target, { ...options, now: this.#now() });
+    return { ...result, file: target };
   }
 
   /** Opens the tree in `dir`, closing the one that is open. */
@@ -263,6 +344,19 @@ export class TreeSession {
       this.#adopt(openExistingTree(dir));
     }
     return this.state();
+  }
+
+  /**
+   * The full path of a folder that new trees may be made in: the default
+   * folder, or one the user picked in the system dialog during this run.
+   */
+  #allowedParent(parentDir: string): string {
+    const parent = resolve(parentDir);
+    const allowed =
+      pathKey(parent) === pathKey(this.defaultParentDir) ||
+      this.#chosenParentDirs.has(pathKey(parent));
+    if (!allowed) throw new SessionError('choose the folder for the new tree again');
+    return parent;
   }
 
   #treeDir(): string {

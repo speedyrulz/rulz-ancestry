@@ -13,6 +13,7 @@ import {
   NAME_TYPE_LABELS,
   PEDIGREE_LABELS,
   SEX_LABELS,
+  countOf,
   fullName,
   labelOf,
   lifespan,
@@ -519,6 +520,27 @@ export function PersonPageView({ personId, tree, onTree, onSelect, onProblem }: 
           )}
         </div>
       </section>
+
+      {page.keptLines.length > 0 && (
+        <section data-testid="kept-section">
+          <h3>Other details from the imported file</h3>
+          <details>
+            <summary data-testid="kept-summary">
+              {countOf(page.keptLines.length, 'item', 'items')} that the app has no fields for yet
+            </summary>
+            <p className="hint">
+              These are sources, notes, pictures and other details from the file this person was
+              imported from. The app keeps them exactly as they were written and puts them back when
+              the tree is exported. They cannot be edited here yet.
+            </p>
+            {page.keptLines.map((lines, index) => (
+              <pre key={index} className="kept-lines" data-testid="kept-lines">
+                {lines}
+              </pre>
+            ))}
+          </details>
+        </section>
+      )}
 
       {open?.kind === 'name' && (
         <NameDialog

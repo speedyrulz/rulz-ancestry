@@ -6,7 +6,14 @@
  * so the renderer never depends on code that needs Node.js. The main process
  * returns database records that fit these shapes; the compiler checks that.
  */
-import type { DateCalendar, DateQualifier, NameType, Pedigree, Sex } from '@rulz/core';
+import type {
+  DateCalendar,
+  DateQualifier,
+  GedcomVersion,
+  NameType,
+  Pedigree,
+  Sex,
+} from '@rulz/core';
 
 export interface AppInfo {
   appVersion: string;
@@ -151,6 +158,12 @@ export interface PersonPage {
   events: EventInfo[];
   parentFamilies: ParentFamilyInfo[];
   partnerFamilies: PartnerFamilyInfo[];
+  /**
+   * For a person who came from a GEDCOM file: the lines of their record that
+   * the app has no fields for (sources, notes, other programs' own tags). They
+   * are kept as written and go back into an export. Empty for anyone else.
+   */
+  keptLines: string[];
 }
 
 export interface PersonListRequest {
@@ -212,6 +225,52 @@ export interface BackupInfo {
   size: number;
 }
 
+/** What an import of a GEDCOM file did. */
+export interface GedcomImportInfo {
+  fileName: string;
+  version: GedcomVersion;
+  /** The character set the file was in, e.g. "UTF-8" or "ANSEL". */
+  encoding: string;
+  persons: number;
+  families: number;
+  events: number;
+  /** Records the app keeps as written because it has no screens for them yet: sources, notes, media. */
+  keptRecords: number;
+  /** Lines under people and families that are kept as written for the same reason. */
+  keptLines: number;
+  /** The first things found in the file that were not as the standard says. Line 0 is the whole file. */
+  issues: { line: number; message: string }[];
+  /** How many such things were found in all. */
+  issueCount: number;
+}
+
+export interface GedcomImportResult {
+  tree: TreeState;
+  report: GedcomImportInfo;
+}
+
+export interface GedcomExportRequest {
+  version: GedcomVersion;
+  /** False leaves out everyone who may be living. */
+  includeLiving: boolean;
+}
+
+/** What an export to a GEDCOM file wrote. */
+export interface GedcomExportInfo {
+  /** The full path of the file that was written. */
+  file: string;
+  version: GedcomVersion;
+  persons: number;
+  families: number;
+  /** People left out because they may be living. */
+  livingOmitted: number;
+  /**
+   * Kinds of item that could not be rewritten for the chosen version and were
+   * written as they are. Empty when the file is in the version it was imported in.
+   */
+  unconverted: { what: string; count: number }[];
+}
+
 export interface RulzApi {
   getAppInfo(): Promise<AppInfo>;
 
@@ -228,6 +287,18 @@ export interface RulzApi {
   forgetRecentTree(dir: string): Promise<RecentTreeInfo[]>;
   /** Backs up and closes the open tree. `backupError` says why the backup failed, if it did. */
   closeTree(): Promise<{ backupError: string | null }>;
+
+  // GEDCOM files, the format other family tree programs read and write.
+  /**
+   * Shows the system file picker, makes a new tree from the GEDCOM file chosen
+   * and opens it. The tree's folder is made inside `parentDir`, as for
+   * `createTree`; an empty `name` names the tree after the file. Null when cancelled.
+   */
+  importGedcom(input: { name: string; parentDir: string }): Promise<GedcomImportResult | null>;
+  /** Shows the system save dialog and writes the open tree to the file chosen. Null when cancelled. */
+  exportGedcom(request: GedcomExportRequest): Promise<GedcomExportInfo | null>;
+  /** How many people of the open tree an export would leave out as possibly living. */
+  countPresumedLiving(): Promise<number>;
 
   // Reading the open tree.
   listPersons(request: PersonListRequest): Promise<PersonListPage>;
@@ -291,6 +362,9 @@ export const API_METHODS = [
   'openRecentTree',
   'forgetRecentTree',
   'closeTree',
+  'importGedcom',
+  'exportGedcom',
+  'countPresumedLiving',
   'listPersons',
   'getPersonPage',
   'addPerson',

@@ -75,6 +75,26 @@ export async function answerFolderPicker(
   }, dir);
 }
 
+/**
+ * Makes the system dialog for opening a file answer with `file` (or as
+ * cancelled, for null). It is the same dialog as the folder picker.
+ */
+export const answerFilePicker = answerFolderPicker;
+
+/**
+ * Makes the system dialog for saving a file answer with `file` (or as
+ * cancelled, for null) without showing it.
+ */
+export async function answerSaveDialog(
+  app: ElectronApplication,
+  file: string | null,
+): Promise<void> {
+  await app.evaluate(({ dialog }, chosen) => {
+    dialog.showSaveDialog = () =>
+      Promise.resolve({ canceled: chosen === null, filePath: chosen ?? '' });
+  }, file);
+}
+
 /** Creates a tree from the start screen, in the default place inside the test profile. */
 export async function createTree(window: Page, name: string): Promise<void> {
   await window.getByTestId('new-tree-name').fill(name);

@@ -70,7 +70,7 @@ function cleanType(type: string): string {
 }
 
 /** The five date columns for a date as typed. */
-function dateColumns(
+export function dateColumns(
   text: string,
 ): [string, string | null, string | null, number | null, number | null] {
   const parsed = parseDate(text);

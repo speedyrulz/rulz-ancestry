@@ -12,7 +12,7 @@ import Database from 'better-sqlite3';
 import type { Db } from './connection';
 import { schemaVersion } from './migrate';
 import { treeMigrations } from './schema';
-import { TREE_APPLICATION_ID, TREE_FILE_NAME, type Tree } from './tree';
+import { LOADED_AT_KEY, TREE_APPLICATION_ID, TREE_FILE_NAME, type Tree } from './tree';
 
 /**
  * Backups of a tree: complete copies of `tree.db`, kept in the `backups`
@@ -105,16 +105,25 @@ export function listBackups(dir: string): BackupInfo[] {
 /**
  * Identifies the state of a tree's contents: two files with the same token
  * hold the same data. It is built from the change log, which every edit, undo
- * and redo passes through. Null means the tree has never been changed.
+ * and redo passes through, and from the time a file was loaded into the tree,
+ * if one was. Null means the tree has never been changed.
  */
 export function treeStateToken(db: Db): string | null {
+  // A file loaded into the tree (a GEDCOM import) does not pass through the
+  // change log; the time of the load stands for it.
+  const loaded = db
+    .prepare('SELECT value FROM tree_meta WHERE key = ?')
+    .pluck()
+    .get(LOADED_AT_KEY) as string | undefined;
+  const start = loaded === undefined ? '' : `loaded ${loaded}/`;
+
   const last = db.prepare('SELECT id, at FROM change_tx ORDER BY id DESC LIMIT 1').get() as
     { id: number; at: number } | undefined;
-  if (!last) return null;
+  if (!last) return loaded === undefined ? null : start;
   const undone = db.prepare('SELECT count(*) FROM change_tx WHERE undone = 1').pluck().get();
   // The time is part of the token because step numbers repeat when a restored
   // backup is edited: its step 6 is not the step 6 of the tree it replaced.
-  return `${last.id}:${last.at}:${String(undone)}`;
+  return `${start}${last.id}:${last.at}:${String(undone)}`;
 }
 
 /**

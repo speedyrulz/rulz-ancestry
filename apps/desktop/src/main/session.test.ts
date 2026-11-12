@@ -301,3 +301,118 @@ describe('backups', () => {
     expect(session.state().persons).toBe(2);
   });
 });
+
+describe('GEDCOM files', () => {
+  const GEDCOM = [
+    '0 HEAD',
+    '1 GEDC',
+    '2 VERS 5.5.1',
+    '0 @I1@ INDI',
+    '1 NAME Ann /Lee/',
+    '0 TRLR',
+    '',
+  ].join('\r\n');
+
+  function gedcomFile(name: string, content = GEDCOM): string {
+    const path = join(root, name);
+    writeFileSync(path, content);
+    return path;
+  }
+
+  it('names the tree after the file, or as asked, and never reuses a folder that is taken', () => {
+    const session = startSession();
+    const trees = join(root, 'Trees');
+    const file = gedcomFile('Lee family.ged');
+
+    const first = session.importGedcom(file, '', trees);
+    expect(first.state).toMatchObject({
+      name: 'Lee family',
+      dir: join(trees, 'Lee family'),
+      persons: 1,
+    });
+    expect(first.report.persons).toBe(1);
+
+    // The same file again: a second tree beside the first.
+    const second = session.importGedcom(file, '', trees);
+    expect(second.state.dir).toBe(join(trees, 'Lee family (2)'));
+    expect(second.state.id).not.toBe(first.state.id);
+
+    const named = session.importGedcom(file, '  My   own name ', trees);
+    expect(named.state).toMatchObject({ name: 'My own name', dir: join(trees, 'My own name') });
+
+    // A name Windows would refuse as a folder is made safe; the tree keeps the name.
+    const odd = session.importGedcom(gedcomFile('con.ged'), '', trees);
+    expect(odd.state).toMatchObject({ name: 'con', dir: join(trees, 'con tree') });
+
+    // All four are in the recent list. (They were opened in the same instant
+    // of the test clock, so their order says nothing.)
+    expect(
+      session
+        .recentTrees()
+        .map((tree) => tree.name)
+        .sort(),
+    ).toEqual(['Lee family', 'Lee family', 'My own name', 'con']);
+  });
+
+  it('closes the tree that was open, with its backup, and opens the imported one', () => {
+    const session = startSession();
+    const trees = join(root, 'Trees');
+    const before = session.create('Before', trees);
+    addPerson(session, 'Someone');
+
+    clock = T0 + MINUTE;
+    const { state } = session.importGedcom(gedcomFile('In.ged'), '', trees);
+    expect(state.name).toBe('In');
+    expect(state.revision).toBeGreaterThan(before.revision);
+    expect(readdirSync(join(before.dir, BACKUP_DIR_NAME))).toHaveLength(1);
+
+    // An imported tree has changed since it was made, so it is backed up on closing.
+    clock = T0 + 2 * MINUTE;
+    expect(session.close()).toEqual({ backupError: null });
+    expect(readdirSync(join(state.dir, BACKUP_DIR_NAME))).toEqual(['tree-20261111T120200Z.db']);
+  });
+
+  it('is reopened at the next start like any other tree', () => {
+    const first = startSession();
+    first.importGedcom(gedcomFile('Kept.ged'), '', join(root, 'Trees'));
+    first.shutdown();
+    expect(startSession().state()).toMatchObject({ name: 'Kept', persons: 1 });
+  });
+
+  it('leaves the open tree alone when the file cannot be imported, and makes no folder', () => {
+    const session = startSession();
+    const trees = join(root, 'Trees');
+    const { dir } = session.create('Mine', trees);
+
+    expect(() =>
+      session.importGedcom(gedcomFile('bad.ged', 'not a family tree'), '', trees),
+    ).toThrow(/not a GEDCOM file/);
+    expect(() => session.importGedcom(join(root, 'missing.ged'), '', trees)).toThrow(
+      /cannot be read/,
+    );
+    expect(() => session.importGedcom(gedcomFile('ok.ged'), '', join(root, 'Elsewhere'))).toThrow(
+      SessionError,
+    );
+    expect(session.state().dir).toBe(dir);
+    expect(readdirSync(trees)).toEqual(['Mine']);
+  });
+
+  it('exports beside the tree folder by default, and adds .ged to a bare name', () => {
+    const session = startSession();
+    expect(() => session.suggestedExportPath()).toThrow(NoOpenTreeError);
+    session.create('Lee: family?', join(root, 'Trees'));
+    addPerson(session, 'Ann');
+    expect(session.suggestedExportPath()).toBe(join(root, 'Trees', 'Lee family.ged'));
+
+    const options = { version: '5.5.1' as const, includeLiving: true, appVersion: '9.9.9' };
+    const bare = session.exportGedcom(join(root, 'export'), options);
+    expect(bare.file).toBe(join(root, 'export.ged'));
+    expect(bare.persons).toBe(1);
+    expect(existsSync(bare.file)).toBe(true);
+
+    const named = session.exportGedcom(join(root, 'tree.txt'), options);
+    expect(named.file).toBe(join(root, 'tree.txt'));
+    // The export is stamped with the session's clock, not the time of the test run.
+    expect(named.text).toContain('1 DATE 11 NOV 2026');
+  });
+});

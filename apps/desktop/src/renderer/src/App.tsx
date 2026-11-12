@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { StartInfo, TreeState } from '../../shared/ipc';
+import type { GedcomImportInfo, StartInfo, TreeState } from '../../shared/ipc';
 import { api, errorMessage } from './api';
 import { StartScreen } from './components/StartScreen';
 import { Workspace } from './components/Workspace';
@@ -13,10 +13,13 @@ type Loaded =
 export function App() {
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' });
   const [tree, setTree] = useState<TreeState | null>(null);
+  /** What the import that made the open tree did, until that tree is closed. */
+  const [imported, setImported] = useState<GedcomImportInfo | null>(null);
 
   /** Shows what the main process says is open and was opened before. */
   const show = useCallback((info: StartInfo, notice: string | null) => {
     setTree(info.tree);
+    setImported(null);
     setLoaded({
       state: 'ready',
       info,
@@ -73,6 +76,7 @@ export function App() {
         // A different tree starts with a fresh screen: nobody selected, empty search.
         key={tree.id + tree.dir}
         tree={tree}
+        imported={imported}
         onTree={setTree}
         onClosed={(backupError) => {
           const notice =
@@ -85,5 +89,15 @@ export function App() {
     );
   }
 
-  return <StartScreen info={loaded.info} notice={loaded.notice} onOpened={setTree} />;
+  return (
+    <StartScreen
+      info={loaded.info}
+      notice={loaded.notice}
+      onOpened={setTree}
+      onImported={(result) => {
+        setImported(result.report);
+        setTree(result.tree);
+      }}
+    />
+  );
 }

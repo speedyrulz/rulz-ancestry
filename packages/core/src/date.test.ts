@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { calendarToJdn, describeDate, jdnToCalendar, parseDate, yearLabel } from './date';
+import {
+  calendarToJdn,
+  describeDate,
+  jdnToCalendar,
+  parseDate,
+  toGedcomDate,
+  yearLabel,
+} from './date';
 
 /** Gregorian day number worked out independently, from JavaScript's own calendar. */
 function jdn(year: number, month: number, day: number): number {
@@ -337,5 +344,150 @@ describe('yearLabel', () => {
   it('is empty when there is no year to read', () => {
     expect(yearLabel(read('after the war'))).toBe('');
     expect(yearLabel(read('@#DHEBREW@ 5 TSH 5600'))).toBe('');
+  });
+});
+
+describe('toGedcomDate', () => {
+  const five = (text: string) => toGedcomDate(text, '5.5.1');
+  const seven = (text: string) => toGedcomDate(text, '7.0');
+  const value = (text: string) => ({ value: text, phrase: null });
+
+  it('writes dates typed the everyday way in GEDCOM form, the same for both versions', () => {
+    const cases: [string, string][] = [
+      ['12 March 1881', '12 MAR 1881'],
+      ['March 12, 1881', '12 MAR 1881'],
+      ['12th mar 1881', '12 MAR 1881'],
+      ['1881-03-12', '12 MAR 1881'],
+      ['Mar 1881', 'MAR 1881'],
+      ['1881', '1881'],
+      ['abt 1850', 'ABT 1850'],
+      ['circa 1850', 'ABT 1850'],
+      ['~1850', 'ABT 1850'],
+      ['cal 1850', 'CAL 1850'],
+      ['Est. 1850', 'EST 1850'],
+      ['before 1900', 'BEF 1900'],
+      ['aft 3 Jan 1900', 'AFT 3 JAN 1900'],
+      ['between 1850 and 1855', 'BET 1850 AND 1855'],
+      ['1850-1855', 'BET 1850 AND 1855'],
+      ['from 1850 to 1855', 'FROM 1850 TO 1855'],
+      ['1850 to Jun 1855', 'FROM 1850 TO JUN 1855'],
+      ['from 1850', 'FROM 1850'],
+      ['to 1855', 'TO 1855'],
+      ['  12   MAR   1881 ', '12 MAR 1881'],
+    ];
+    for (const [typed, written] of cases) {
+      expect(five(typed), typed).toEqual(value(written));
+      expect(seven(typed), typed).toEqual(value(written));
+    }
+    expect(five('')).toEqual(value(''));
+    expect(seven('   ')).toEqual(value(''));
+  });
+
+  it('leaves a date that is already in GEDCOM form as it is', () => {
+    for (const text of ['12 MAR 1881', 'ABT 1850', 'BET 1850 AND 1855', 'FROM JAN 1850 TO 1855']) {
+      expect(five(text)).toEqual(value(text));
+      expect(seven(text)).toEqual(value(text));
+    }
+  });
+
+  it('names the calendar in the way each version does', () => {
+    expect(five('@#DJULIAN@ 3 FEB 1700')).toEqual(value('@#DJULIAN@ 3 FEB 1700'));
+    expect(seven('@#DJULIAN@ 3 FEB 1700')).toEqual(value('JULIAN 3 FEB 1700'));
+    expect(five('JULIAN 3 FEB 1700')).toEqual(value('@#DJULIAN@ 3 FEB 1700'));
+    expect(seven('JULIAN 3 FEB 1700')).toEqual(value('JULIAN 3 FEB 1700'));
+    // The Gregorian calendar is the default and is not named.
+    expect(five('@#DGREGORIAN@ 1881')).toEqual(value('1881'));
+    expect(seven('GREGORIAN 1881')).toEqual(value('1881'));
+    expect(seven('bet @#DJULIAN@ 1700 and @#DJULIAN@ 1701')).toEqual(
+      value('BET JULIAN 1700 AND JULIAN 1701'),
+    );
+  });
+
+  it('carries dates in calendars the app cannot convert, with the calendar named', () => {
+    expect(five('HEBREW 5 TSH 5650')).toEqual(value('@#DHEBREW@ 5 TSH 5650'));
+    expect(seven('@#DHEBREW@ 5 TSH 5650')).toEqual(value('HEBREW 5 TSH 5650'));
+    expect(five('FRENCH_R 1 VEND 3')).toEqual(value('@#DFRENCH R@ 1 VEND 3'));
+    expect(seven('@#DFRENCH R@ 1 VEND 3')).toEqual(value('FRENCH_R 1 VEND 3'));
+  });
+
+  it('writes years before year 1 the way each version does', () => {
+    expect(five('44 BC')).toEqual(value('44 B.C.'));
+    expect(seven('44 B.C.')).toEqual(value('44 BCE'));
+    expect(five('15 MAR 44 BCE')).toEqual(value('15 MAR 44 B.C.'));
+  });
+
+  it('keeps a dual year in 5.5.1, and in 7.0 writes the later year with the wording as a phrase', () => {
+    expect(five('11 Feb 1731/32')).toEqual(value('11 FEB 1731/32'));
+    expect(seven('11 Feb 1731/32')).toEqual({
+      value: 'JULIAN 11 FEB 1732',
+      phrase: '11 Feb 1731/32',
+    });
+  });
+
+  it('writes text that is not a date as a date phrase', () => {
+    expect(five('after the war')).toEqual(value('(after the war)'));
+    expect(five('(after the war)')).toEqual(value('(after the war)'));
+    expect(seven('after the war')).toEqual({ value: '', phrase: 'after the war' });
+    expect(seven('(after the war)')).toEqual({ value: '', phrase: 'after the war' });
+    // An unknown calendar cannot be written as a date either.
+    expect(five('@#DROMAN@ 5 MAR 750')).toEqual(value('(@#DROMAN@ 5 MAR 750)'));
+    expect(five('12/03/1881')).toEqual(value('(12/03/1881)'));
+  });
+
+  it('does not try to read a page of text as a date', () => {
+    const long = `from 1850 ${'to 1851 '.repeat(100)}`.trim();
+    expect(parseDate(long)?.qualifier).toBe('phrase');
+    expect(five(long).value).toBe(`(${long})`);
+    expect(seven(long)).toEqual({ value: '', phrase: long });
+  });
+
+  it('writes an interpreted date with its wording', () => {
+    expect(five('INT 1881 (as on the stone)')).toEqual(value('INT 1881 (as on the stone)'));
+    expect(seven('INT 1881 (as on the stone)')).toEqual({
+      value: '1881',
+      phrase: 'as on the stone',
+    });
+    expect(five('int 1881')).toEqual(value('INT 1881'));
+  });
+
+  it('gives the same result when its own output is written again', () => {
+    const typed = [
+      '12 March 1881',
+      'abt 1850',
+      '1850-1855',
+      '@#DJULIAN@ 3 FEB 1700',
+      'HEBREW 5 TSH 5650',
+      '44 BC',
+      '11 Feb 1731/32',
+      'after the war',
+      'INT 1881 (as on the stone)',
+    ];
+    for (const text of typed) {
+      for (const version of ['5.5.1', '7.0'] as const) {
+        const once = toGedcomDate(text, version);
+        if (once.value === '') continue;
+        expect(toGedcomDate(once.value, version).value, `${text} in ${version}`).toBe(once.value);
+      }
+    }
+  });
+
+  it('writes a date that reads back as the same days', () => {
+    for (const text of [
+      '12 March 1881',
+      'abt 1850',
+      '1850-1855',
+      'bef Jun 1900',
+      '11 Feb 1731/32',
+    ]) {
+      for (const version of ['5.5.1', '7.0'] as const) {
+        const back = parseDate(toGedcomDate(text, version).value);
+        const typed = parseDate(text);
+        expect([back?.minJdn, back?.maxJdn], `${text} in ${version}`).toEqual([
+          typed?.minJdn,
+          typed?.maxJdn,
+        ]);
+        expect(back?.qualifier).toBe(typed?.qualifier);
+      }
+    }
   });
 });

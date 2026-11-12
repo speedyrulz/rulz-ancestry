@@ -15,6 +15,13 @@ export const TREE_APPLICATION_ID = 0x52756c5a;
 /** The database file inside a tree folder. */
 export const TREE_FILE_NAME = 'tree.db';
 
+/**
+ * The `tree_meta` key that records when a file was loaded into the tree (see
+ * `Tree.load`). A load leaves no trace in the change log, so backups use this
+ * to tell that the tree's contents changed.
+ */
+export const LOADED_AT_KEY = 'loaded_at';
+
 /** The file is a SQLite database, but not one this app created. */
 export class NotATreeError extends Error {
   constructor(file: string) {
@@ -104,6 +111,61 @@ export class Tree {
         }
       })
       .immediate();
+  }
+
+  /**
+   * Runs `fn` to fill a tree that has nobody in it yet, as when a file is
+   * imported into a new tree. It is saved completely or not at all.
+   *
+   * This is the one way to write to a tree without recording each row in the
+   * change log, and the reason it is allowed: there is nothing to go back to
+   * in an empty tree, and recording a large import row by row would double
+   * both the time it takes and the size of the tree file. What is loaded
+   * becomes the tree's starting point; it cannot be undone.
+   */
+  load<T>(fn: () => T): T {
+    this.#assertNotWriting('load a file');
+    return this.db
+      .transaction(() => {
+        const used = sql(
+          this.db,
+          `SELECT EXISTS (SELECT 1 FROM person) OR EXISTS (SELECT 1 FROM family)
+               OR EXISTS (SELECT 1 FROM event) OR EXISTS (SELECT 1 FROM gedcom_record)`,
+        )
+          .pluck()
+          .get();
+        if (used === 1) {
+          throw new TreeRuleError('a file can only be loaded into a tree that is still empty');
+        }
+        // An empty tree may have a history of people added and removed. It ends here.
+        sql(this.db, 'DELETE FROM change_tx').run();
+        sql(this.db, "UPDATE change_state SET mode = 'replay', current_tx = NULL").run();
+        this.#writing = true;
+        try {
+          const result = fn();
+          sql(this.db, "UPDATE change_state SET mode = 'idle', current_tx = NULL").run();
+          this.setMeta(LOADED_AT_KEY, String(Date.now()));
+          return result;
+        } finally {
+          this.#writing = false;
+        }
+      })
+      .immediate();
+  }
+
+  /** A fact about the tree itself, such as its name. Null when it is not recorded. */
+  getMeta(key: string): string | null {
+    const value = sql(this.db, 'SELECT value FROM tree_meta WHERE key = ?').pluck().get(key) as
+      string | undefined;
+    return value ?? null;
+  }
+
+  setMeta(key: string, value: string): void {
+    sql(
+      this.db,
+      `INSERT INTO tree_meta (key, value) VALUES (?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    ).run(key, value);
   }
 
   /** Reverses the latest change. Returns it, or null when there is nothing to undo. */

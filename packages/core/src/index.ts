@@ -4,13 +4,16 @@ export {
   describeDate,
   jdnToCalendar,
   parseDate,
+  toGedcomDate,
   yearLabel,
   type CalendarDate,
   type DateCalendar,
   type DateQualifier,
   type DateReading,
+  type GedcomDate,
   type ParsedDate,
 } from './date';
+export * from './gedcom';
 export {
   FAMILY_EVENT_TYPES,
   NAME_TYPES,

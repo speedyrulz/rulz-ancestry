@@ -16,12 +16,39 @@ const COUNTER_MAX = 0xfff;
 let lastTime = -1;
 let lastCounter = 0;
 
+/** Every byte value as two hex digits. */
+const HEX: readonly string[] = Array.from({ length: 256 }, (_, value) =>
+  value.toString(16).padStart(2, '0'),
+);
+
+/**
+ * Random bytes are fetched from the system a block at a time. An import makes
+ * more than a hundred thousand ids, and asking the system for sixteen bytes
+ * each time took a fifth of the import. Every byte is still used only once.
+ */
+const POOL_SIZE = 4096;
+const pool = new Uint8Array(POOL_SIZE);
+let poolUsed = POOL_SIZE;
+
+/** Reserves `count` unused random bytes and returns where they start in the pool. */
+function takeRandom(count: number): number {
+  if (poolUsed + count > POOL_SIZE) {
+    crypto.getRandomValues(pool);
+    poolUsed = 0;
+  }
+  const start = poolUsed;
+  poolUsed += count;
+  return start;
+}
+
 function randomCounterStart(): number {
   // Start in the lower half of the 12 bits, so there is always room to count up.
-  const bytes = new Uint8Array(2);
-  crypto.getRandomValues(bytes);
-  return (((bytes[0] ?? 0) << 8) | (bytes[1] ?? 0)) & 0x7ff;
+  const at = takeRandom(2);
+  return (((pool[at] ?? 0) << 8) | (pool[at + 1] ?? 0)) & 0x7ff;
 }
+
+/** The bytes of the id being made. Reused, because an id is turned into text before the next one starts. */
+const scratch = new Uint8Array(16);
 
 /**
  * Returns a new id. Pass `now` (Unix milliseconds) only to make an id for a
@@ -29,8 +56,9 @@ function randomCounterStart(): number {
  * of the counter and takes no part in the ordering described above.
  */
 export function newId(now?: number): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
+  const bytes = scratch;
+  const random = takeRandom(16);
+  bytes.set(pool.subarray(random, random + 16));
 
   let time: number;
   if (now === undefined) {
@@ -68,14 +96,13 @@ export function newId(now?: number): string {
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70; // version 7
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // RFC variant
 
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20),
-  ].join('-');
+  // 8-4-4-4-12 hex digits.
+  let text = '';
+  for (let index = 0; index < 16; index += 1) {
+    if (index === 4 || index === 6 || index === 8 || index === 10) text += '-';
+    text += HEX[bytes[index] ?? 0] ?? '';
+  }
+  return text;
 }
 
 /** Returns the creation time (Unix milliseconds) encoded in an id from {@link newId}. */

@@ -151,6 +151,34 @@ const platform: Platform = {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   },
 
+  async chooseFileToOpen(options) {
+    const settings = {
+      title: options.title,
+      buttonLabel: options.buttonLabel,
+      defaultPath: options.defaultPath,
+      filters: options.filters,
+      properties: ['openFile'],
+    } satisfies Electron.OpenDialogOptions;
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, settings)
+      : await dialog.showOpenDialog(settings);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  },
+
+  async chooseFileToSave(options) {
+    // Windows itself asks before an existing file is replaced.
+    const settings = {
+      title: options.title,
+      buttonLabel: options.buttonLabel,
+      defaultPath: options.defaultPath,
+      filters: options.filters,
+    } satisfies Electron.SaveDialogOptions;
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, settings)
+      : await dialog.showSaveDialog(settings);
+    return result.canceled || result.filePath === '' ? null : result.filePath;
+  },
+
   async openFolder(dir) {
     const problem = await shell.openPath(dir);
     if (problem !== '') throw new Error(problem);

@@ -130,10 +130,27 @@ const CALENDAR_KEYWORDS: Readonly<Record<string, DateCalendar>> = {
   FRENCH_R: 'french-republican',
 };
 
+/** One date as its numbers, the way it was written. */
+interface DateParts {
+  day: number | null;
+  month: number | null;
+  /** The year as written: 44 for "44 BC", 1731 for "1731/32". */
+  year: number;
+  /** The digits after the slash of a dual year ("32" in "1731/32"), or null. */
+  dual: string | null;
+  bc: boolean;
+}
+
 interface SimpleDate {
   calendar: DateCalendar;
   /** First and last day, or null when the calendar cannot be converted yet. */
   range: readonly [number, number] | null;
+  /** True when the text itself named the calendar. */
+  explicit: boolean;
+  /** Null for a calendar the app cannot convert yet. */
+  parts: DateParts | null;
+  /** For a calendar the app cannot convert yet: the text after the calendar's name. */
+  rest: string;
 }
 
 function resolveYear(
@@ -169,7 +186,9 @@ function parseSimple(input: string): SimpleDate | null {
     s = s.slice(escape[0].length).trim();
   }
   if (s === '') return null;
-  if (calendar !== 'gregorian' && calendar !== 'julian') return { calendar, range: null };
+  if (calendar !== 'gregorian' && calendar !== 'julian') {
+    return { calendar, range: null, explicit: true, parts: null, rest: s };
+  }
 
   s = s
     .replace(/,/g, ' ')
@@ -226,10 +245,22 @@ function parseSimple(input: string): SimpleDate | null {
   // A dual year is only written for dates in the Julian calendar.
   const cal: DayCalendar =
     calendar === 'julian' || (resolved.dual && !explicitCalendar) ? 'julian' : 'gregorian';
+  const written = {
+    calendar: cal,
+    explicit: explicitCalendar,
+    parts: {
+      day: day ?? null,
+      month: month ?? null,
+      year: Number(yearDigits),
+      dual: dualDigits ?? null,
+      bc,
+    },
+    rest: '',
+  };
 
   if (month === undefined) {
     return {
-      calendar: cal,
+      ...written,
       range: [calendarToJdn(cal, year, 1, 1), calendarToJdn(cal, year, 12, 31)],
     };
   }
@@ -237,13 +268,13 @@ function parseSimple(input: string): SimpleDate | null {
   const lastDay = daysInMonth(cal, year, month);
   if (day === undefined) {
     return {
-      calendar: cal,
+      ...written,
       range: [calendarToJdn(cal, year, month, 1), calendarToJdn(cal, year, month, lastDay)],
     };
   }
   if (day < 1 || day > lastDay) return null;
   const jdn = calendarToJdn(cal, year, month, day);
-  return { calendar: cal, range: [jdn, jdn] };
+  return { ...written, range: [jdn, jdn] };
 }
 
 /** Words that can come before a single date. Longer words are listed first. */
@@ -260,9 +291,62 @@ function phrase(text: string): ParsedDate {
   return { text, qualifier: 'phrase', calendar: null, minJdn: null, maxJdn: null };
 }
 
-function single(text: string, qualifier: DateQualifier, body: string): ParsedDate {
+/**
+ * What a date's text is made of, before any day numbers are worked out. Both
+ * reading a date ({@link parseDate}) and writing it in GEDCOM's own form
+ * ({@link toGedcomDate}) start from this.
+ */
+type Analysis =
+  | { kind: 'phrase' }
+  | { kind: 'single'; qualifier: DateQualifier; date: SimpleDate }
+  | { kind: 'pair'; qualifier: 'between' | 'from-to'; first: SimpleDate; second: SimpleDate };
+
+/** Text longer than this is not read as a date; it is kept as a phrase. */
+const MAX_DATE_LENGTH = 250;
+
+function analyseSingle(qualifier: DateQualifier, body: string): Analysis {
   const date = parseSimple(body);
-  if (!date) return phrase(text);
+  return date ? { kind: 'single', qualifier, date } : { kind: 'phrase' };
+}
+
+function analysePair(qualifier: 'between' | 'from-to', first: string, second: string): Analysis {
+  const a = parseSimple(first);
+  const b = parseSimple(second);
+  return a && b ? { kind: 'pair', qualifier, first: a, second: b } : { kind: 'phrase' };
+}
+
+/** Works out what kind of date some trimmed, non-empty text is. */
+function analyse(text: string): Analysis {
+  // No date is this long. An imported file can hold anything in a date line,
+  // and there is no point in trying every pattern on a page of text.
+  if (text.length > MAX_DATE_LENGTH) return { kind: 'phrase' };
+  const s = text.toUpperCase().replace(/\s+/g, ' ');
+  if (s.startsWith('(') && s.endsWith(')')) return { kind: 'phrase' };
+
+  let m: RegExpExecArray | null;
+  // GEDCOM: INT 1881 (as read from a damaged page)
+  if ((m = /^INT\.? (.+?)(?: \(.*\))?$/.exec(s))) return analyseSingle('interpreted', m[1] ?? '');
+  if ((m = /^(?:BETWEEN|BET\.?|BTW\.?) (.+?) (?:AND|&) (.+)$/.exec(s))) {
+    return analysePair('between', m[1] ?? '', m[2] ?? '');
+  }
+  if ((m = /^FROM (.+?) TO (.+)$/.exec(s))) return analysePair('from-to', m[1] ?? '', m[2] ?? '');
+  if ((m = /^FROM (.+)$/.exec(s))) return analyseSingle('from', m[1] ?? '');
+  if ((m = /^TO (.+)$/.exec(s))) return analyseSingle('to', m[1] ?? '');
+  // 1850-1855. A two-digit second part is an ISO month (1850-12), handled below.
+  if ((m = /^(\d{3,4}) ?[-–—] ?(\d{3,4})$/.exec(s))) {
+    return analysePair('between', m[1] ?? '', m[2] ?? '');
+  }
+  if ((m = /^(.+?) [–—] (.+)$/.exec(s))) return analysePair('between', m[1] ?? '', m[2] ?? '');
+  if ((m = /^(.+?) TO (.+)$/.exec(s))) return analysePair('from-to', m[1] ?? '', m[2] ?? '');
+
+  for (const [pattern, qualifier] of PREFIXES) {
+    const prefix = pattern.exec(s);
+    if (prefix) return analyseSingle(qualifier, s.slice(prefix[0].length));
+  }
+  return analyseSingle('exact', s);
+}
+
+function single(text: string, qualifier: DateQualifier, date: SimpleDate): ParsedDate {
   const base = { text, qualifier, calendar: date.calendar };
   if (!date.range) return { ...base, minJdn: null, maxJdn: null };
   const [min, max] = date.range;
@@ -280,10 +364,7 @@ function single(text: string, qualifier: DateQualifier, body: string): ParsedDat
   }
 }
 
-function pair(text: string, qualifier: DateQualifier, first: string, second: string): ParsedDate {
-  const a = parseSimple(first);
-  const b = parseSimple(second);
-  if (!a || !b) return phrase(text);
+function pair(text: string, qualifier: DateQualifier, a: SimpleDate, b: SimpleDate): ParsedDate {
   const base = { text, qualifier, calendar: a.calendar };
   if (!a.range || !b.range) return { ...base, minJdn: null, maxJdn: null };
   // Take the outer bounds, so a pair typed in the wrong order still gives a range.
@@ -302,30 +383,132 @@ export function parseDate(input: string): ParsedDate | null {
   const text = input.trim();
   if (text === '') return null;
 
-  const s = text.toUpperCase().replace(/\s+/g, ' ');
-  if (s.startsWith('(') && s.endsWith(')')) return phrase(text);
+  const found = analyse(text);
+  if (found.kind === 'phrase') return phrase(text);
+  if (found.kind === 'single') return single(text, found.qualifier, found.date);
+  return pair(text, found.qualifier, found.first, found.second);
+}
 
-  let m: RegExpExecArray | null;
-  // GEDCOM: INT 1881 (as read from a damaged page)
-  if ((m = /^INT\.? (.+?)(?: \(.*\))?$/.exec(s))) return single(text, 'interpreted', m[1] ?? '');
-  if ((m = /^(?:BETWEEN|BET\.?|BTW\.?) (.+?) (?:AND|&) (.+)$/.exec(s))) {
-    return pair(text, 'between', m[1] ?? '', m[2] ?? '');
-  }
-  if ((m = /^FROM (.+?) TO (.+)$/.exec(s))) return pair(text, 'from-to', m[1] ?? '', m[2] ?? '');
-  if ((m = /^FROM (.+)$/.exec(s))) return single(text, 'from', m[1] ?? '');
-  if ((m = /^TO (.+)$/.exec(s))) return single(text, 'to', m[1] ?? '');
-  // 1850-1855. A two-digit second part is an ISO month (1850-12), handled below.
-  if ((m = /^(\d{3,4}) ?[-–—] ?(\d{3,4})$/.exec(s))) {
-    return pair(text, 'between', m[1] ?? '', m[2] ?? '');
-  }
-  if ((m = /^(.+?) [–—] (.+)$/.exec(s))) return pair(text, 'between', m[1] ?? '', m[2] ?? '');
-  if ((m = /^(.+?) TO (.+)$/.exec(s))) return pair(text, 'from-to', m[1] ?? '', m[2] ?? '');
+/** A date in GEDCOM's own form. */
+export interface GedcomDate {
+  /** The value of the DATE line. Empty when the date is only a phrase in GEDCOM 7.0. */
+  value: string;
+  /**
+   * GEDCOM 7.0 only: text for a PHRASE line under the DATE line. It carries a
+   * date the app cannot read, or the original wording where the 7.0 form says
+   * less than what was typed. Always null for GEDCOM 5.5.1.
+   */
+  phrase: string | null;
+}
 
-  for (const [pattern, qualifier] of PREFIXES) {
-    const prefix = pattern.exec(s);
-    if (prefix) return single(text, qualifier, s.slice(prefix[0].length));
+const MONTH_CODES = [
+  'JAN',
+  'FEB',
+  'MAR',
+  'APR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AUG',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DEC',
+] as const;
+
+/** How each calendar is named in a date: first in GEDCOM 5.5.1, then in GEDCOM 7.0. */
+const CALENDAR_MARKERS: Readonly<Partial<Record<DateCalendar, readonly [string, string]>>> = {
+  julian: ['@#DJULIAN@', 'JULIAN'],
+  hebrew: ['@#DHEBREW@', 'HEBREW'],
+  'french-republican': ['@#DFRENCH R@', 'FRENCH_R'],
+};
+
+/** Words GEDCOM puts before a single date. An exact date has none. */
+const GEDCOM_PREFIXES: Readonly<Partial<Record<DateQualifier, string>>> = {
+  about: 'ABT',
+  calculated: 'CAL',
+  estimated: 'EST',
+  before: 'BEF',
+  after: 'AFT',
+  from: 'FROM',
+  to: 'TO',
+};
+
+/**
+ * One date in GEDCOM's form. `lossy` is set when the form cannot say all that
+ * was written, which only happens with a dual year in GEDCOM 7.0. Returns null
+ * for a calendar GEDCOM has no name for.
+ */
+function formatSimple(date: SimpleDate, seven: boolean): { text: string; lossy: boolean } | null {
+  if (date.calendar === 'other') return null;
+  const marker = CALENDAR_MARKERS[date.calendar]?.[seven ? 1 : 0];
+  const parts = date.parts;
+  if (parts === null) {
+    return marker === undefined ? null : { text: `${marker} ${date.rest}`, lossy: false };
   }
-  return single(text, 'exact', s);
+
+  const dual = parts.dual !== null;
+  const pieces: string[] = [];
+  // A dual year already says the date is in the old style; 5.5.1 needs no marker for it.
+  if (marker !== undefined && (seven || !dual || date.explicit)) pieces.push(marker);
+  if (parts.day !== null) pieces.push(String(parts.day));
+  if (parts.month !== null) pieces.push(MONTH_CODES[parts.month - 1] ?? '');
+  if (dual && !seven) {
+    pieces.push(`${parts.year}/${parts.dual ?? ''}`);
+  } else {
+    // GEDCOM 7.0 has no dual years; it counts the year from 1 January.
+    pieces.push(String(dual ? parts.year + 1 : parts.year));
+  }
+  if (parts.bc) pieces.push(seven ? 'BCE' : 'B.C.');
+  return { text: pieces.join(' '), lossy: dual && seven };
+}
+
+/**
+ * Writes a date as typed in the form a GEDCOM file needs: "12 March 1881"
+ * becomes `12 MAR 1881`, "about 1850" becomes `ABT 1850`, "1850-1855" becomes
+ * `BET 1850 AND 1855`. Text the app cannot read as a date becomes a date
+ * phrase: `(text)` in GEDCOM 5.5.1, a PHRASE line in GEDCOM 7.0.
+ */
+export function toGedcomDate(input: string, version: '5.5.1' | '7.0'): GedcomDate {
+  const text = input.trim().replace(/\s+/g, ' ');
+  if (text === '') return { value: '', phrase: null };
+  const seven = version === '7.0';
+
+  const asPhrase = (): GedcomDate => {
+    const inner = text.startsWith('(') && text.endsWith(')') ? text.slice(1, -1).trim() : text;
+    return seven ? { value: '', phrase: inner } : { value: `(${inner})`, phrase: null };
+  };
+
+  const found = analyse(text);
+  if (found.kind === 'phrase') return asPhrase();
+
+  if (found.kind === 'pair') {
+    const first = formatSimple(found.first, seven);
+    const second = formatSimple(found.second, seven);
+    if (!first || !second) return asPhrase();
+    const value =
+      found.qualifier === 'between'
+        ? `BET ${first.text} AND ${second.text}`
+        : `FROM ${first.text} TO ${second.text}`;
+    return { value, phrase: first.lossy || second.lossy ? text : null };
+  }
+
+  const date = formatSimple(found.date, seven);
+  if (!date) return asPhrase();
+  if (found.qualifier === 'interpreted') {
+    // "INT 1881 (as on the stone)": a date someone worked out from other wording.
+    const wording = /\((.*)\)$/.exec(text)?.[1]?.trim() ?? '';
+    if (seven) return { value: date.text, phrase: wording === '' ? text : wording };
+    return {
+      value: wording === '' ? `INT ${date.text}` : `INT ${date.text} (${wording})`,
+      phrase: null,
+    };
+  }
+  const prefix = GEDCOM_PREFIXES[found.qualifier];
+  return {
+    value: prefix === undefined ? date.text : `${prefix} ${date.text}`,
+    phrase: date.lossy ? text : null,
+  };
 }
 
 /** The parts of a stored date that say what it means; the typed text is not needed. */

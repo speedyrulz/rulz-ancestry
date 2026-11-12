@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TreeState } from '../../../shared/ipc';
+import type { GedcomImportInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
-import { formatWhen } from '../format';
+import { countOf, formatWhen } from '../format';
 import { AddPersonDialog, BackupsDialog } from './dialogs';
+import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
 
@@ -13,6 +14,8 @@ interface Notice {
 
 interface WorkspaceProps {
   tree: TreeState;
+  /** What the import did, when this tree has just been made from a GEDCOM file. */
+  imported: GedcomImportInfo | null;
   /** Called with the tree's new state after every edit. */
   onTree: (tree: TreeState) => void;
   /** Called once the tree is closed. `backupError` says why its backup failed, if it did. */
@@ -27,12 +30,16 @@ function typingOrInDialog(target: EventTarget | null): boolean {
 }
 
 /** The screen for an open tree: search and commands on top, everyone on the left, one person on the right. */
-export function Workspace({ tree, onTree, onClosed }: WorkspaceProps) {
+export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [query, setQuery] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [dialog, setDialog] = useState<'add-person' | 'backups' | null>(null);
+  /** The message about the import stays until it is dismissed; other messages come and go above it. */
+  const [importNotice, setImportNotice] = useState(imported !== null);
+  const [dialog, setDialog] = useState<
+    'add-person' | 'backups' | 'export' | 'import-report' | null
+  >(null);
   const [busy, setBusy] = useState(false);
   const searchBox = useRef<HTMLInputElement>(null);
 
@@ -179,6 +186,14 @@ export function Workspace({ tree, onTree, onClosed }: WorkspaceProps) {
           </button>
           <button
             type="button"
+            title="Save this tree as a GEDCOM file for another program"
+            onClick={() => setDialog('export')}
+            data-testid="open-export"
+          >
+            Export
+          </button>
+          <button
+            type="button"
             disabled={busy}
             onClick={() => void closeTree()}
             data-testid="close-tree"
@@ -189,6 +204,32 @@ export function Workspace({ tree, onTree, onClosed }: WorkspaceProps) {
       </header>
 
       <div className="notice-bar" aria-live="polite">
+        {imported !== null && importNotice && (
+          <p className="notice" role="status" data-testid="import-notice">
+            <span>
+              {importSummary(imported)}
+              {imported.issueCount > 0 &&
+                ` ${countOf(imported.issueCount, 'place', 'places')} in the file did not follow the rules of the format.`}
+            </span>
+            <button
+              type="button"
+              className="small"
+              onClick={() => setDialog('import-report')}
+              data-testid="import-details"
+            >
+              Details
+            </button>
+            <button
+              type="button"
+              className="small"
+              onClick={() => setImportNotice(false)}
+              aria-label="Dismiss the message about the import"
+              data-testid="import-dismiss"
+            >
+              Dismiss
+            </button>
+          </p>
+        )}
         {notice !== null && (
           <p
             className={notice.error ? 'error' : 'notice'}
@@ -249,6 +290,10 @@ export function Workspace({ tree, onTree, onClosed }: WorkspaceProps) {
             setNotice(null);
           }}
         />
+      )}
+      {dialog === 'export' && <ExportDialog tree={tree} onClose={() => setDialog(null)} />}
+      {dialog === 'import-report' && imported !== null && (
+        <ImportReportDialog report={imported} onClose={() => setDialog(null)} />
       )}
       {dialog === 'backups' && (
         <BackupsDialog

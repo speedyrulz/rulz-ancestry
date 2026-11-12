@@ -64,6 +64,17 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - SQLite reads a file only at the first statement. `openDatabase` closes the handle when that fails; otherwise Windows keeps a file that is not a database locked until the app exits.
 - Measured on a 10,000-person tree: a list page 33 ms, a name search under 35 ms, a person page 2 ms, a backup 0.2 seconds and 26 MB.
 
+### Findings from Phase 1c that later phases rely on
+
+- **An untouched part of a file is written back from its own lines.** The GEDCOM reader keeps, with every node, the lines it was read from. The writer uses those lines for a node nobody changed, and writes a changed node afresh. This is what makes an export of an import identical; anything that changes a node must call `touch()` on it.
+- **Reading and writing a name or event are one pair of functions** in `packages/core/src/gedcom` (`readName` and `patchName`, `readEvent` and `patchEvent`). The export decides whether a name changed by reading its original lines again and comparing with the tree. So a change to how a line is _read_ changes what the export thinks was edited in trees imported earlier. Change those functions only together with a migration that rewrites what is stored.
+- **A statement that a trigger may abort gets a "statement journal", which SQLite puts in a temporary file by default.** Every write to a tree table is such a statement. Creating a file per statement made a 10,000-person import three times slower on disk than in memory. Every connection now sets `temp_store = MEMORY`.
+- **`newId()` took a fifth of the import** because it asked the system for random bytes on every call. It now draws from a 4,096-byte pool and is fourteen times faster. Ids are otherwise unchanged.
+- **Logging an import in the change log would double its time and the size of the tree file**, and undoing an import into an empty tree gives an empty tree. `Tree.load` is therefore the one unlogged way to write, allowed only into a tree with nobody in it. Because the change log no longer tells the whole story, backups also look at the `loaded_at` value in `tree_meta` to see that a tree changed.
+- **The Write tool of this development setup turns a unicode escape in source text into the character itself.** A byte-order mark ended up as an invisible character in a source file. Build such characters with `String.fromCharCode`.
+- **A file dialog cannot be driven from a test,** like the folder dialog. The end-to-end tests replace `dialog.showOpenDialog` and `dialog.showSaveDialog` in the main process (`answerFilePicker` and `answerSaveDialog` in `e2e/fixtures.ts`).
+- Measured on a 10,000-person file of 261,000 lines: import 2.7 seconds in the app, from picking the file to the tree being on screen; export 0.8 seconds. Import time grows in step with the file: 50,000 people took 16 seconds before the two speed-ups above.
+
 ## 3. Architecture
 
 ```
@@ -80,9 +91,20 @@ Inside the desktop app:
 src/shared/ipc.ts     The contract: every function the page may call, and the shapes that cross
 src/preload           Exposes exactly those functions to the page as window.rulz
 src/main/index.ts     Electron wiring: window, security settings, IPC registration, quit
-src/main/session.ts   The open tree, the recent list, reopening at start, backup on close. No Electron.
+src/main/session.ts   The open tree, the recent list, reopening at start, backup on close,
+                      import and export of GEDCOM files. No Electron.
 src/main/handlers.ts  What each function does, after checking its arguments. No Electron.
 src/renderer          React screens: start screen, person list, person page, dialogs
+```
+
+GEDCOM is split between two packages:
+
+```
+packages/core/src/gedcom   No Node.js, no database: decoding bytes to text (UTF-8, UTF-16, ANSEL,
+                           Windows-1252, IBM PC), reading text into records, writing records as
+                           text, reading and writing names, events and family links, and rewriting
+                           records from one GEDCOM version to the other.
+packages/db/src/gedcom     Loading a parsed file into a tree, and writing a tree as a file.
 ```
 
 Every source has a manifest (`packages/connectors/src/manifest.ts`) holding its
@@ -160,6 +182,23 @@ search_doc(id, entity_type, entity_id, person_id)            -- maps a search ro
 search_fts                                                   -- FTS5 over names
 ```
 
+Built, in schema version 2 (`packages/db/src/schema/002-gedcom.ts`):
+
+```sql
+gedcom_record(id, position, tag, xref, kind, text, parts)    -- one row per record of an imported file
+  -- kind: head | person | family | kept
+  -- person and family rows: id is the person's or family's id, text is the record's first line,
+  --   parts is a JSON list of the lines under it, each saying what it became (a name, an event,
+  --   a family link) or nothing, when it is kept as written
+  -- kept rows: text is the whole record (a source, a note, a media item, another program's own)
+tree_meta also holds: gedcom_version, gedcom_encoding, gedcom_line_ending, gedcom_file,
+  gedcom_imported_at, loaded_at
+```
+
+`gedcom_record` is written once, by the import, and never changed afterwards, so
+it is not in the change log. A row whose person has been deleted is ignored by
+the export, and is used again if the deletion is undone.
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
@@ -180,9 +219,10 @@ The AI assistant's activity log (`ai_run`, `ai_tool_call`) is planned for the ap
 database, not the tree, so a tree folder that is copied or shared carries no AI
 logs.
 
-Also planned: phonetic codes on `person_name` (with duplicate detection), GEDCOM
-cross-reference ids and unknown tags (with GEDCOM import), and places, notes and
-transcriptions in the search index.
+Also planned: phonetic codes on `person_name` (with duplicate detection), and
+places, notes and transcriptions in the search index. When sources, notes and
+media get their tables (Phase 2), a migration moves them out of the `kept` rows
+and the kept lines of `gedcom_record`.
 
 The application database (`app.db` in the profile folder, schema in
 `packages/db/src/appdb.ts`) is separate from any tree. Built, in its schema
@@ -195,11 +235,13 @@ recent_tree(dir, tree_id, name, last_opened_at)              -- at most 20, late
 
 Rules:
 
-- **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. Original GEDCOM cross-reference IDs are kept for round-tripping.
+- **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. The cross-reference ids of an imported GEDCOM file (`@I1@`) are kept in `gedcom_record.xref` and used again on export; a person added later gets the first free `I` number, a family the first free `F` number.
 - **Dates** keep the text as typed, plus a normalized day-number range, a qualifier (about, before, between) and a calendar. `parseDate()` in `packages/core` reads GEDCOM 5.5.1 and 7.0 dates and common English forms. Text it cannot read is kept as a phrase with no range.
 - **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten.
-- **Unknown GEDCOM tags** are stored verbatim so export loses nothing.
-- **Every write** goes through `change_log`, which provides undo and a per-person history. Database triggers do the recording, and they reject any write to a tree table that is not inside a change transaction (`Tree.transact`), so no code path can skip the log.
+- **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event or a family link together with the id of what it became, and every other line (sources, notes, media, other programs' own tags) exactly as it was. The export puts each line back in its place. A name or event that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
+- **An import makes a new tree.** A GEDCOM file is not merged into a tree that has people in it; that needs duplicate detection (part 1d).
+- **Every write** goes through `change_log`, which provides undo and a per-person history. Database triggers do the recording, and they reject any write to a tree table that is not inside a change transaction (`Tree.transact`), so no code path can skip the log. The one exception is `Tree.load`, which fills a tree that has nobody in it (an import) without logging; what it loads is the tree's starting point and cannot be undone.
+- **Exports leave out living people unless asked.** The export dialog starts on "leave out people who may be living". A person may be living unless they are marked deceased, have a death, burial, cremation or probate recorded, or took part in an event that certainly happened more than 110 years ago (`presumedLivingIds` in `packages/db/src/living.ts`). Someone with no dates at all counts as possibly living. A family with a living partner is written without its events and notes.
 - **The primary name** is a flag on `person_name` with a unique index, not a column on `person`, which avoids two tables pointing at each other.
 - **A person cannot be their own ancestor.** `addChild` and `setPartners` refuse a link that would create a loop, so charts can walk the tree without guarding against one.
 - **A family that links nobody is removed.** When a person is deleted or unlinked, a family with nobody left in it goes, and a family with one person left goes unless it has events of its own.
@@ -209,7 +251,7 @@ Rules:
 ## 6. Features by module
 
 1. **Tree:** person and family editing; pedigree, descendant, hourglass and fan charts; relationship calculator; duplicate detection and merge.
-2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0 with GEDZip media; export both. This is the migration path from Ancestry, whose export carries media links but not the media files.
+2. **GEDCOM:** import 5.5.1 (including ANSEL encoding and vendor tags from Ancestry, Family Tree Maker, RootsMagic, MyHeritage) and 7.0; export both. This is the migration path from Ancestry, whose export carries media links but not the media files. Built in part 1c, apart from GEDZip (a 7.0 file zipped together with its media), which waits for the media store in Phase 2.
 3. **Sources and media:** citation management, IIIF deep-zoom viewer, face-region tags, optional local OCR with `tesseract.js`.
 4. **Search:** one query form sent to Tier A connectors and installed packs, results grouped by source with attribution, plus a row of Tier C links.
 5. **Hints:** background jobs query sources for each person, direct ancestors first. Scoring is Fellegi-Sunter style over name similarity, phonetic codes, date gaps, place hierarchy overlap and relatives' names. Results go to a hints inbox with a side-by-side compare. Accepted facts get a citation, rejected hints never resurface, and nothing merges automatically.
@@ -314,7 +356,7 @@ Durations are rough estimates for one developer working with AI assistance.
 | Phase                       | Scope                                                                                                                                                                                                                     | Done when                                                                                                                                                                             | Estimate  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | 0. Foundations              | Repo, monorepo, CI, packaging; connector manifests; access checklist                                                                                                                                                      | An installer builds and the packaged app opens a window. **Done 2026-11-11**                                                                                                          | 1 week    |
-| 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff                                                                                              | 3–4 weeks |
+| 1. Core tree                | Schema, editing, charts, own-tree search, GEDCOM both versions, undo, backups                                                                                                                                             | A 10,000-person Ancestry GEDCOM imports in under 10 seconds and round-trips with no diff. Met in part 1c on a file written in Ancestry's style; a real export is still to be tried    | 3–4 weeks |
 | 2. Sources, media, places   | Citations, media store and viewer, gazetteer, map, timeline                                                                                                                                                               | A scanned record can be attached, cited and viewed at full zoom                                                                                                                       | 2–3 weeks |
 | 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                        | 3–4 weeks |
 | 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                    | 2–3 weeks |
@@ -343,8 +385,8 @@ Not done, and why:
 | ---- | --------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 1a   | Tree database layer: migrations, schema, people, names, families, events, dates, undo and redo, own-tree search | **Done 2026-11-11** |
 | 1b   | Tree screens: create and open a tree folder, person list and page, editing, undo and redo, search box, backups  | **Done 2026-11-11** |
-| 1c   | GEDCOM 5.5.1 and 7.0 import and export, with the cross-reference ids, notes and unknown tags a round trip needs | Next                |
-| 1d   | Charts (pedigree, descendant, hourglass, fan), relationship calculator, duplicate detection and merge           | Not started         |
+| 1c   | GEDCOM 5.5.1 and 7.0 import and export, with the cross-reference ids, notes and unknown tags a round trip needs | **Done 2026-11-11** |
+| 1d   | Charts (pedigree, descendant, hourglass, fan), relationship calculator, duplicate detection and merge           | Next                |
 
 ### Phase 1a outcome
 
@@ -394,6 +436,46 @@ Not done, and why:
 - **Dark colours** follow the Windows setting, but only the light colours were checked by eye.
 - **The installer itself was still not executed.** As before, tests ran against its unpacked contents.
 
+### Phase 1c outcome
+
+Delivered:
+
+- **Import.** "Choose a GEDCOM file" on the start screen reads a file into a new tree and opens it. GEDCOM 5.5.1 (also 5.5 and 5.5.5) and 7.0 are read, in UTF-8, UTF-16, ANSEL, Windows-1252 or the old IBM PC character set; the character set is checked against the bytes, not only taken from the header. The reader never stops at a line that breaks the rules: it reads it as well as it can and lists it.
+- **What goes into the tree.** People with sex and names (including the name pieces, titles, nicknames, suffixes and the kind of name); 35 kinds of personal event and attribute and 12 kinds for couples, plus the tags Ancestry and Family Tree Maker add for events the standard lacks; families with partners and children in order; and how each child is linked, from the standard `PEDI` line or from Ancestry's `_FREL` and `_MREL`.
+- **What is kept as written.** Everything else: sources and citations, notes, media, repositories, submitters, other programs' own tags. A person's page lists the lines kept for that person.
+- **Repairs, all reported.** A link that only one side of the file states is made. A link that would make someone their own ancestor is not made. A line that points at a record that is not in the file is kept as written. After the import the app shows how many such places there were, with a list by line number.
+- **Export.** "Export" on the tree screen writes GEDCOM 5.5.1 or 7.0, in UTF-8. A tree exported in the version it was imported in comes out line for line as it went in, apart from the header, which names this app as the writer. After edits, only the lines of what was edited differ, and new names, events and links follow the original ones of their kind.
+- **The other version.** A tree imported from 5.5.1 can be exported as 7.0 and the reverse. What the app models is written in the right form; for the kept lines a set of plain rewrites is applied (note records and shared notes, dates, values that changed case, tags one version lacks, file formats and media types, language names). What has no rule is written as it is, and the export says how many such items there were.
+- **Dates typed in the app are written in GEDCOM's form.** "12 March 1881" becomes `12 MAR 1881`, "about 1850" becomes `ABT 1850`, "1850-1855" becomes `BET 1850 AND 1855`, and text that is not a date becomes a date phrase.
+- **Living people are left out of an export unless the user chooses "include everyone".** See the rule in section 5. The dialog says how many people that is before anything is written.
+- **Speed.** A 10,000-person file of 261,000 lines, written the way Ancestry writes its exports, imports in 2.7 seconds in the packaged app and exports in under a second. The target was 10 seconds.
+- **Tests.** Unit tests went from 206 to 385 and end-to-end tests from 17 to 22. The end-to-end tests import the 10,000-person file through the real window, export it, and compare every line.
+
+Changed from earlier parts:
+
+- **The tree schema is at version 2.** A tree made by an earlier build is upgraded when it is opened, and an earlier build can then no longer open it. Its backups from before are still read.
+- **Every database connection keeps its temporary data in memory,** and `newId()` draws its random bytes from a pool. Both were found while timing the import, and both make ordinary edits faster too.
+- **The start screen has a third card,** and the tree screen an Export button.
+
+Not done, and why:
+
+- **It has not been tried on a real Ancestry export.** The 10,000-person test file is written to look like one, from what is known of Ancestry's format; no real export was available. The same goes for Family Tree Maker, RootsMagic, MyHeritage and Gramps. The owner should import a real export and report what the import lists. The official GEDCOM 7.0 test files were not used either; downloading them into the repository needs the owner's say.
+- **A file cannot be merged into a tree that has people in it.** An import always makes a new tree. Merging needs duplicate detection, which is part 1d.
+- **An import cannot be undone,** and a tree cannot be deleted in the app. To discard an imported tree, close it and delete its folder.
+- **GEDZip files (`.gdz`) are refused,** with a message to unzip them first. Media files are not copied: a media record keeps its lines, and its link or file name with them. Both wait for the media store in Phase 2.
+- **Sources, notes and media have no screens.** They are kept and exported, and those lines that sit directly under a person are shown on that person's page as GEDCOM text. Lines kept under a name, an event or a family, and records of their own, are not shown anywhere yet.
+- **The rewrite between versions is partial.** A media item described in place (5.5.1) is not turned into a media record, an unknown file format is left as it is, and 7.0 extension tags are not declared in the header. A strict reader of the other version may reject such lines. Exporting in the version the file came in avoids all of this.
+- **A description typed on an event such as a birth** is written on the event's own line in 5.5.1, as Ancestry does, although the standard allows only `Y` there. In 7.0 it is written as a note under the event, and importing that file again shows it with the kept lines, not as the description.
+- **Not everything about a name survives an edit.** A name written surname first is rewritten given name first when it is edited, and a separate surname prefix (`SPFX`) is folded into the surname when the surname is edited. A kind of name outside the app's list is shown as "other". Unedited names are untouched.
+- **A family with more than two partners** keeps the third as a line, not as a partner.
+- **The export is not identical in four cases,** all outside the app's control or deliberate: a file that was not in UTF-8 comes back as UTF-8; blank lines are dropped; a continuation line that came after other sub-lines moves up to its own line; and a repaired or repeated link changes the lines of that link.
+- **The living rule is cautious and simple.** It does not reason from relatives (a person whose child was born in 1850 still counts as possibly living if nothing else is recorded), so sparse trees leave out more people than necessary. Notes and sources that are kept as written may mention living people and are exported as they are.
+- **The import runs in one blocking step.** The window does not respond for the 3 seconds a 10,000-person file takes; a 100,000-person file would take about half a minute. There is no progress bar, and files over 256 MB are refused.
+- **A tree is upgraded in place when a newer build opens it,** with no backup made just before. The migration in this part only adds a table; a migration that rewrites data should back up first.
+- **The lines kept from a file are never pruned.** A person deleted from the tree leaves their original lines in the tree file, so that undo can bring them back complete.
+- **The real Windows file dialogs were not exercised,** like the folder dialog in part 1b: the tests replace them.
+- **One unexplained crash.** During one run of the unit tests the worker running the 10,000-person test stopped with a Windows access violation. It did not happen again in ten further full runs or in any other run, and no cause was found.
+
 ## 9. Risks
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
@@ -403,6 +485,7 @@ Not done, and why:
 - **Terms of service.** No scraping anywhere. Rate limits and attribution come from the manifest.
 - **Data quality.** Community trees and machine-read indexes contain errors, so every fact shows its source and nothing is accepted without the user.
 - **Privacy.** Living people and DNA stay on the PC. Exports hide living people by default. No telemetry. The one exception is the optional AI assistant: while it is on, details of the people being researched and the records read for them are sent to Anthropic. Living people are masked unless the user opts in, and DNA is never sent.
+- **GEDCOM files in the wild do not follow the standard closely,** and each program bends it in its own way. The import was built from the two standards and from what is known of Ancestry's files, not from a collection of real exports. It keeps every line it does not understand and reports what it could not place, so a surprise in a real file should cost a misread field, not lost data. Real exports from each program need to be tried before a release.
 - **Coverage.** Users with mostly US ancestors before 1940 will do much of their record searching through links to FamilySearch's own site.
 
 ## 10. Open decisions
