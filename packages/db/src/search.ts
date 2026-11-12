@@ -1,4 +1,4 @@
-import type { Sex } from '@rulz/core';
+import { yearLabel, type DateCalendar, type DateQualifier, type Sex } from '@rulz/core';
 import { sql } from './connection';
 import type { Tree } from './tree';
 
@@ -16,9 +16,18 @@ export interface PersonSummary {
     suffix: string;
   } | null;
   /** The first birth event recorded, if any. */
-  birth: { dateText: string; placeText: string } | null;
+  birth: VitalEvent | null;
   /** The first death event recorded, if any. */
-  death: { dateText: string; placeText: string } | null;
+  death: VitalEvent | null;
+}
+
+/** A birth or death as a list shows it. */
+export interface VitalEvent {
+  /** The date as typed. */
+  dateText: string;
+  placeText: string;
+  /** The year in short form, e.g. "1881" or "c. 1850"; empty when it cannot be read. */
+  year: string;
 }
 
 export interface PageOptions {
@@ -39,9 +48,17 @@ interface SummaryRow {
   birth_id: string | null;
   birth_date: string | null;
   birth_place: string | null;
+  birth_qualifier: DateQualifier | null;
+  birth_calendar: DateCalendar | null;
+  birth_min: number | null;
+  birth_max: number | null;
   death_id: string | null;
   death_date: string | null;
   death_place: string | null;
+  death_qualifier: DateQualifier | null;
+  death_calendar: DateCalendar | null;
+  death_min: number | null;
+  death_max: number | null;
 }
 
 const firstEvent = (type: 'birth' | 'death') => `(
@@ -54,11 +71,32 @@ const SUMMARY_SELECT = `
   SELECT p.id, p.sex, p.living,
          n.id AS name_id, n.prefix, n.given, n.nickname, n.surname, n.suffix,
          b.id AS birth_id, b.date_text AS birth_date, b.place_text AS birth_place,
-         d.id AS death_id, d.date_text AS death_date, d.place_text AS death_place
+         b.date_qualifier AS birth_qualifier, b.date_calendar AS birth_calendar,
+         b.date_min_jdn AS birth_min, b.date_max_jdn AS birth_max,
+         d.id AS death_id, d.date_text AS death_date, d.place_text AS death_place,
+         d.date_qualifier AS death_qualifier, d.date_calendar AS death_calendar,
+         d.date_min_jdn AS death_min, d.date_max_jdn AS death_max
   FROM person p
     LEFT JOIN person_name n ON n.person_id = p.id AND n.is_primary = 1
     LEFT JOIN event b ON b.id = ${firstEvent('birth')}
     LEFT JOIN event d ON d.id = ${firstEvent('death')}`;
+
+function vital(
+  id: string | null,
+  dateText: string | null,
+  placeText: string | null,
+  qualifier: DateQualifier | null,
+  calendar: DateCalendar | null,
+  minJdn: number | null,
+  maxJdn: number | null,
+): VitalEvent | null {
+  if (id === null) return null;
+  return {
+    dateText: dateText ?? '',
+    placeText: placeText ?? '',
+    year: qualifier === null ? '' : yearLabel({ qualifier, calendar, minJdn, maxJdn }),
+  };
+}
 
 function toSummary(row: SummaryRow): PersonSummary {
   return {
@@ -75,14 +113,24 @@ function toSummary(row: SummaryRow): PersonSummary {
             surname: row.surname ?? '',
             suffix: row.suffix ?? '',
           },
-    birth:
-      row.birth_id === null
-        ? null
-        : { dateText: row.birth_date ?? '', placeText: row.birth_place ?? '' },
-    death:
-      row.death_id === null
-        ? null
-        : { dateText: row.death_date ?? '', placeText: row.death_place ?? '' },
+    birth: vital(
+      row.birth_id,
+      row.birth_date,
+      row.birth_place,
+      row.birth_qualifier,
+      row.birth_calendar,
+      row.birth_min,
+      row.birth_max,
+    ),
+    death: vital(
+      row.death_id,
+      row.death_date,
+      row.death_place,
+      row.death_qualifier,
+      row.death_calendar,
+      row.death_min,
+      row.death_max,
+    ),
   };
 }
 
@@ -150,4 +198,18 @@ export function searchPersons(
      LIMIT ? OFFSET ?`,
   ).all(fts, ...page(options)) as SummaryRow[];
   return rows.map(toSummary);
+}
+
+/** How many people {@link searchPersons} would find with no page limit. */
+export function countSearchPersons(tree: Tree, query: string): number {
+  const fts = toFtsQuery(query);
+  if (fts === '') return 0;
+  return sql(
+    tree.db,
+    `SELECT count(DISTINCT doc.person_id)
+     FROM search_fts JOIN search_doc doc ON doc.id = search_fts.rowid
+     WHERE search_fts MATCH ? AND doc.person_id IS NOT NULL`,
+  )
+    .pluck()
+    .get(fts) as number;
 }

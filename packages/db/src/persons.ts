@@ -1,6 +1,6 @@
 import { NAME_TYPES, SEXES, newId, type NameType, type Sex } from '@rulz/core';
 import { sql } from './connection';
-import { deleteEmptyFamilies } from './families';
+import { pruneFamilies } from './families';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
 
 export interface Person {
@@ -169,8 +169,9 @@ export function updatePerson(
 
 /**
  * Deletes a person with their names, their own events and their links to
- * families. Families stay, with that partner or child removed, unless nobody
- * is left in them. Shared events stay for the other participants.
+ * families. A family stays, with that partner or child removed, as long as it
+ * still links two people or has events of its own (see `pruneFamilies`).
+ * Shared events stay for the other participants.
  */
 export function deletePerson(tree: Tree, id: string): void {
   tree.transact('Delete person', () => {
@@ -195,7 +196,7 @@ export function deletePerson(tree: Tree, id: string): void {
       .all({ id }) as string[];
     // Names, family links and event links go with the person (foreign-key cascade).
     sql(tree.db, 'DELETE FROM person WHERE id = ?').run(id);
-    deleteEmptyFamilies(tree, families);
+    pruneFamilies(tree, families);
   });
 }
 

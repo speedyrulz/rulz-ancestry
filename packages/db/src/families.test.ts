@@ -12,6 +12,7 @@ import {
   listFamiliesAsChild,
   listFamiliesAsPartner,
   removeChild,
+  setChildPedigree,
   setPartners,
 } from './families';
 import { countPersons, createPerson } from './persons';
@@ -189,5 +190,32 @@ describe('families', () => {
     expect(countPersons(tree)).toBe(6);
     expect(getFamily(tree, t.elders.id)).not.toBeNull();
     expect(() => deleteFamily(tree, t.parents.id)).toThrow(NotFoundError);
+  });
+});
+
+describe('setChildPedigree', () => {
+  it('changes how a child is linked, as one undoable step', () => {
+    const tree = memoryTree();
+    const parent = createPerson(tree);
+    const child = createPerson(tree);
+    const family = createFamily(tree, { partner1Id: parent.id });
+    addChild(tree, family.id, child.id);
+
+    setChildPedigree(tree, family.id, child.id, 'adopted');
+    expect(listChildren(tree, family.id)).toMatchObject([{ pedigree: 'adopted' }]);
+    expect(tree.undoStatus().undo?.label).toBe('Change child link');
+    tree.undo();
+    expect(listChildren(tree, family.id)).toMatchObject([{ pedigree: 'birth' }]);
+  });
+
+  it('refuses an unknown kind of link and a child who is not in the family', () => {
+    const tree = memoryTree();
+    const parent = createPerson(tree);
+    const stranger = createPerson(tree);
+    const family = createFamily(tree, { partner1Id: parent.id });
+    expect(() => setChildPedigree(tree, family.id, stranger.id, 'adopted')).toThrow(NotFoundError);
+    expect(() =>
+      setChildPedigree(tree, family.id, stranger.id, 'cloned' as unknown as 'birth'),
+    ).toThrow(TreeRuleError);
   });
 });

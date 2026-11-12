@@ -203,17 +203,26 @@ function removeFamily(tree: Tree, id: string): void {
   sql(tree.db, 'DELETE FROM family WHERE id = ?').run(id);
 }
 
-/** Removes the given families that have no partner and no child left. */
-export function deleteEmptyFamilies(tree: Tree, familyIds: readonly string[]): void {
-  const isEmpty = sql(
+/**
+ * Removes the given families that no longer link anybody to anybody. A family
+ * with nobody left in it always goes, with its events, because no person leads
+ * to it any more. A family with one person left (as partner or child) goes
+ * unless it has events of its own: a marriage date with one known partner is
+ * still worth keeping.
+ */
+export function pruneFamilies(tree: Tree, familyIds: readonly string[]): void {
+  const links = sql(
     tree.db,
-    `SELECT 1 FROM family f
-     WHERE f.id = ? AND f.partner1_id IS NULL AND f.partner2_id IS NULL
-       AND NOT EXISTS (SELECT 1 FROM family_child fc WHERE fc.family_id = f.id)`,
+    `SELECT (f.partner1_id IS NOT NULL) + (f.partner2_id IS NOT NULL)
+              + (SELECT count(*) FROM family_child fc WHERE fc.family_id = f.id) AS members,
+            EXISTS (SELECT 1 FROM event_participant ep WHERE ep.family_id = f.id) AS hasEvents
+     FROM family f WHERE f.id = ?`,
   );
-  tree.transact('Delete empty families', () => {
-    for (const id of familyIds) {
-      if (isEmpty.get(id)) removeFamily(tree, id);
+  tree.transact('Remove empty families', () => {
+    for (const id of new Set(familyIds)) {
+      const row = links.get(id) as { members: number; hasEvents: 0 | 1 } | undefined;
+      if (!row) continue;
+      if (row.members === 0 || (row.members === 1 && row.hasEvents === 0)) removeFamily(tree, id);
     }
   });
 }
@@ -260,6 +269,30 @@ export function addChild(
       sortOrder,
     );
     return { id, familyId, childId, pedigree, sortOrder };
+  });
+}
+
+/** Changes how a child is linked to a family, e.g. from birth to adopted. */
+export function setChildPedigree(
+  tree: Tree,
+  familyId: string,
+  childId: string,
+  pedigree: Pedigree,
+): void {
+  if (!(PEDIGREES as readonly string[]).includes(pedigree)) {
+    throw new TreeRuleError(`unknown pedigree: ${pedigree}`);
+  }
+  tree.transact('Change child link', () => {
+    const link = sql(
+      tree.db,
+      'SELECT id FROM family_child WHERE family_id = ? AND child_id = ?',
+    ).get(familyId, childId);
+    if (!link) throw new NotFoundError('child link', `${familyId}/${childId}`);
+    sql(tree.db, 'UPDATE family_child SET pedigree = ? WHERE family_id = ? AND child_id = ?').run(
+      pedigree,
+      familyId,
+      childId,
+    );
   });
 }
 

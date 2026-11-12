@@ -16,13 +16,21 @@ export interface SqliteInfo {
  */
 export function openDatabase(file: string): Db {
   const db = new Database(file);
-  // WAL lets the UI read while a background job writes, and survives crashes
-  // without corrupting the file.
-  db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = NORMAL');
-  // SQLite does not enforce foreign keys unless asked, per connection.
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
+  try {
+    // WAL lets the UI read while a background job writes, and survives crashes
+    // without corrupting the file.
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = NORMAL');
+    // SQLite does not enforce foreign keys unless asked, per connection.
+    db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 5000');
+  } catch (error) {
+    // SQLite only reads the file at the first statement, so this is where a
+    // file that is not a database is found out. Let go of it, or Windows will
+    // not allow it to be renamed or deleted while the app runs.
+    db.close();
+    throw error;
+  }
   return db;
 }
 

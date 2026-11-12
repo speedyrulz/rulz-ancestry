@@ -51,6 +51,19 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - A lookup that tests two nullable columns at once (`person_id IS ? AND family_id IS ?`) made SQLite scan every row. Loading 10,000 people with 20,000 events took 89 seconds until that lookup and the ancestor check were fixed; it now takes 5 to 7 seconds through the one-record-at-a-time functions, and undoing it takes about 2. Write one statement per case, and keep the 10,000-person test, which fails when writes get slower as the tree grows. The GEDCOM importer will need a faster bulk path to load a file of that size in well under the 10-second target.
 - `newId()` now counts within a millisecond, so ids made by one running app sort in creation order. `ORDER BY id` is therefore creation order and stays the same after undo and redo.
 
+### Findings from Phase 1b that later phases rely on
+
+- The renderer never imports `@rulz/db`, which needs Node.js. The shapes it receives are declared in `apps/desktop/src/shared/ipc.ts`, and the compiler checks that what the main process returns fits them. The renderer may import `@rulz/core`, so `packages/core` must stay free of Node.js imports.
+- A new function for the page needs three entries, and the build fails if one is missing: the signature in `RulzApi`, the name in `API_METHODS`, and a handler in `apps/desktop/src/main/handlers.ts`. The handler's argument schema (zod) is tied to the signature by `define<'name'>`.
+- Every call answers with `{ ok: true, value }` or `{ ok: false, error: { code, message } }`. An exception thrown across Electron's IPC keeps only its message, wrapped in other text, so errors travel as data. The messages of rule errors are written for the user and shown as they are.
+- Main-process code that does not import Electron (`session.ts`, `handlers.ts`) is unit-tested under Vitest. Electron comes in only through the small `Platform` interface.
+- A system dialog cannot be driven from a test. The end-to-end tests replace `dialog.showOpenDialog` in the main process (`answerFolderPicker` in `e2e/fixtures.ts`).
+- A run started with `--user-data-dir` keeps new trees inside that folder. The end-to-end tests rely on this to stay out of the user's Documents.
+- `eslint-plugin-react-hooks` 7 rejects a state change made directly in an effect. Screens load data in the promise's callback and keep "what this data was loaded for" as a key in state, in place of a loading flag.
+- `VACUUM INTO` writes a consistent, compact copy of an open database in one synchronous call and keeps `application_id` and `user_version`. The copy is not in write-ahead-log mode until `openDatabase` opens it.
+- SQLite reads a file only at the first statement. `openDatabase` closes the handle when that fails; otherwise Windows keeps a file that is not a database locked until the app exits.
+- Measured on a 10,000-person tree: a list page 33 ms, a name search under 35 ms, a person page 2 ms, a backup 0.2 seconds and 26 MB.
+
 ## 3. Architecture
 
 ```
@@ -59,6 +72,17 @@ packages/core         Domain model, GEDCOM, date and place parsing, matching. No
 packages/db           Schema, migrations, repositories
 packages/connectors   One module per data source behind a shared interface
 packages/ai           Planned for Phase 4b: the AI assistant's tools, instructions and proposal checks. No Electron.
+```
+
+Inside the desktop app:
+
+```
+src/shared/ipc.ts     The contract: every function the page may call, and the shapes that cross
+src/preload           Exposes exactly those functions to the page as window.rulz
+src/main/index.ts     Electron wiring: window, security settings, IPC registration, quit
+src/main/session.ts   The open tree, the recent list, reopening at start, backup on close. No Electron.
+src/main/handlers.ts  What each function does, after checking its arguments. No Electron.
+src/renderer          React screens: start screen, person list, person page, dialogs
 ```
 
 Every source has a manifest (`packages/connectors/src/manifest.ts`) holding its
@@ -160,6 +184,15 @@ Also planned: phonetic codes on `person_name` (with duplicate detection), GEDCOM
 cross-reference ids and unknown tags (with GEDCOM import), and places, notes and
 transcriptions in the search index.
 
+The application database (`app.db` in the profile folder, schema in
+`packages/db/src/appdb.ts`) is separate from any tree. Built, in its schema
+version 1:
+
+```sql
+setting(key, value)                                          -- e.g. the tree to reopen at start
+recent_tree(dir, tree_id, name, last_opened_at)              -- at most 20, latest first
+```
+
 Rules:
 
 - **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. Original GEDCOM cross-reference IDs are kept for round-tripping.
@@ -169,7 +202,8 @@ Rules:
 - **Every write** goes through `change_log`, which provides undo and a per-person history. Database triggers do the recording, and they reject any write to a tree table that is not inside a change transaction (`Tree.transact`), so no code path can skip the log.
 - **The primary name** is a flag on `person_name` with a unique index, not a column on `person`, which avoids two tables pointing at each other.
 - **A person cannot be their own ancestor.** `addChild` and `setPartners` refuse a link that would create a loop, so charts can walk the tree without guarding against one.
-- **Backups** run on close using SQLite's online backup, keeping the last several copies.
+- **A family that links nobody is removed.** When a person is deleted or unlinked, a family with nobody left in it goes, and a family with one person left goes unless it has events of its own.
+- **Backups** are complete copies of `tree.db` in the `backups` folder inside the tree folder. One is written with SQLite's `VACUUM INTO` when a tree is closed or the app quits, if the tree changed since the newest backup. A copy is written under a temporary name, checked, and only then given its final name. Kept: the ten newest, then the last backup of each month for six months. Restoring a backup first backs up the present state.
 - **Search** uses the FTS5 tokenizer `unicode61 remove_diacritics 2`, so "muller" finds "Müller". Triggers keep the index in step with the names, including during undo and redo.
 
 ## 6. Features by module
@@ -308,8 +342,8 @@ Not done, and why:
 | Part | Scope                                                                                                           | Status              |
 | ---- | --------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 1a   | Tree database layer: migrations, schema, people, names, families, events, dates, undo and redo, own-tree search | **Done 2026-11-11** |
-| 1b   | Tree screens: create and open a tree folder, person list and page, editing, undo and redo, search box, backups  | Next                |
-| 1c   | GEDCOM 5.5.1 and 7.0 import and export, with the cross-reference ids, notes and unknown tags a round trip needs | Not started         |
+| 1b   | Tree screens: create and open a tree folder, person list and page, editing, undo and redo, search box, backups  | **Done 2026-11-11** |
+| 1c   | GEDCOM 5.5.1 and 7.0 import and export, with the cross-reference ids, notes and unknown tags a round trip needs | Next                |
 | 1d   | Charts (pedigree, descendant, hourglass, fan), relationship calculator, duplicate detection and merge           | Not started         |
 
 ### Phase 1a outcome
@@ -323,15 +357,42 @@ and redoes a person, so the packaged app proves the layer works. 103 unit tests
 cover it, including a 21-step editing session walked backwards and forwards
 through undo and redo, and a 10,000-person load.
 
-Not done, and why:
+Not done, and why (tree screens and backups were also open here; part 1b delivered them):
 
-- **No tree screens yet.** Nothing in the window creates or edits a tree; that is part 1b.
-- **Backups** are part 1b, because they belong with opening and closing a tree folder.
 - **Places** stay as typed text. The `place` table arrives with the gazetteer in Phase 2.
 - **Hebrew and French Republican dates** are recognised and stored, but not converted to day numbers, so they do not sort.
 - **Numeric dates such as 12/03/1881** are kept as text only, because the day and month order is ambiguous. Month names are read in English only.
 - **Per-person history** has its data in `change_log` but no query or screen yet.
 - **The change log grows without limit.** It needs a pruning rule before a release.
+
+### Phase 1b outcome
+
+Delivered:
+
+- **Start screen.** Create a tree by name; its folder is made in `Documents\RulZ Ancestry` or in a folder the user picks. Open a tree folder through the system dialog, or from the list of recent trees, which marks folders that are no longer there. The tree that was open when the app quit is reopened at the next start.
+- **Tree screen.** Everyone by surname in a list that loads 100 rows at a time, a search box that finds people by any of their names, and a page for one person: sex, living or deceased, names, events, parents, brothers and sisters, partners and children. All of it can be edited there, and relatives are links to their own pages.
+- **Adding people.** A form for name, sex, birth and death, which shows how each date was read before it is saved. A relative can be a new person or someone already in the tree.
+- **Undo and redo.** Every edit the screens offer is one undo step, including the ones that touch several records, such as "Add father". The buttons name the step, and Ctrl+Z and Ctrl+Y work outside text boxes.
+- **Backups.** Automatic when a tree is closed or the app quits, on request, with a dialog to list them, open their folder and restore one. See section 5 for the rules.
+- **The contract between the page and the main process** grew from 1 function to 33. Each one checks its arguments, and the page can create a tree only where the user picked a folder and open only a recent tree or a folder the user picked.
+- **A damaged `app.db` no longer stops the app from starting.** It is set aside and a new one is made; it holds only the recent list and settings.
+- **Tests.** Unit tests went from 103 to 206 and now include the main process's session and handlers. End-to-end tests went from 8 to 17, run against both the production build and the packaged app.
+
+Changed from part 1a: deleting a person now also removes a family that is left with one person and no events. Part 1a removed only a family with nobody in it.
+
+Not done, and why:
+
+- **A tree cannot be renamed, moved or deleted inside the app.** Moving the folder in File Explorer and opening it again works.
+- **No drawing of the tree.** Charts are part 1d; until then relatives are reached through the list and the links on a person's page.
+- **One parent cannot be removed for one child only.** "Remove from this family" takes the person away from both parents, and "Remove partner" applies to all of that family's children.
+- **A second set of parents can only be added once the first set has two parents.** Before that, a new parent joins the first set.
+- **Witnesses and events shared by several people** have their place in the schema but no screen.
+- **Living or deceased is not worked out from events.** A person with a death date still shows "Not stated" until it is set by hand. This is due with the filter that hides living people (reports, Phase 6).
+- **Backups hold the whole undo history**, so each backup of the 10,000-person test tree is 26 MB and up to 16 are kept. Pruning the change log, still open from part 1a, will shrink them.
+- **Backups are kept on the same disk as the tree.** They guard against mistakes and a damaged file, not against losing the disk.
+- **The backup on quitting is done in one blocking step.** It takes 0.2 seconds for 10,000 people; a much larger tree would delay the exit, and Windows may not wait for it at shutdown.
+- **Dark colours** follow the Windows setting, but only the light colours were checked by eye.
+- **The installer itself was still not executed.** As before, tests ran against its unpacked contents.
 
 ## 9. Risks
 

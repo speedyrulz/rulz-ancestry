@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { newId } from '@rulz/core';
 import { beginRecording, endRecording, redo, undo, undoStatus, type ChangeTx } from './changelog';
@@ -20,6 +20,22 @@ export class NotATreeError extends Error {
   constructor(file: string) {
     super(`not a RulZ Ancestry tree: ${file}`);
     this.name = 'NotATreeError';
+  }
+}
+
+/** The folder that was to be opened holds no tree. */
+export class NoTreeError extends Error {
+  constructor(readonly dir: string) {
+    super(`there is no family tree in this folder: ${dir}`);
+    this.name = 'NoTreeError';
+  }
+}
+
+/** A new tree cannot be created where the caller asked. */
+export class TreeLocationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TreeLocationError';
   }
 }
 
@@ -176,4 +192,51 @@ export function openTree(location: string, options: OpenTreeOptions = {}): Tree 
   }
 
   return new Tree(db, inMemory ? null : location);
+}
+
+/** True when the folder holds a tree file. It says nothing about whether the file is valid. */
+export function hasTree(dir: string): boolean {
+  return existsSync(join(dir, TREE_FILE_NAME));
+}
+
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const FORBIDDEN_IN_FILE_NAMES = '<>:"/\\|?*';
+
+/**
+ * A folder name for a tree called `name` that Windows accepts: no characters
+ * Windows forbids, no trailing dot or space, not a reserved device name.
+ */
+export function treeFolderName(name: string): string {
+  const cleaned = [...name]
+    .map((ch) => ((ch.codePointAt(0) ?? 0) < 32 || FORBIDDEN_IN_FILE_NAMES.includes(ch) ? ' ' : ch))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+    .replace(/[. ]+$/, '');
+  if (cleaned === '') return 'Family tree';
+  return WINDOWS_RESERVED_NAME.test(cleaned) ? `${cleaned} tree` : cleaned;
+}
+
+/**
+ * Creates a new, empty tree in `dir`. The folder must not exist yet or must be
+ * empty, so a tree never ends up mixed with unrelated files.
+ */
+export function createTree(dir: string, options: { name: string }): Tree {
+  const name = options.name.trim().replace(/\s+/g, ' ');
+  if (name === '') throw new TreeLocationError('a tree needs a name');
+  if (existsSync(dir)) {
+    if (!statSync(dir).isDirectory()) throw new TreeLocationError(`not a folder: ${dir}`);
+    if (hasTree(dir)) throw new TreeLocationError(`there is already a tree in ${dir}`);
+    if (readdirSync(dir).length > 0) {
+      throw new TreeLocationError(`the folder already has files in it: ${dir}`);
+    }
+  }
+  return openTree(dir, { name });
+}
+
+/** Opens the tree in `dir`. Unlike {@link openTree}, it never creates one. */
+export function openExistingTree(dir: string): Tree {
+  if (!hasTree(dir)) throw new NoTreeError(dir);
+  return openTree(dir);
 }

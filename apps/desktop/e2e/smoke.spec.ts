@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { API_METHODS } from '../src/shared/ipc';
 import { expect, test } from './fixtures';
 
 test('opens the main window', async ({ window }) => {
@@ -39,7 +40,41 @@ test('keeps Node.js out of the page', async ({ window }) => {
     process: typeof (globalThis as Record<string, unknown>)['process'],
     api: Object.keys((globalThis as Record<string, unknown>)['rulz'] ?? {}),
   }));
-  expect(exposed).toEqual({ require: 'undefined', process: 'undefined', api: ['getAppInfo'] });
+  // The page gets the functions of the contract and nothing else.
+  expect({ ...exposed, api: [...exposed.api].sort() }).toEqual({
+    require: 'undefined',
+    process: 'undefined',
+    api: [...API_METHODS].sort(),
+  });
+});
+
+test('checks what the page sends before acting on it', async ({ window, userDataDir }) => {
+  await expect(window.getByTestId('start-screen')).toBeVisible();
+  const outside = join(userDataDir, 'Outside');
+  // Calls made straight to the bridge, as a compromised page could make them.
+  const answers = await window.evaluate(async (parentDir) => {
+    const bridge = (
+      globalThis as unknown as { rulz: Record<string, (...args: unknown[]) => unknown> }
+    ).rulz;
+    const call = (method: string, ...args: unknown[]) => bridge[method]?.(...args);
+    return {
+      wrongType: await call('getPersonPage', { id: 1 }),
+      noTree: await call('listPersons', { query: '', offset: 0, limit: 10 }),
+      unknownKey: await call('addPerson', { given: 'Ada', isAdmin: true }),
+      // A folder the user never picked in the system dialog.
+      pathOfItsOwn: await call('createTree', { name: 'Tree', parentDir }),
+      notRecent: await call('openRecentTree', parentDir),
+    };
+  }, outside);
+
+  expect(answers).toMatchObject({
+    wrongType: { ok: false, error: { code: 'invalid' } },
+    noTree: { ok: false, error: { code: 'no-tree', message: 'no family tree is open' } },
+    unknownKey: { ok: false, error: { code: 'invalid' } },
+    pathOfItsOwn: { ok: false, error: { code: 'rule' } },
+    notRecent: { ok: false, error: { code: 'rule' } },
+  });
+  expect(existsSync(outside)).toBe(false);
 });
 
 test('blocks inline scripts through the content security policy', async ({ window }) => {

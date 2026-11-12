@@ -1,9 +1,19 @@
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  session as electronSession,
+  shell,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { manifestsByTier } from '@rulz/connectors';
-import { checkTreeEngine, getSqliteInfo, openDatabase, type Db } from '@rulz/db';
-import { IPC, type AppInfo } from '../shared/ipc';
+import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
+import { API_METHODS, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
+import { createHandlers, toIpcError, type Platform } from './handlers';
+import { TreeSession } from './session';
 
 /** Must match `appId` in electron-builder.yml so Windows groups taskbar entries correctly. */
 const APP_ID = 'com.rulz.ancestry';
@@ -16,6 +26,7 @@ const appUrl = devServerUrl ?? pathToFileURL(rendererFile).href;
 let mainWindow: BrowserWindow | undefined;
 let appDb: Db | undefined;
 let appDbPath = '';
+let treeSession: TreeSession | undefined;
 let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
 
 /** A failed check is shown in the window; it must not stop the app from opening. */
@@ -57,6 +68,16 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+/**
+ * Where a new tree's folder is made by default. A run with its own profile
+ * folder (the end-to-end tests, or a portable copy) keeps its trees inside
+ * that folder, so it never writes to the user's Documents.
+ */
+function defaultTreesDir(): string {
+  if (app.commandLine.hasSwitch('user-data-dir')) return join(app.getPath('userData'), 'Trees');
+  return join(app.getPath('documents'), app.isPackaged ? 'RulZ Ancestry' : 'RulZ Ancestry (dev)');
+}
+
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
@@ -96,9 +117,8 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
-function registerIpc(): void {
-  ipcMain.handle(IPC.appInfo, (event): AppInfo => {
-    assertTrustedSender(event);
+const platform: Platform = {
+  appInfo() {
     if (!appDb) throw new Error('application database is not open');
     return {
       appVersion: app.getVersion(),
@@ -116,7 +136,42 @@ function registerIpc(): void {
         deeplink: manifestsByTier('deeplink').length,
       },
     };
-  });
+  },
+
+  async chooseFolder(options) {
+    const settings = {
+      title: options.title,
+      buttonLabel: options.buttonLabel,
+      defaultPath: options.defaultPath,
+      properties: ['openDirectory', 'createDirectory'],
+    } satisfies Electron.OpenDialogOptions;
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, settings)
+      : await dialog.showOpenDialog(settings);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  },
+
+  async openFolder(dir) {
+    const problem = await shell.openPath(dir);
+    if (problem !== '') throw new Error(problem);
+  },
+};
+
+function registerIpc(session: TreeSession): void {
+  const handlers = createHandlers(session, platform);
+  for (const method of API_METHODS) {
+    ipcMain.handle(
+      channelFor(method),
+      async (event, ...args: unknown[]): Promise<IpcResult<unknown>> => {
+        try {
+          assertTrustedSender(event);
+          return { ok: true, value: await handlers[method](...args) };
+        } catch (error) {
+          return { ok: false, error: toIpcError(error) };
+        }
+      },
+    );
+  }
 }
 
 // Development runs keep their data apart from an installed copy of the app,
@@ -146,6 +201,10 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => app.quit());
 
   app.on('will-quit', () => {
+    // Backs up the open tree if it changed, then closes it.
+    const closed = treeSession?.shutdown();
+    if (closed?.backupError) console.error(`backup on quit failed: ${closed.backupError}`);
+    treeSession = undefined;
     appDb?.close();
     appDb = undefined;
   });
@@ -154,15 +213,24 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId(APP_ID);
 
     // The app needs no camera, microphone, location or notification access.
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    electronSession.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
       callback(false),
     );
 
     appDbPath = join(app.getPath('userData'), 'app.db');
-    appDb = openDatabase(appDbPath);
+    // A damaged settings file must not stop the app from starting. It holds
+    // the recent list and settings only; trees are in their own folders.
+    const opening = openOrResetAppDatabase(appDbPath);
+    appDb = opening.db;
+    if (opening.setAside !== null) {
+      console.warn(`app.db could not be used and was set aside as ${opening.setAside}`);
+    }
     treeEngine = runTreeEngineCheck();
 
-    registerIpc();
+    treeSession = new TreeSession({ appDb, defaultParentDir: defaultTreesDir() });
+    treeSession.start();
+
+    registerIpc(treeSession);
     mainWindow = createMainWindow();
     mainWindow.on('closed', () => {
       mainWindow = undefined;

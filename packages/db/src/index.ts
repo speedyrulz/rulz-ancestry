@@ -3,16 +3,70 @@ export { SchemaTooNewError, migrate, schemaVersion, type Migration } from './mig
 export { treeMigrations } from './schema';
 export { UNTRACKED_WRITE_MESSAGE, type ChangeTx } from './changelog';
 export {
+  NoTreeError,
   NotATreeError,
   NotFoundError,
   TREE_APPLICATION_ID,
   TREE_FILE_NAME,
   Tree,
+  TreeLocationError,
   TreeRuleError,
+  createTree,
+  hasTree,
+  openExistingTree,
   openTree,
+  treeFolderName,
   type OpenTreeOptions,
   type TreeInfo,
 } from './tree';
+export {
+  RECENT_TREE_LIMIT,
+  appMigrations,
+  forgetTree,
+  getSetting,
+  listRecentTrees,
+  openAppDatabase,
+  openOrResetAppDatabase,
+  rememberTree,
+  setSetting,
+  type AppDatabaseOpening,
+  type RecentTree,
+} from './appdb';
+export {
+  BACKUP_DIR_NAME,
+  BackupError,
+  DEFAULT_RETENTION,
+  backupName,
+  backupTree,
+  backupsToPrune,
+  listBackups,
+  parseBackupName,
+  restoreBackup,
+  treeStateToken,
+  verifyBackup,
+  type BackupInfo,
+  type BackupOptions,
+  type BackupResult,
+  type RetentionPolicy,
+} from './backup';
+export {
+  addChildOf,
+  addParent,
+  addPartner,
+  addPersonFromDraft,
+  unlinkChild,
+  unlinkPartner,
+  type PersonDraft,
+  type PersonRef,
+  type RelativeLink,
+} from './actions';
+export {
+  getPersonPage,
+  sortEventsForDisplay,
+  type ParentFamily,
+  type PartnerFamily,
+  type PersonPage,
+} from './personpage';
 export {
   addName,
   countPersons,
@@ -41,8 +95,10 @@ export {
   listChildren,
   listFamiliesAsChild,
   listFamiliesAsPartner,
+  pruneFamilies,
   removeChild,
   requireFamily,
+  setChildPedigree,
   setPartners,
   type Family,
   type FamilyChild,
@@ -61,11 +117,13 @@ export {
   type TreeEvent,
 } from './events';
 export {
+  countSearchPersons,
   getPersonSummary,
   listPersons,
   searchPersons,
   toFtsQuery,
   type PageOptions,
   type PersonSummary,
+  type VitalEvent,
 } from './search';
 export { checkTreeEngine, type TreeEngineCheck } from './selfcheck';

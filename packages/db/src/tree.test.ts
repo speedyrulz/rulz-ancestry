@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { idTimestamp } from '@rulz/core';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,18 @@ import { createPerson, countPersons } from './persons';
 import { treeMigrations } from './schema';
 import { checkTreeEngine } from './selfcheck';
 import { cleanUpAfterEach, memoryTree, tempDir, track, undoDepth } from './testing';
-import { NotATreeError, TREE_APPLICATION_ID, TREE_FILE_NAME, openTree } from './tree';
+import {
+  NoTreeError,
+  NotATreeError,
+  TREE_APPLICATION_ID,
+  TREE_FILE_NAME,
+  TreeLocationError,
+  createTree,
+  hasTree,
+  openExistingTree,
+  openTree,
+  treeFolderName,
+} from './tree';
 
 cleanUpAfterEach();
 
@@ -143,5 +154,87 @@ describe('Tree.transact', () => {
 describe('checkTreeEngine', () => {
   it('reports the newest schema version', () => {
     expect(checkTreeEngine()).toEqual({ schemaVersion: treeMigrations.length });
+  });
+});
+
+describe('createTree', () => {
+  it('creates a named tree in a new folder or an empty one', () => {
+    const parent = tempDir();
+    const fresh = track(createTree(join(parent, 'New folder'), { name: '  The  Smith family ' }));
+    expect(fresh.info()).toMatchObject({ name: 'The Smith family', persons: 0 });
+    expect(hasTree(join(parent, 'New folder'))).toBe(true);
+
+    const empty = tempDir();
+    expect(hasTree(empty)).toBe(false);
+    track(createTree(empty, { name: 'Empty folder' }));
+    expect(hasTree(empty)).toBe(true);
+  });
+
+  it('refuses a folder that already holds a tree or other files, and changes nothing', () => {
+    const withTree = tempDir();
+    const first = track(createTree(withTree, { name: 'First' }));
+    createPerson(first, { name: { given: 'Kept' } });
+    first.close();
+    expect(() => createTree(withTree, { name: 'Second' })).toThrow(/already a tree/);
+    expect(track(openExistingTree(withTree)).info()).toMatchObject({ name: 'First', persons: 1 });
+
+    const withFiles = tempDir();
+    writeFileSync(join(withFiles, 'holiday.jpg'), 'not a tree');
+    expect(() => createTree(withFiles, { name: 'Tree' })).toThrow(TreeLocationError);
+    expect(readdirSync(withFiles)).toEqual(['holiday.jpg']);
+
+    expect(() => createTree(join(withFiles, 'holiday.jpg'), { name: 'Tree' })).toThrow(
+      /not a folder/,
+    );
+  });
+
+  it('needs a name', () => {
+    const dir = join(tempDir(), 'unnamed');
+    expect(() => createTree(dir, { name: '   ' })).toThrow(TreeLocationError);
+    expect(existsSync(dir)).toBe(false);
+  });
+});
+
+describe('openExistingTree', () => {
+  it('opens a tree but never creates one', () => {
+    const dir = tempDir();
+    expect(() => openExistingTree(dir)).toThrow(NoTreeError);
+    expect(readdirSync(dir)).toEqual([]);
+    expect(() => openExistingTree(join(dir, 'missing'))).toThrow(NoTreeError);
+    expect(existsSync(join(dir, 'missing'))).toBe(false);
+
+    track(createTree(dir, { name: 'Real' })).close();
+    expect(track(openExistingTree(dir)).info().name).toBe('Real');
+  });
+
+  it('reports a tree file that is not a database, and lets go of the file', () => {
+    const dir = tempDir();
+    const file = join(dir, TREE_FILE_NAME);
+    writeFileSync(file, 'this is not a database, but it is long enough to look like a file');
+
+    expect(() => openExistingTree(dir)).toThrow(/not a database/);
+    // Windows refuses to delete a file that is still open.
+    rmSync(file);
+    expect(existsSync(file)).toBe(false);
+  });
+});
+
+describe('treeFolderName', () => {
+  it('turns a tree name into a folder name Windows accepts', () => {
+    const cases: [string, string][] = [
+      ['Smith family', 'Smith family'],
+      ['  Smith   family  ', 'Smith family'],
+      ['Smith/Jones: "the" <big> tree?', 'Smith Jones the big tree'],
+      ['Müller & Søn', 'Müller & Søn'],
+      ['Ends with dots...', 'Ends with dots'],
+      ['tab\there', 'tab here'],
+      ['CON', 'CON tree'],
+      ['lpt1.backup', 'lpt1.backup tree'],
+      ['', 'Family tree'],
+      ['???', 'Family tree'],
+      ['. .', 'Family tree'],
+    ];
+    for (const [name, folder] of cases) expect(treeFolderName(name), name).toBe(folder);
+    expect(treeFolderName('x'.repeat(200))).toHaveLength(80);
   });
 });

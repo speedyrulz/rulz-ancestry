@@ -1,10 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC, type RulzApi } from '../shared/ipc';
+import { API_METHODS, channelFor, type RulzBridge } from '../shared/ipc';
 
-// This script runs sandboxed. It must stay a thin, explicit list of calls:
-// never expose ipcRenderer itself or a generic "send any channel" function.
-const api: RulzApi = {
-  getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
-};
+// This script runs sandboxed. It exposes one function per entry of the
+// contract's fixed list and nothing else: never ipcRenderer itself, and never
+// a function that takes the channel name from the page.
+const bridge = Object.fromEntries(
+  API_METHODS.map((method) => [
+    method,
+    (...args: unknown[]) => ipcRenderer.invoke(channelFor(method), ...args),
+  ]),
+) as unknown as RulzBridge;
 
-contextBridge.exposeInMainWorld('rulz', api);
+contextBridge.exposeInMainWorld('rulz', bridge);

@@ -63,3 +63,14 @@ export function formatName(name: NameParts): string {
     .filter((part) => part !== undefined && part !== '')
     .join(' ');
 }
+
+/**
+ * A person's lifespan from the two year labels (see `yearLabel`): "1850–1921",
+ * "b. 1850", "d. 1921", or empty when neither is known.
+ */
+export function formatLifespan(birthYear: string, deathYear: string): string {
+  if (birthYear !== '' && deathYear !== '') return `${birthYear}–${deathYear}`;
+  if (birthYear !== '') return `b. ${birthYear}`;
+  if (deathYear !== '') return `d. ${deathYear}`;
+  return '';
+}

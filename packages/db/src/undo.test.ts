@@ -215,8 +215,10 @@ function editingSession(tree: Tree): (() => void)[] {
     () => setPartners(tree, ids['fam']!, { partner2Id: null }),
     () => deleteName(tree, nameOf('b', 0)),
     () => deleteEvent(tree, ids['marriage']!),
-    () => deletePerson(tree, ids['a']!),
+    // The family goes before Albert does: deleting him would leave only David
+    // in it, and a family with one person and no events is removed with him.
     () => deleteFamily(tree, ids['fam']!),
+    () => deletePerson(tree, ids['a']!),
     () => deletePerson(tree, ids['d']!),
   ];
 }

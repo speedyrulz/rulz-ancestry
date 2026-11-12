@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calendarToJdn, jdnToCalendar, parseDate } from './date';
+import { calendarToJdn, describeDate, jdnToCalendar, parseDate, yearLabel } from './date';
 
 /** Gregorian day number worked out independently, from JavaScript's own calendar. */
 function jdn(year: number, month: number, day: number): number {
@@ -256,5 +256,86 @@ describe('parseDate', () => {
         maxJdn: null,
       });
     }
+  });
+});
+
+/** Parses text that is expected to be a date, so the helpers below get a non-null value. */
+function read(text: string) {
+  const parsed = parseDate(text);
+  if (!parsed) throw new Error(`no date in "${text}"`);
+  return parsed;
+}
+
+describe('describeDate', () => {
+  it('names the largest unit a date exactly covers', () => {
+    expect(describeDate(read('12 Mar 1881'))).toBe('12 March 1881');
+    expect(describeDate(read('mar 1881'))).toBe('March 1881');
+    expect(describeDate(read('1881'))).toBe('1881');
+    expect(describeDate(read('Feb 1900'))).toBe('February 1900');
+    expect(describeDate(read('1881-03-12'))).toBe('12 March 1881');
+  });
+
+  it('keeps the qualifier in words', () => {
+    expect(describeDate(read('abt 1850'))).toBe('about 1850');
+    expect(describeDate(read('EST 1850'))).toBe('estimated 1850');
+    expect(describeDate(read('CAL Mar 1850'))).toBe('calculated March 1850');
+    expect(describeDate(read('INT 1881 (torn page)'))).toBe('1881');
+  });
+
+  it('gives the exact boundary of an open-ended date', () => {
+    expect(describeDate(read('BEF 1900'))).toBe('before 1 January 1900');
+    expect(describeDate(read('AFT 1900'))).toBe('after 31 December 1900');
+    expect(describeDate(read('aft 12 Mar 1881'))).toBe('after 12 March 1881');
+    expect(describeDate(read('FROM 1850'))).toBe('from 1 January 1850');
+    expect(describeDate(read('TO 1855'))).toBe('until 31 December 1855');
+  });
+
+  it('gives both ends of a range', () => {
+    expect(describeDate(read('BET 1850 AND 1855'))).toBe(
+      'between 1 January 1850 and 31 December 1855',
+    );
+    expect(describeDate(read('FROM Mar 1850 TO 12 Apr 1851'))).toBe(
+      'from 1 March 1850 to 12 April 1851',
+    );
+  });
+
+  it('says when a date is in the Julian calendar or before year 1', () => {
+    expect(describeDate(read('@#DJULIAN@ 4 Oct 1582'))).toBe('4 October 1582 (Julian calendar)');
+    expect(describeDate(read('11 Feb 1731/32'))).toBe('11 February 1732 (Julian calendar)');
+    expect(describeDate(read('44 BC'))).toBe('44 BC');
+  });
+
+  it('explains a calendar it cannot convert, and returns null for a phrase', () => {
+    expect(describeDate(read('@#DHEBREW@ 5 TSH 5600'))).toMatch(/^a Hebrew calendar date/);
+    expect(describeDate(read('@#DFRENCH R@ 1 VEND 3'))).toMatch(/^a French Republican calendar/);
+    expect(describeDate(read('after the war'))).toBeNull();
+    expect(describeDate(read('12/03/1881'))).toBeNull();
+  });
+});
+
+describe('yearLabel', () => {
+  it('gives the year of a date in its short list form', () => {
+    const cases: [string, string][] = [
+      ['12 Mar 1881', '1881'],
+      ['Mar 1881', '1881'],
+      ['1881', '1881'],
+      ['abt 1850', 'c. 1850'],
+      ['EST 12 Mar 1850', 'c. 1850'],
+      ['BEF 1900', 'bef. 1900'],
+      ['AFT 1900', 'aft. 1900'],
+      ['bef 12 Mar 1881', 'bef. 1881'],
+      ['FROM 1850', '1850'],
+      ['TO 1855', '1855'],
+      ['BET 1850 AND 1855', 'c. 1853'],
+      ['BET Jan 1850 AND Mar 1850', '1850'],
+      ['44 BC', '44 BC'],
+      ['@#DJULIAN@ 25 Dec 1700', '1700'],
+    ];
+    for (const [text, label] of cases) expect(yearLabel(read(text)), text).toBe(label);
+  });
+
+  it('is empty when there is no year to read', () => {
+    expect(yearLabel(read('after the war'))).toBe('');
+    expect(yearLabel(read('@#DHEBREW@ 5 TSH 5600'))).toBe('');
   });
 });

@@ -1,0 +1,326 @@
+import { NAME_TYPES, PEDIGREES, SEXES } from '@rulz/core';
+import {
+  BackupError,
+  NoTreeError,
+  NotATreeError,
+  NotFoundError,
+  SchemaTooNewError,
+  TreeLocationError,
+  TreeRuleError,
+  addChildOf,
+  addFamilyEvent,
+  addName,
+  addParent,
+  addPartner,
+  addPersonEvent,
+  addPersonFromDraft,
+  countPersons,
+  countSearchPersons,
+  deleteEvent,
+  deleteName,
+  deletePerson,
+  getPersonPage,
+  listPersons,
+  searchPersons,
+  setChildPedigree,
+  setPrimaryName,
+  unlinkChild,
+  unlinkPartner,
+  updateEvent,
+  updateName,
+  updatePerson,
+  type Tree,
+} from '@rulz/db';
+import { z } from 'zod';
+import type { ApiMethod, AppInfo, IpcError, PersonChange, RulzApi, TreeState } from '../shared/ipc';
+import { NoOpenTreeError, SessionError, type TreeSession } from './session';
+
+/**
+ * What each function of the IPC contract does. Every argument arrives from the
+ * page, so each function first checks its arguments against a schema; nothing
+ * unchecked reaches the database layer.
+ *
+ * Nothing here uses Electron. The few things that need it (the folder picker,
+ * File Explorer, the app's version details) come in through {@link Platform}.
+ */
+
+export interface FolderPickerOptions {
+  title: string;
+  buttonLabel: string;
+  defaultPath: string;
+}
+
+export interface Platform {
+  appInfo(): AppInfo;
+  /** Shows the system folder picker. Resolves to null when the user cancels. */
+  chooseFolder(options: FolderPickerOptions): Promise<string | null>;
+  /** Shows a folder in File Explorer. */
+  openFolder(dir: string): Promise<void>;
+}
+
+type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
+type Result<K extends ApiMethod> = Awaited<ReturnType<RulzApi[K]>>;
+type Handler<K extends ApiMethod> = (...raw: unknown[]) => Result<K> | Promise<Result<K>>;
+
+export type ApiHandlers = { [K in ApiMethod]: Handler<K> };
+
+/**
+ * Removes object keys whose value is `undefined`. A form that leaves a field
+ * out may still send the key, and the schemas treat a key that is present as
+ * one that must hold a value.
+ */
+function dropUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(dropUndefined);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, dropUndefined(entry)]),
+  );
+}
+
+function define<K extends ApiMethod>(
+  schema: z.ZodType<Args<K>>,
+  run: (...args: Args<K>) => Result<K> | Promise<Result<K>>,
+): Handler<K> {
+  return (...raw) => run(...schema.parse(dropUndefined(raw)));
+}
+
+const text = (max: number) => z.string().max(max);
+const id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+const sex = z.enum(SEXES);
+const pedigree = z.enum(PEDIGREES);
+const living = z.boolean().nullable();
+const none = z.tuple([]);
+
+const draft = z.strictObject({
+  given: text(200).exactOptional(),
+  surname: text(200).exactOptional(),
+  sex: sex.exactOptional(),
+  living: living.exactOptional(),
+  birthDate: text(200).exactOptional(),
+  birthPlace: text(500).exactOptional(),
+  deathDate: text(200).exactOptional(),
+  deathPlace: text(500).exactOptional(),
+});
+
+const personRef = z.union([z.strictObject({ existingId: id }), z.strictObject({ create: draft })]);
+
+const nameFields = {
+  type: z.enum(NAME_TYPES).exactOptional(),
+  prefix: text(100).exactOptional(),
+  given: text(200).exactOptional(),
+  nickname: text(100).exactOptional(),
+  surname: text(200).exactOptional(),
+  suffix: text(100).exactOptional(),
+};
+
+const eventInput = z.strictObject({
+  type: text(60).min(1),
+  date: text(200).exactOptional(),
+  place: text(500).exactOptional(),
+  description: text(5000).exactOptional(),
+});
+
+const familyOption = z.strictObject({ familyId: id.exactOptional() });
+const childOptions = z.strictObject({
+  familyId: id.exactOptional(),
+  pedigree: pedigree.exactOptional(),
+});
+
+export function createHandlers(session: TreeSession, platform: Platform): ApiHandlers {
+  /** Runs an edit and returns the tree's new state. */
+  const edit = (run: (tree: Tree) => unknown): TreeState => {
+    session.change(run);
+    return session.state();
+  };
+  /** Runs an edit that adds or links a person, and says who. */
+  const link = (run: (tree: Tree) => { personId: string }): PersonChange => {
+    const { personId } = session.change(run);
+    return { tree: session.state(), personId };
+  };
+
+  return {
+    getAppInfo: define<'getAppInfo'>(none, () => platform.appInfo()),
+
+    getStartInfo: define<'getStartInfo'>(none, () => session.startInfo()),
+
+    chooseParentFolder: define<'chooseParentFolder'>(none, async () => {
+      const dir = await platform.chooseFolder({
+        title: 'Choose where to keep the new family tree',
+        buttonLabel: 'Choose folder',
+        defaultPath: session.defaultParentDir,
+      });
+      return dir === null ? null : session.allowParentDir(dir);
+    }),
+
+    createTree: define<'createTree'>(
+      z.tuple([z.strictObject({ name: text(100), parentDir: text(1000).min(1) })]),
+      (input) => session.create(input.name, input.parentDir),
+    ),
+
+    openTreeFromDialog: define<'openTreeFromDialog'>(none, async () => {
+      const dir = await platform.chooseFolder({
+        title: 'Open a family tree folder',
+        buttonLabel: 'Open tree',
+        defaultPath: session.defaultParentDir,
+      });
+      return dir === null ? null : session.open(dir);
+    }),
+
+    openRecentTree: define<'openRecentTree'>(z.tuple([text(1000).min(1)]), (dir) =>
+      session.openRecent(dir),
+    ),
+
+    forgetRecentTree: define<'forgetRecentTree'>(z.tuple([text(1000).min(1)]), (dir) =>
+      session.forgetRecent(dir),
+    ),
+
+    closeTree: define<'closeTree'>(none, () => session.close()),
+
+    listPersons: define<'listPersons'>(
+      z.tuple([
+        z.strictObject({
+          query: text(200),
+          offset: z.number().int().min(0),
+          limit: z.number().int().min(1).max(500),
+        }),
+      ]),
+      ({ query, offset, limit }) => {
+        const tree = session.tree;
+        const page = { offset, limit };
+        return query.trim() === ''
+          ? { total: countPersons(tree), persons: listPersons(tree, page) }
+          : {
+              total: countSearchPersons(tree, query),
+              persons: searchPersons(tree, query, page),
+            };
+      },
+    ),
+
+    getPersonPage: define<'getPersonPage'>(z.tuple([id]), (personId) =>
+      getPersonPage(session.tree, personId),
+    ),
+
+    addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
+      link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
+    ),
+
+    updatePerson: define<'updatePerson'>(
+      z.tuple([id, z.strictObject({ sex: sex.exactOptional(), living: living.exactOptional() })]),
+      (personId, patch) => edit((tree) => updatePerson(tree, personId, patch)),
+    ),
+
+    deletePerson: define<'deletePerson'>(z.tuple([id]), (personId) =>
+      edit((tree) => deletePerson(tree, personId)),
+    ),
+
+    addName: define<'addName'>(
+      z.tuple([id, z.strictObject({ ...nameFields, primary: z.boolean().exactOptional() })]),
+      (personId, name) => edit((tree) => addName(tree, personId, name)),
+    ),
+
+    updateName: define<'updateName'>(z.tuple([id, z.strictObject(nameFields)]), (nameId, name) =>
+      edit((tree) => updateName(tree, nameId, name)),
+    ),
+
+    setPrimaryName: define<'setPrimaryName'>(z.tuple([id]), (nameId) =>
+      edit((tree) => setPrimaryName(tree, nameId)),
+    ),
+
+    deleteName: define<'deleteName'>(z.tuple([id]), (nameId) =>
+      edit((tree) => deleteName(tree, nameId)),
+    ),
+
+    addPersonEvent: define<'addPersonEvent'>(z.tuple([id, eventInput]), (personId, event) =>
+      edit((tree) => addPersonEvent(tree, personId, event)),
+    ),
+
+    addFamilyEvent: define<'addFamilyEvent'>(z.tuple([id, eventInput]), (familyId, event) =>
+      edit((tree) => addFamilyEvent(tree, familyId, event)),
+    ),
+
+    updateEvent: define<'updateEvent'>(z.tuple([id, eventInput]), (eventId, event) =>
+      edit((tree) => updateEvent(tree, eventId, event)),
+    ),
+
+    deleteEvent: define<'deleteEvent'>(z.tuple([id]), (eventId) =>
+      edit((tree) => deleteEvent(tree, eventId)),
+    ),
+
+    addParent: define<'addParent'>(
+      z.tuple([id, personRef, childOptions]),
+      (childId, parent, options) => link((tree) => addParent(tree, childId, parent, options)),
+    ),
+
+    addPartner: define<'addPartner'>(
+      z.tuple([id, personRef, familyOption]),
+      (personId, partner, options) => link((tree) => addPartner(tree, personId, partner, options)),
+    ),
+
+    addChild: define<'addChild'>(
+      z.tuple([id, personRef, childOptions]),
+      (parentId, child, options) => link((tree) => addChildOf(tree, parentId, child, options)),
+    ),
+
+    removeChild: define<'removeChild'>(z.tuple([id, id]), (familyId, childId) =>
+      edit((tree) => unlinkChild(tree, familyId, childId)),
+    ),
+
+    removePartner: define<'removePartner'>(z.tuple([id, id]), (familyId, personId) =>
+      edit((tree) => unlinkPartner(tree, familyId, personId)),
+    ),
+
+    setPedigree: define<'setPedigree'>(z.tuple([id, id, pedigree]), (familyId, childId, value) =>
+      edit((tree) => setChildPedigree(tree, familyId, childId, value)),
+    ),
+
+    undo: define<'undo'>(none, () => session.undo()),
+
+    redo: define<'redo'>(none, () => session.redo()),
+
+    listBackups: define<'listBackups'>(none, () => session.listBackups()),
+
+    backupNow: define<'backupNow'>(none, () => {
+      const created = session.backupNow();
+      return { tree: session.state(), created };
+    }),
+
+    restoreBackup: define<'restoreBackup'>(z.tuple([text(100).min(1)]), (name) =>
+      session.restore(name),
+    ),
+
+    showBackupsFolder: define<'showBackupsFolder'>(none, () =>
+      platform.openFolder(session.backupsDir()),
+    ),
+  };
+}
+
+/** Errors whose message is written for the user and says what is not allowed. */
+const RULE_ERRORS = [
+  TreeRuleError,
+  TreeLocationError,
+  NoTreeError,
+  NotATreeError,
+  SchemaTooNewError,
+  BackupError,
+  SessionError,
+] as const;
+
+/** Turns anything a handler threw into the error the page receives. */
+export function toIpcError(error: unknown): IpcError {
+  if (error instanceof z.ZodError) {
+    const issue = error.issues[0];
+    const where = issue && issue.path.length > 0 ? ` (${issue.path.join('.')})` : '';
+    return {
+      code: 'invalid',
+      message: `the request was not valid${where}: ${issue?.message ?? 'unknown problem'}`,
+    };
+  }
+  if (error instanceof NoOpenTreeError) return { code: 'no-tree', message: error.message };
+  if (error instanceof NotFoundError) return { code: 'not-found', message: error.message };
+  if (RULE_ERRORS.some((kind) => error instanceof kind)) {
+    return { code: 'rule', message: (error as Error).message };
+  }
+  return { code: 'failed', message: error instanceof Error ? error.message : String(error) };
+}

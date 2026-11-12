@@ -3,12 +3,18 @@
 A Windows desktop app for building a family tree and researching it with free
 data sources. Everything is stored on your own PC.
 
-Status: **Phase 1 in progress.** The tree database layer is built and tested
-(part 1a): people, names, families, events, dates, undo and redo, and search of
-your own tree. The app window does not create or edit trees yet; that is part
-1b. See [docs/PLAN.md](docs/PLAN.md) for the full plan and
+Status: **Phase 1 in progress.** Parts 1a and 1b are done. You can create a
+family tree, add and edit people with their names, events, parents, partners
+and children, search the tree by name, and undo or redo every change. The app
+backs the tree up when it closes. Importing and exporting GEDCOM files (part
+1c) and charts (part 1d) are next; there is no record search yet. See
+[docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
+
+A tree is a folder holding `tree.db` and a `backups` folder. By default it is
+made in `Documents\RulZ Ancestry`. To move a tree, move its folder and open it
+again with "Open a tree folder".
 
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
@@ -34,7 +40,7 @@ Run these from the repository root.
 | ------------------------ | --------------------------------------------------------------- |
 | `pnpm install`           | Install dependencies                                            |
 | `pnpm dev`               | Run the app with hot reload                                     |
-| `pnpm test`              | Unit tests (Vitest)                                             |
+| `pnpm test`              | Unit tests (Vitest); `pnpm test packages/db` runs one folder    |
 | `pnpm typecheck`         | TypeScript check for every package                              |
 | `pnpm lint`              | ESLint                                                          |
 | `pnpm format`            | Format all files with Prettier                                  |
@@ -61,6 +67,10 @@ docs/                 Plan and access checklist
 - **The UI cannot reach Node.js.** The window runs sandboxed with context
   isolation; it talks to the main process only through the functions listed in
   `apps/desktop/src/shared/ipc.ts`.
+- **What the page sends is checked.** Each of those functions validates its
+  arguments in `apps/desktop/src/main/handlers.ts` before anything runs. The
+  page can create a tree only in a folder the user picked, and open only a
+  recent tree or a folder the user picked.
 - **Every change to a tree can be undone.** Code changes a tree only through
   `Tree.transact` in `packages/db`. Database triggers record each changed row
   and reject a write made any other way.
@@ -68,7 +78,9 @@ docs/                 Plan and access checklist
   numbered file in `packages/db/src/schema`; a migration that has shipped is
   never edited.
 - **Development data stays separate.** `pnpm dev` stores its database in
-  `%APPDATA%\RulZ Ancestry (dev)`, not in the installed app's folder.
+  `%APPDATA%\RulZ Ancestry (dev)` and makes new trees in
+  `Documents\RulZ Ancestry (dev)`, not in the installed app's folders. The
+  end-to-end tests keep everything inside a temporary profile folder.
 
 ## Dependency updates
 

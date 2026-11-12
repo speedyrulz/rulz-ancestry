@@ -1,115 +1,89 @@
-import { useEffect, useState } from 'react';
-import type { AppInfo } from '../../shared/ipc';
+import { useCallback, useEffect, useState } from 'react';
+import type { StartInfo, TreeState } from '../../shared/ipc';
+import { api, errorMessage } from './api';
+import { StartScreen } from './components/StartScreen';
+import { Workspace } from './components/Workspace';
 
-type Status =
-  { state: 'loading' } | { state: 'ready'; info: AppInfo } | { state: 'error'; message: string };
+type Loaded =
+  | { state: 'loading' }
+  | { state: 'error'; message: string }
+  | { state: 'ready'; info: StartInfo; notice: string | null };
 
-function useAppInfo(): Status {
-  const [status, setStatus] = useState<Status>({ state: 'loading' });
+/** Shows the open tree, or the start screen when no tree is open. */
+export function App() {
+  const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' });
+  const [tree, setTree] = useState<TreeState | null>(null);
+
+  /** Shows what the main process says is open and was opened before. */
+  const show = useCallback((info: StartInfo, notice: string | null) => {
+    setTree(info.tree);
+    setLoaded({
+      state: 'ready',
+      info,
+      notice:
+        notice ??
+        (info.reopenError === null
+          ? null
+          : `The tree that was open last time could not be opened. ${errorMessage(info.reopenError)}`),
+    });
+  }, []);
+
+  const fail = useCallback((failure: unknown) => {
+    setLoaded({ state: 'error', message: errorMessage(failure) });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const api = window.rulz;
-    const request = api
-      ? api.getAppInfo()
-      : Promise.reject(new Error('This page must be opened inside the RulZ Ancestry app.'));
-
-    request.then(
+    api.getStartInfo().then(
       (info) => {
-        if (!cancelled) setStatus({ state: 'ready', info });
+        if (!cancelled) show(info, null);
       },
-      (error: unknown) => {
-        if (cancelled) return;
-        setStatus({
-          state: 'error',
-          message: error instanceof Error ? error.message : String(error),
-        });
+      (failure: unknown) => {
+        if (!cancelled) fail(failure);
       },
     );
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [show, fail]);
 
-  return status;
-}
-
-function StatusPanel({ info }: { info: AppInfo }) {
-  const sourceCount = info.connectors.api + info.connectors.bulk + info.connectors.deeplink;
-  return (
-    <dl className="status" data-testid="app-status">
-      <div>
-        <dt>App version</dt>
-        <dd data-testid="app-version">{info.appVersion}</dd>
-      </div>
-      <div>
-        <dt>Database engine</dt>
-        <dd data-testid="sqlite-version">SQLite {info.database.sqliteVersion}</dd>
-      </div>
-      <div>
-        <dt>Full-text search</dt>
-        <dd data-testid="fts5">{info.database.fts5 ? 'Available' : 'Missing'}</dd>
-      </div>
-      <div>
-        <dt>Family tree engine</dt>
-        <dd data-testid="tree-engine" className={info.treeEngine.ok ? undefined : 'error'}>
-          {info.treeEngine.ok
-            ? `Ready (schema version ${info.treeEngine.schemaVersion})`
-            : `Failed: ${info.treeEngine.error}`}
-        </dd>
-      </div>
-      <div>
-        <dt>Data sources defined</dt>
-        <dd data-testid="source-count">
-          {sourceCount} ({info.connectors.api} live, {info.connectors.bulk} downloadable,{' '}
-          {info.connectors.deeplink} link-only)
-        </dd>
-      </div>
-      <div>
-        <dt>Database file</dt>
-        <dd className="path" data-testid="database-path">
-          {info.database.path}
-        </dd>
-      </div>
-      <div>
-        <dt>Runtime</dt>
-        <dd>
-          Electron {info.versions.electron}, Chromium {info.versions.chrome}, Node{' '}
-          {info.versions.node}
-        </dd>
-      </div>
-    </dl>
-  );
-}
-
-export function App() {
-  const status = useAppInfo();
-
-  return (
-    <main className="shell">
-      <header>
-        <h1>RulZ Ancestry</h1>
-        <p className="tagline">Family history from free sources, stored on your own PC.</p>
-      </header>
-
-      <section className="empty">
-        <h2>No family tree yet</h2>
-        <p>
-          Creating and importing trees arrives in the next build. For now this window confirms the
-          app is installed and working.
+  if (loaded.state === 'loading') {
+    return (
+      <main className="shell">
+        <p className="muted" data-testid="app-starting">
+          Starting…
         </p>
-      </section>
+      </main>
+    );
+  }
+  if (loaded.state === 'error') {
+    return (
+      <main className="shell">
+        <h1>RulZ Ancestry</h1>
+        <p className="error" role="alert" data-testid="app-error">
+          {loaded.message}
+        </p>
+      </main>
+    );
+  }
 
-      <section aria-live="polite">
-        <h2>System check</h2>
-        {status.state === 'loading' && <p data-testid="app-loading">Checking…</p>}
-        {status.state === 'error' && (
-          <p className="error" role="alert" data-testid="app-error">
-            {status.message}
-          </p>
-        )}
-        {status.state === 'ready' && <StatusPanel info={status.info} />}
-      </section>
-    </main>
-  );
+  if (tree !== null) {
+    return (
+      <Workspace
+        // A different tree starts with a fresh screen: nobody selected, empty search.
+        key={tree.id + tree.dir}
+        tree={tree}
+        onTree={setTree}
+        onClosed={(backupError) => {
+          const notice =
+            backupError === null
+              ? null
+              : `The tree was closed, but its backup could not be made. ${errorMessage(backupError)}`;
+          api.getStartInfo().then((info) => show(info, notice), fail);
+        }}
+      />
+    );
+  }
+
+  return <StartScreen info={loaded.info} notice={loaded.notice} onOpened={setTree} />;
 }

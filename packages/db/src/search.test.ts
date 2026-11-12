@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { addPersonEvent } from './events';
 import { addName, createPerson, deleteName, deletePerson, listNames, updateName } from './persons';
-import { getPersonSummary, listPersons, searchPersons, toFtsQuery } from './search';
+import {
+  countSearchPersons,
+  getPersonSummary,
+  listPersons,
+  searchPersons,
+  toFtsQuery,
+} from './search';
 import { cleanUpAfterEach, memoryTree } from './testing';
 import type { Tree } from './tree';
 
@@ -157,8 +163,8 @@ describe('listPersons', () => {
       sex: 'F',
       living: false,
       name: { prefix: '', given: 'Mary', nickname: '', surname: 'Cross', suffix: '' },
-      birth: { dateText: '22 Nov 1819', placeText: 'Nuneaton' },
-      death: { dateText: '22 Dec 1880', placeText: 'London' },
+      birth: { dateText: '22 Nov 1819', placeText: 'Nuneaton', year: '1819' },
+      death: { dateText: '22 Dec 1880', placeText: 'London', year: '1880' },
     });
 
     const bare = createPerson(tree);
@@ -171,5 +177,34 @@ describe('listPersons', () => {
       death: null,
     });
     expect(getPersonSummary(tree, '00000000-0000-7000-8000-000000000000')).toBeNull();
+  });
+
+  it('gives the short year of a birth and a death', () => {
+    const tree = memoryTree();
+    const person = createPerson(tree, { name: { given: 'Old', surname: 'Timer' } });
+    addPersonEvent(tree, person.id, { type: 'birth', date: 'abt 1850' });
+    addPersonEvent(tree, person.id, { type: 'death', date: 'after the war' });
+    expect(getPersonSummary(tree, person.id)).toMatchObject({
+      birth: { dateText: 'abt 1850', year: 'c. 1850' },
+      death: { dateText: 'after the war', year: '' },
+    });
+  });
+});
+
+describe('countSearchPersons', () => {
+  it('counts each matching person once, however many of their names match', () => {
+    const tree = memoryTree();
+    const mary = createPerson(tree, { name: { given: 'Mary', surname: 'Evans' } });
+    addName(tree, mary.id, { type: 'married', given: 'Mary', surname: 'Cross' });
+    createPerson(tree, { name: { given: 'Mary Ann', surname: 'Smith' } });
+    createPerson(tree, { name: { given: 'John', surname: 'Smith' } });
+
+    expect(countSearchPersons(tree, 'mary')).toBe(2);
+    expect(countSearchPersons(tree, 'smi')).toBe(2);
+    expect(countSearchPersons(tree, 'mary smith')).toBe(1);
+    expect(countSearchPersons(tree, 'nobody')).toBe(0);
+    expect(countSearchPersons(tree, '  ')).toBe(0);
+    // The count is not cut off by the page size of the search itself.
+    expect(searchPersons(tree, 'mary', { limit: 1 })).toHaveLength(1);
   });
 });

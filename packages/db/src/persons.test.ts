@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPersonEvent, getEvent } from './events';
+import { addFamilyEvent, addPersonEvent, getEvent } from './events';
 import { addChild, createFamily, getFamily, listChildren } from './families';
 import {
   addName,
@@ -147,13 +147,15 @@ describe('deletePerson', () => {
     }
   });
 
-  it('keeps a family that still has someone in it, and removes one that is empty', () => {
+  it('keeps a family that still links two people, and removes one that links nobody', () => {
     const tree = memoryTree();
     const father = createPerson(tree);
     const mother = createPerson(tree);
     const child = createPerson(tree);
+    const sibling = createPerson(tree);
     const family = createFamily(tree, { partner1Id: father.id, partner2Id: mother.id });
     addChild(tree, family.id, child.id);
+    addChild(tree, family.id, sibling.id);
     const lonely = createFamily(tree, { partner1Id: father.id });
 
     deletePerson(tree, father.id);
@@ -161,12 +163,35 @@ describe('deletePerson', () => {
     expect(getFamily(tree, lonely.id)).toBeNull();
 
     deletePerson(tree, mother.id);
-    // Still holds the child, so brothers and sisters added later stay linked.
+    // Still holds two children, so they stay brother and sister.
     expect(getFamily(tree, family.id)).toMatchObject({ partner1Id: null, partner2Id: null });
-    expect(listChildren(tree, family.id)).toHaveLength(1);
+    expect(listChildren(tree, family.id)).toHaveLength(2);
 
-    deletePerson(tree, child.id);
+    deletePerson(tree, sibling.id);
+    // One child and nobody else: the family says nothing any more.
     expect(getFamily(tree, family.id)).toBeNull();
+    expect(getPerson(tree, child.id)).not.toBeNull();
+    expect(tree.info()).toMatchObject({ persons: 1, families: 0, events: 0 });
+  });
+
+  it('keeps a family with one person left when it has an event of its own', () => {
+    const tree = memoryTree();
+    const husband = createPerson(tree);
+    const wife = createPerson(tree);
+    const married = createFamily(tree, { partner1Id: husband.id, partner2Id: wife.id });
+    const marriage = addFamilyEvent(tree, married.id, { type: 'marriage', date: '1850' });
+    const unmarried = createFamily(tree, { partner1Id: husband.id });
+
+    deletePerson(tree, wife.id);
+    expect(getFamily(tree, married.id)).toMatchObject({ partner1Id: husband.id, partner2Id: null });
+    expect(getEvent(tree, marriage.id)).not.toBeNull();
+    // Not one of the deleted person's families, so it is left alone.
+    expect(getFamily(tree, unmarried.id)).not.toBeNull();
+
+    // With nobody left, the family and its event go: no person leads to them any more.
+    deletePerson(tree, husband.id);
+    expect(getFamily(tree, married.id)).toBeNull();
+    expect(getEvent(tree, marriage.id)).toBeNull();
     expect(tree.info()).toMatchObject({ persons: 0, families: 0, events: 0 });
   });
 });

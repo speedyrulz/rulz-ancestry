@@ -327,3 +327,128 @@ export function parseDate(input: string): ParsedDate | null {
   }
   return single(text, 'exact', s);
 }
+
+/** The parts of a stored date that say what it means; the typed text is not needed. */
+export type DateReading = Pick<ParsedDate, 'qualifier' | 'calendar' | 'minJdn' | 'maxJdn'>;
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+function yearText(year: number): string {
+  // Astronomical years: 0 is 1 BC.
+  return year > 0 ? String(year) : `${1 - year} BC`;
+}
+
+function dayText(calendar: DayCalendar, jdn: number): string {
+  const { year, month, day } = jdnToCalendar(calendar, jdn);
+  return `${day} ${MONTH_NAMES[month - 1] ?? ''} ${yearText(year)}`;
+}
+
+/** A range as the largest unit it exactly covers: a day, a month, a year, or two days. */
+function spanText(calendar: DayCalendar, min: number, max: number): string {
+  const first = jdnToCalendar(calendar, min);
+  const last = jdnToCalendar(calendar, max);
+  if (min === max) return dayText(calendar, min);
+  if (first.year === last.year && first.day === 1) {
+    const wholeMonth =
+      first.month === last.month && last.day === daysInMonth(calendar, last.year, last.month);
+    if (wholeMonth) return `${MONTH_NAMES[first.month - 1] ?? ''} ${yearText(first.year)}`;
+    if (first.month === 1 && last.month === 12 && last.day === 31) return yearText(first.year);
+  }
+  return `${dayText(calendar, min)} to ${dayText(calendar, max)}`;
+}
+
+const UNCONVERTED_CALENDARS: Readonly<Record<string, string>> = {
+  hebrew: 'a Hebrew calendar date (not converted yet, so it does not sort)',
+  'french-republican': 'a French Republican calendar date (not converted yet, so it does not sort)',
+  other: 'a date in a calendar the app does not know (it does not sort)',
+};
+
+/**
+ * Says in plain words how the app read a date, so the person who typed it can
+ * check: "BEF 1900" gives "before 1 January 1900". Returns null for a phrase,
+ * which is text the app keeps but does not read as a date.
+ */
+export function describeDate(date: DateReading): string | null {
+  if (date.qualifier === 'phrase' || date.calendar === null) return null;
+  if (date.calendar !== 'gregorian' && date.calendar !== 'julian') {
+    return UNCONVERTED_CALENDARS[date.calendar] ?? null;
+  }
+  const calendar = date.calendar;
+  const { minJdn: min, maxJdn: max } = date;
+  const suffix = calendar === 'julian' ? ' (Julian calendar)' : '';
+
+  let text: string | null = null;
+  if (min !== null && max !== null) {
+    switch (date.qualifier) {
+      case 'between':
+        text = `between ${dayText(calendar, min)} and ${dayText(calendar, max)}`;
+        break;
+      case 'from-to':
+        text = `from ${dayText(calendar, min)} to ${dayText(calendar, max)}`;
+        break;
+      case 'about':
+      case 'calculated':
+      case 'estimated':
+        text = `${date.qualifier} ${spanText(calendar, min, max)}`;
+        break;
+      default:
+        text = spanText(calendar, min, max);
+    }
+  } else if (max !== null) {
+    // "BEF 1900" ends on 31 December 1899; "TO 1900" ends on 31 December 1900.
+    text =
+      date.qualifier === 'before'
+        ? `before ${dayText(calendar, max + 1)}`
+        : `until ${dayText(calendar, max)}`;
+  } else if (min !== null) {
+    text =
+      date.qualifier === 'after'
+        ? `after ${dayText(calendar, min - 1)}`
+        : `from ${dayText(calendar, min)}`;
+  }
+  return text === null ? null : text + suffix;
+}
+
+/**
+ * The year of a date in the short form used in lists and lifespans: "1881",
+ * "c. 1850", "bef. 1900". Empty when the date has no year the app can read.
+ */
+export function yearLabel(date: DateReading): string {
+  if (date.calendar !== 'gregorian' && date.calendar !== 'julian') return '';
+  const calendar = date.calendar;
+  const yearOf = (jdn: number) => jdnToCalendar(calendar, jdn).year;
+  const { minJdn: min, maxJdn: max } = date;
+
+  if (min !== null && max !== null) {
+    const first = yearOf(min);
+    const last = yearOf(max);
+    if (first !== last) return `c. ${yearText(Math.round((first + last) / 2))}`;
+    const approximate =
+      date.qualifier === 'about' ||
+      date.qualifier === 'calculated' ||
+      date.qualifier === 'estimated';
+    return approximate ? `c. ${yearText(first)}` : yearText(first);
+  }
+  if (max !== null) {
+    return date.qualifier === 'before'
+      ? `bef. ${yearText(yearOf(max + 1))}`
+      : yearText(yearOf(max));
+  }
+  if (min !== null) {
+    return date.qualifier === 'after' ? `aft. ${yearText(yearOf(min - 1))}` : yearText(yearOf(min));
+  }
+  return '';
+}
