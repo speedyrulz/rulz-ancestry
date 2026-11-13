@@ -21,6 +21,7 @@ import {
   type MergeInfo,
   type PersonChange,
   type PersonListPage,
+  type PersonLifeInfo,
   type PersonPage,
   type PlaceListPage,
   type PlaceSuggestions,
@@ -161,6 +162,8 @@ describe('argument checks', () => {
       ['addPerson', { given: 'Ada' }, 'extra argument'],
       ['getPersonPage', 'not-an-id'],
       ['getPersonPage', { id: MISSING }],
+      ['getPersonLife', 'not-an-id'],
+      ['getPersonLife', MISSING, 'extra argument'],
       ['deletePerson', "x' OR 1=1 --"],
       ['listPersons', { query: '', offset: 0, limit: 100_000 }],
       ['listPersons', { query: '', offset: -1, limit: 10 }],
@@ -392,6 +395,7 @@ describe('reading and editing the open tree', () => {
     const deleted = await call<TreeState>('deletePerson', mary);
     expect(deleted.persons).toBe(3);
     expect(await call('getPersonPage', mary)).toBeNull();
+    expect(await call('getPersonLife', mary)).toBeNull();
   });
 });
 
@@ -1368,7 +1372,7 @@ describe('places and the gazetteer', () => {
   it('lists the places, offers the entry that fits one best, and links and unlinks them', async () => {
     await download();
     await openNewTree();
-    await addPerson('Ann', {
+    const ann = await addPerson('Ann', {
       birthPlace: 'Springfield, Sangamon, Illinois, USA',
       deathPlace: 'Somewhere else entirely',
     });
@@ -1398,6 +1402,19 @@ describe('places and the gazetteer', () => {
     );
     expect(linked.undo).toBe('Link place');
     expect(await places('linked')).toMatchObject({ total: 1, all: 2, linked: 1 });
+    // The person's life says where the linked place lies, and nothing for the other.
+    const life = await call<PersonLifeInfo>('getPersonLife', ann);
+    expect(life.entries).toMatchObject([
+      {
+        kind: 'own',
+        event: { type: 'birth' },
+        relation: null,
+        person: null,
+        place: { geonamesId: SPRINGFIELD, name: SPRINGFIELD_TEXT, lat: 39.80172, lon: -89.64371 },
+        age: null,
+      },
+      { kind: 'own', event: { type: 'death' }, place: null, age: null },
+    ]);
     expect((await places('unlinked')).places.map((place) => place.text)).toEqual([
       'Somewhere else entirely',
     ]);

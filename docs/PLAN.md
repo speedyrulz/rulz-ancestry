@@ -27,7 +27,7 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 
 - **Shell:** Electron with context isolation, no Node integration, sandboxed renderer, strict content security policy, and a typed IPC contract.
 - **Database:** `better-sqlite3` with FTS5 for full-text search. Schema changes are numbered migrations in `packages/db/src/schema`, applied by `migrate()` and tracked with SQLite's `user_version`. Queries are hand-written SQL behind typed functions; there is no ORM.
-- **UI:** React with Vite. D3 or the Topola library for charts, OpenSeadragon for IIIF record images, MapLibre GL for maps.
+- **UI:** React with Vite. D3 or the Topola library for charts, OpenSeadragon for IIIF record images. Maps are drawn in SVG with d3-geo from outlines the app ships with (decided 2026-11-13; the plan first named MapLibre GL, which needs map tiles).
 - **Matching:** `talisman` for Jaro-Winkler, Double Metaphone and Daitch-Mokotoff, plus an open nickname table.
 - **AI assistant (optional):** the MCP TypeScript SDK (`@modelcontextprotocol/sdk`) for the tool server, packed for Claude Desktop as an `.mcpb` file, and `@anthropic-ai/sdk` for the API-key route. See section 7.
 - **Secrets:** Electron `safeStorage` (Windows DPAPI). OAuth through the system browser with PKCE and a loopback redirect.
@@ -725,7 +725,7 @@ Not done, and why:
 | 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12** |
 | 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12** |
 | 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | **Done 2026-11-13** |
-| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned             |
+| 2e   | Map of a person's events, and the life timeline                                                                                            | **Done 2026-11-13** |
 
 The phase's test ("a scanned record can be attached, cited and viewed at full
 zoom") is met by parts 2a and 2b for a scan added in the app. Part 2b was first
@@ -737,9 +737,75 @@ part 2c a scan that comes with an imported tree is attached, cited and viewed
 in the same way. Two
 things decided how 2d and 2e are built and needed the owner. The first was
 decided on 2026-11-13 and built the same day: the GeoNames gazetteer is
-downloaded by the user on first use, not shipped with the app. The second is
-open and holds up part 2e: where map tiles come from, since free tile servers
-limit how an app may use them.
+downloaded by the user on first use, not shipped with the app. The second was
+where map tiles come from, since free tile servers limit how an app may use
+them. It was decided on 2026-11-13 too: there are none. The map is drawn from
+outlines the app ships with.
+
+### Phase 2e outcome: the timeline and the map (2026-11-13)
+
+The last part of Phase 2.
+
+Delivered:
+
+- **A timeline on a person's page.** "Timeline and map" tells the life in order: the person's own events, the events of the couples they are one of, and what happened close to them while they lived, which is the births of their brothers, sisters and children and the deaths of their parents, partners, brothers, sisters and children. Each line gives the date as typed, how old the person was, what happened, to whom (a name that leads to that person's page) and where. A tick box takes the births and deaths in the family away.
+- **The age is as sure as the dates.** Two full dates give "age 23". A date that names only a year gives "age 22 or 23", and a period gives "age 20 to 45". An open-ended date ("before 1850") gives none, and neither does an age beyond 125 years.
+- **Events without a date stand apart,** under "Date not known". They are not guessed into place.
+- **A map of the life.** Every place of the timeline that is linked to the place list gets a numbered mark, and the same number stands beside the place in the timeline. Several events at one place share a mark. Under the map each mark is listed with the place as typed, the entry it is linked to when that reads differently, and its events. A press on a number in the timeline or the list picks its mark out.
+- **Places that lie apart can be looked at alone.** Marks more than 700 km from each other form groups; with more than one group the map has a button for each ("Around York") beside "Everything". "Zoom in" and "Zoom out" change the scale, and a press on a number in the list puts that place in the middle.
+- **Places without a link are named,** in a line under the map that says how many there are and that "Places" links them.
+- **The outlines.** Every country, and the states, provinces and counties of the United States, Canada, the Netherlands, the United Kingdom, Ireland, Australia and New Zealand, each named on the map where it is drawn large enough. The file is 618 KB and is read when a map is first shown.
+
+Decided while building:
+
+- **No map tiles.** Three views were asked for (Opus, Codex and Grok helpers), and all three and the primary came to the same: outlines that ship with the app. A tile server learns which area is being looked at, and where a family lived is private; OpenStreetMap's own servers are not offered as the background of a distributed app; a downloadable detailed map is tens of megabytes at least and much code. The owner chose the outlines. They say in which state or county a place lies, not on which road.
+- **Natural Earth, public domain** (confirmed from its own licence text, tag v5.1.2). No credit is required; the map gives one all the same. Countries come from its 1:50 million set. The seven divided countries come from the states and provinces of its 1:10 million set and are left out of the country layer, so that their coast is drawn once. `tools/build-map.mjs` builds the file: it keeps 30% of the points and stores them on a grid of 20,000 steps. The file is committed; the two source files are not.
+- **Drawn in SVG with d3-geo,** not MapLibre GL as the plan had it. A map of three to thirty marks needs no tiles and no WebGL, and SVG stays within the content security policy. A frame up to 110 degrees wide is drawn in Mercator, which keeps shapes as people know them; a wider one in Equal Earth, because Mercator swells the north.
+- **The frame goes the short way round the earth,** so New Zealand and Hawaii are framed across the Pacific. One place, or places close together, get a frame about the size of a state, since a smaller one shows a blank shape.
+- **Where the logic lives.** Ages, grouping and framing are plain functions in `packages/core` (`life.ts`, `map.ts`) with tests of their own. `getPersonLife` in `packages/db` reads the life in one transaction. The page asks for it with one call, `getPersonLife`, apart from the person's page itself.
+- **A relative's event counts when it has a date within the person's life.** The life runs from the first day the birth can mean to the last day the death can mean; where one is not known, that side is open. Someone who is two things to the person is told of once.
+- **No line is drawn between the marks.** The order of the events is known, the roads taken are not.
+- **Nothing new is shown of living people.** Every event of the timeline was already on the person's page or on the page of the relative it names.
+
+Tried on the owner's real export from Ancestry, with its places linked as in part 2d: 158 of 162 people have a map, with at most 17 marks and at most three groups; two people's frames are wide enough for Equal Earth. Reading a life took at most 2 ms. Only counts were taken from it.
+
+Changed from before:
+
+- **Four new development dependencies:** `d3-geo` and `topojson-client` in the app, and `topojson-server` and `topojson-simplify` for the build script.
+- **The page's script grew by a second file** of 640 KB with the outlines, loaded on demand.
+- **Tests.** Unit tests went from 830 to 856. End-to-end tests are still 34; the places test now also checks the timeline, the map, its groups and that the map asks nothing of the internet, in the built and in the packaged app.
+
+Found by the reviews, and what was done:
+
+Two helpers reviewed the change without seeing each other's findings or the primary's opinion of it: OpenAI Codex and a Claude Opus subagent. Each finding was checked against the code before it was acted on. Opus read the files while Codex's findings were being fixed, and confirmed four of those fixes.
+
+- **A birth "before 1900" shut out what happened before 1900** (Codex). The life was taken to start on the last day the birth can mean. It now starts on the first, and a date without a first day leaves that side open; the same for a death "after 1900".
+- **A relative's event was judged by one day of its date** (Codex). A brother born "between 1899 and 1901" was left out of the life of someone born in 1900. An event is now left out only when its whole date lies before the life or after it.
+- **Enlarging the map could push a mark off it** (Codex). The map was put back on the middle of its frame in degrees, which is not the middle of the drawing: a projection does not space latitudes evenly. It now keeps the drawing as fitted and enlarges about its middle.
+- **A place near a pole was framed without its mark** (Codex). The frame stopped at 84 degrees and the mark was drawn where it lies. The frame now reaches 89 degrees, and one that goes beyond 78 is drawn in Equal Earth, which has room there. Opus ran the framing against twelve sets of places, the South Pole, Svalbard and a pair across the 180th meridian among them, and every mark stayed in the drawing.
+- **A mark stayed picked out by its number after an edit** (Codex), so that the number pointed at another place. It is now kept by its point, and the map starts afresh when the places change.
+- **180 degrees east and west gave two marks at one point** (Codex). They are one now.
+- **A number in the timeline could pick out a mark that was not in view** (Opus), with the map on one group or enlarged; nothing seemed to happen. The map now goes back to showing every place.
+- **A brother born in the same year came before the person's own birth** (Opus), with "age 0". The person's birth now comes before anything of the family, when its first day is known.
+- **Three groups of small islands were missing from the map** (Opus): the Cocos Islands, Christmas Island and Tokelau. The build script left out a country by one code and took its divisions by another. Both layers now go by the same code.
+- **Borders are drawn twice where the two scales meet** (Opus): a divided country comes from the 1:10 million set and its neighbour from the 1:50 million, so the United States and Mexico each draw their side. True, and seen only when much enlarged. Left as it is.
+- **Marks that lie on top of each other take one press between them,** and a mark cannot be reached with the keyboard (Opus). True. The list under the map has a button for every mark. Left as it is.
+- **The list's button stays pressed on a second press** (Opus). It shows the place; it is not a switch. Left as it is.
+- **The page now shows the dates and places of relatives' births and deaths** (Opus), which before stood only on their own pages. Nothing leaves the PC and no export changes. Noted for the owner.
+- **The choice of projection and the fitting have no unit test** (Opus). They live in the page's own file with the drawing. The end-to-end test covers a wide frame, a narrow one and the marks in each; the rest was checked by Opus's script. Still to do.
+- Codex could not run the unit tests in its sandbox (\`spawn EPERM\`); its findings came from reading and from running single functions. Each was confirmed here with a test.
+
+Not done:
+
+- **Roads, towns, rivers and hills** on the map. Only borders and coasts.
+- **Borders of the time.** The outlines are today's.
+- **Dragging the map.** It is moved by the buttons and by picking a place.
+- **A map of a whole tree,** of a family, or of the way a family moved.
+- **The counties of the United States,** and divisions of countries other than the seven.
+- **Printing or saving** the timeline or the map.
+- **Events of grandparents, grandchildren and in-laws,** and events of the world, in the timeline.
+- **How sure a mark is.** A place linked to a county is marked in the middle of the county, and the map does not show that apart from a town; the list under it names the entry.
+- **Names on the map can still crowd** where many small shapes meet, and a name is written in the middle of what is drawn of its shape.
 
 ### Phase 2d outcome: places (2026-11-13)
 
@@ -794,7 +860,7 @@ Two helpers reviewed the change without seeing each other's findings or the prim
 
 Not done:
 
-- **The map and the timeline** (part 2e), and the decision on map tiles that the map waits for.
+- **The map and the timeline** (part 2e). Built later the same day; see below.
 - **Coordinates in GEDCOM files:** neither written for a linked place nor read from a file that has them. A tree that goes out as GEDCOM and comes back has lost its links.
 - **A link for one event alone,** for a text that means two places.
 - **Linking many places at once.** Each place is linked with one press, one at a time. A real tree of 260 places takes 243 presses, and 12 searches by hand.
@@ -999,4 +1065,4 @@ Not done, and why:
 3. **FamilySearch.** Decided 2026-11-11: applied. Awaiting a response; the connector stays optional either way.
 4. **AI assistant routes.** Decided 2026-11-11: build route A first, then route C. Route B is built only after Anthropic confirms in writing that starting the user's own unmodified Claude Code from this app is permitted; it also needs the owner to accept Anthropic's Commercial Terms of Service. See [ACCESS.md](ACCESS.md).
 5. **The GeoNames gazetteer.** Decided 2026-11-13: downloaded by the user on first use, not shipped with the app. Built the same day. Its licence is CC BY 4.0, confirmed from GeoNames' own readme; the credit line is in the "Places" window.
-6. **Map tiles.** Open. Needed for part 2e.
+6. **Map tiles.** Decided 2026-11-13: none. The map is drawn from Natural Earth's public-domain outlines, which the app ships with, and asks nothing of the internet. A detailed map can be added later as a download, never as a service that is asked while the user looks.

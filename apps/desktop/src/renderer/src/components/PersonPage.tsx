@@ -24,6 +24,7 @@ import {
   type PersonFieldsValue,
 } from '../format';
 import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
+import { LifeSection } from './life';
 import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
@@ -722,6 +723,13 @@ export function PersonPageView({
           )}
         </div>
       </section>
+
+      <LifeSection
+        personId={person.id}
+        revision={tree.revision}
+        onSelect={onSelect}
+        onProblem={onProblem}
+      />
 
       <section data-testid="sources-section">
         <h3>Sources</h3>

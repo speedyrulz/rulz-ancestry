@@ -357,6 +357,45 @@ test('offers places while typing, downloads the place list and links places to i
   await expect(window.getByTestId('places-count')).toContainText('3 places, 2 linked');
   await window.getByTestId('places-close').click();
 
+  // The person's page tells the life in order, with the age, and what has no date apart.
+  const life = window.getByTestId('life-section');
+  const dated = life.getByTestId('life-dated').getByTestId('life-row');
+  await expect(dated).toHaveCount(2);
+  await expect(dated.nth(0)).toContainText('Birth');
+  await expect(dated.nth(1)).toContainText('Residence');
+  await expect(dated.nth(1)).toContainText('age 29 or 30');
+  await expect(life.getByTestId('life-undated').getByTestId('life-row')).toHaveCount(1);
+  await expect(life.getByTestId('life-undated')).toContainText('York, England');
+
+  // The map marks the two linked places on the outlines the app ships with.
+  await expect(life.getByTestId('map-marker')).toHaveCount(2);
+  await expect
+    .poll(async () => Number(await life.getByTestId('map-land').getAttribute('data-shapes')))
+    .toBeGreaterThan(20);
+  const legend = life.getByTestId('map-legend-row');
+  await expect(legend).toHaveCount(2);
+  await expect(legend.nth(0)).toContainText('Springfield, Sangamon, Illinois, USA');
+  await expect(legend.nth(0)).toContainText('Linked to Springfield, Greene County, Missouri, USA');
+  await expect(legend.nth(0)).toContainText('Birth 1900');
+  await expect(legend.nth(1)).toContainText('York, England');
+  // The place that was only typed is named as not on the map.
+  await expect(life.getByTestId('life-unlinked')).toContainText('1 place is not linked');
+  // Places an ocean apart can each be looked at alone.
+  await expect(life.getByTestId('map-view-group')).toHaveCount(2);
+  await life.getByTestId('map-view-group').nth(1).click();
+  await expect(life.getByTestId('map-marker')).toHaveCount(1);
+  await expect(life.getByTestId('map-marker')).toHaveAttribute('data-number', '2');
+  await life.getByTestId('map-view-all').click();
+  await expect(life.getByTestId('map-marker')).toHaveCount(2);
+  // A number in the timeline points at its mark, and brings it into view.
+  await life.getByTestId('map-view-group').nth(1).click();
+  await expect(life.getByTestId('map-marker')).toHaveCount(1);
+  await dated.nth(0).getByTestId('life-place-number').click();
+  await expect(life.getByTestId('map-marker')).toHaveCount(2);
+  await expect(life.locator('.map-marker.selected')).toHaveAttribute('data-number', '1');
+  // The map asked nothing of the internet.
+  expect(await askedOfInternet(app)).toHaveLength(asked.length);
+
   // The place list and the links are still there after the app is restarted.
   await app.close();
   const second = await launchApp(appTarget, userDataDir);

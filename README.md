@@ -17,8 +17,9 @@ and written, and a GEDZip file takes the files themselves along. A person, an
 event and a source can each carry a note. One real export from Ancestry has
 been tried and comes back out line for line. The app offers places while you
 type, and can link each place of a tree to where it lies on the map, from a
-list of the world's places that it downloads when you ask. A map and a
-timeline (part 2e) are next; there is no record search yet. See
+list of the world's places that it downloads when you ask. A person's page
+tells their life as a timeline and marks its places on a map. Phase 2 is
+complete with that; there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -136,8 +137,23 @@ Places:
   picked from the list while typing is linked at once.
 - **A tree keeps the coordinates of its linked places,** so it does not need
   the place list on another PC.
-- Links are not written to a GEDCOM file. There is no map yet, and places are
-  linked one at a time.
+- Links are not written to a GEDCOM file, and places are linked one at a
+  time.
+
+Timeline and map:
+
+- **"Timeline and map" on a person's page** tells the life in order: the
+  person's own events, their marriages, and the births and deaths close to
+  them, with how old the person was at each. Events without a date are listed
+  apart.
+- **The map marks every place that is linked to the place list,** with the
+  number that stands beside it in the timeline. Places that lie far apart can
+  be looked at one area at a time.
+- **The map is drawn from outlines the app ships with:** countries, and the
+  states, provinces and counties of seven countries, from
+  [Natural Earth](https://www.naturalearthdata.com/) (public domain). It shows
+  borders and coasts, no roads or towns, and asks nothing of the internet.
+- A place that is not linked is named under the map; "Places" links it.
 
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by

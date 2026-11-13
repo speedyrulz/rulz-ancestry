@@ -68,6 +68,7 @@ export {
   type PartnerFamily,
   type PersonPage,
 } from './personpage';
+export { getPersonLife, type LifeEntry, type LifeRelation, type PersonLife } from './life';
 export {
   addName,
   countPersons,

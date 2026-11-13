@@ -52,6 +52,7 @@ import {
   findRelationship,
   getChartData,
   getMedia,
+  getPersonLife,
   getPersonPage,
   getPersonSummary,
   getSource,
@@ -566,6 +567,10 @@ export function createHandlers(
         keptLines: keptLinesOf(tree, personId),
       };
     }),
+
+    getPersonLife: define<'getPersonLife'>(z.tuple([id]), (personId) =>
+      getPersonLife(session.tree, personId),
+    ),
 
     getChart: define<'getChart'>(
       z.tuple([

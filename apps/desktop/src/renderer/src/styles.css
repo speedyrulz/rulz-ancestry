@@ -11,6 +11,7 @@
   --error: #a3261f;
   --error-soft: #fbe9e7;
   --focus: #1c6fd1;
+  --map-sea: #dbe6ec;
   color-scheme: light dark;
   font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
   font-size: 15px;
@@ -31,6 +32,7 @@
     --error: #f08a82;
     --error-soft: #3b2220;
     --focus: #8ab4f8;
+    --map-sea: #1d2a31;
   }
 }
 
@@ -1542,4 +1544,145 @@ ul.media-grid,
   color: var(--muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The timeline and the map of a person's life. */
+
+.life {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border-left: 2px solid var(--border);
+}
+
+.life-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+  position: relative;
+  padding: 6px 0 6px 16px;
+}
+
+.life-row::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.life-row.relative::before {
+  background: var(--surface);
+  border: 2px solid var(--muted);
+}
+
+.life-row.relative .life-title {
+  color: var(--muted);
+}
+
+.life-title {
+  font-weight: 600;
+}
+
+.life-head {
+  margin: 16px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.map-number {
+  min-width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.map-number[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.life-map {
+  margin-top: 20px;
+}
+
+.life-map svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.map-space {
+  fill: var(--surface-2);
+}
+
+.map-sea {
+  fill: var(--map-sea);
+}
+
+.map-land path {
+  fill: var(--surface);
+  stroke: var(--muted);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+
+.map-names text {
+  fill: var(--muted);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.map-marker {
+  cursor: pointer;
+}
+
+.map-marker circle {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.map-marker text {
+  fill: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.map-marker.selected circle {
+  fill: var(--focus);
+  stroke: var(--text);
+}
+
+.map-legend {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-legend li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.map-legend li.selected {
+  background: var(--accent-soft);
 }

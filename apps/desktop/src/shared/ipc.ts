@@ -507,6 +507,30 @@ export interface PlaceLinkInfo {
   lon: number;
 }
 
+/** One line of a person's life: something that happened to them, or close to them. */
+export interface LifeEntryInfo {
+  /**
+   * `own`: an event of the person. `family`: an event of a couple the person
+   * is one of, such as their marriage. `relative`: the birth or the death of
+   * someone close, within the person's lifetime.
+   */
+  kind: 'own' | 'family' | 'relative';
+  event: EventInfo;
+  /** `partner` for a couple's event, the relative's relation for theirs, null for the person's own. */
+  relation: 'parent' | 'partner' | 'child' | 'sibling' | null;
+  /** The other partner of a couple's event when known, or the relative. Null for the person's own. */
+  person: PersonSummary | null;
+  /** Where the event's place lies, when its text is linked. */
+  place: PlaceLinkInfo | null;
+  /** How old the person was, in whole years, as far as the dates tell. Null when they do not. */
+  age: { min: number; max: number } | null;
+}
+
+/** A person's life in order, for the timeline and the map. */
+export interface PersonLifeInfo {
+  entries: LifeEntryInfo[];
+}
+
 /** One place of the open tree: a text that events give as their place. */
 export interface TreePlaceInfo {
   /** The place as typed. */
@@ -769,6 +793,12 @@ export interface RulzApi {
   // Reading the open tree.
   listPersons(request: PersonListRequest): Promise<PersonListPage>;
   getPersonPage(personId: string): Promise<PersonPage | null>;
+  /**
+   * A person's life in order: their own events, those of the couples they are
+   * one of, and the births and deaths close to them, each with where it lies
+   * when its place is linked. Null when the person is gone.
+   */
+  getPersonLife(personId: string): Promise<PersonLifeInfo | null>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -926,6 +956,7 @@ export const API_METHODS = [
   'countPresumedLiving',
   'listPersons',
   'getPersonPage',
+  'getPersonLife',
   'getChart',
   'getRelationship',
   'findDuplicates',

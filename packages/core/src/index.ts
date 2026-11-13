@@ -53,6 +53,17 @@ export {
   type MatchScore,
 } from './match';
 export {
+  distanceKm,
+  frameOf,
+  gatherMarkers,
+  groupPoints,
+  wrapLon,
+  type MapFrame,
+  type MapMarker,
+  type MapPoint,
+} from './map';
+export { ageRange, formatAge, type AgeRange, type DaySpan } from './life';
+export {
   PLACE_QUERY_MIN,
   PLACE_TEXT_MAX,
   REGION_PRIORITY,
