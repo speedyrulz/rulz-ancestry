@@ -7,19 +7,21 @@ checked against the source's own pages on that date.
 ## 1. The constraint that shapes the design
 
 No free source lets a third-party app search a record collection the size of
-Ancestry's. FamilySearch has the largest free collection, but its API requires
-approval and does not expose historical-record search to outside apps. The app
-therefore combines three access methods and depends on no single provider.
+Ancestry's. FamilySearch has the largest free collection, but its API does not
+expose historical-record search to outside apps, and FamilySearch gives access
+to it only to businesses that market applications they alone own; this project
+asked and got none (2026-11-13). The app therefore combines three access
+methods and depends on no single provider.
 
 | Ancestry feature                            | Free equivalent in this app                                                                                               | How close                                                               |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Family tree builder, charts, media, sources | Local tree database, GEDCOM import/export                                                                                 | Full                                                                    |
 | Record search                               | Open APIs, local bulk indexes, prefilled links to free sites                                                              | Partial. Biggest gap: US census 1790–1930 and vital-record name indexes |
 | Hints                                       | Local matching engine against open trees, records and newspapers; optional AI assistant that proposes matches (section 7) | Good for tree matches, weaker for records                               |
-| Shared member trees                         | WikiTree, Geni, FamilySearch Family Tree, Wikidata                                                                        | Good                                                                    |
+| Shared member trees                         | WikiTree, Geni, Wikidata                                                                                                  | Good                                                                    |
 | Newspapers                                  | Library of Congress, Trove, Papers Past, Europeana, Gallica                                                               | Good for US 1756–1963 and several countries                             |
 | DNA                                         | Local analysis of raw files the user already has                                                                          | Limited. No testing, no ethnicity estimate in v1                        |
-| Cloud sync and collaboration                | None hosted. Portable tree folder; optional push to WikiTree or FamilySearch                                              | Limited                                                                 |
+| Cloud sync and collaboration                | None hosted. Portable tree folder; optional push to WikiTree                                                              | Limited                                                                 |
 
 ## 2. Stack
 
@@ -231,16 +233,15 @@ export interface SourceConnector {
 
 ### Tier A: official APIs, queried live
 
-| Source                                           | Provides                                                           | Access                                                                                                                                      | Status     |
-| ------------------------------------------------ | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| WikiTree                                         | Collaborative tree profiles, ancestors, descendants                | No key. Send `appId`. 200 requests/min. Read-only; edits go through the site                                                                | Verified   |
-| Library of Congress / Chronicling America        | Full-text US newspapers, maps, photos                              | loc.gov JSON API, no key. 20 requests/min, one-hour block if exceeded. Legacy API retired 2025. Queries over 100,000 results rejected       | Verified   |
-| NARA Catalog API v2                              | Military, immigration, naturalization descriptions and scans       | Free key by email, sent in `x-api-key`. 10,000 queries/month per key                                                                        | Verified   |
-| Open Archives                                    | Dutch and Belgian civil and church records                         | No key. 4 requests/sec. Match endpoint by name and birth year                                                                               | Verified   |
-| FamilySearch                                     | Family Tree persons, relatives, sources, memories, match summaries | OAuth 2. Beta key automatic; production needs a compatibility review. No historical-record search. No data kept after the session. Optional | Verified   |
-| Wikidata                                         | Notable people, family links, cross-site IDs                       | SPARQL, CC0, no key                                                                                                                         | To confirm |
-| Internet Archive                                 | City directories, county histories, yearbooks, census film scans   | Free search and metadata APIs                                                                                                               | To confirm |
-| Geni, DPLA, Europeana, Trove, DigitalNZ, Gallica | World tree profiles; regional newspapers and archives              | Free app key each                                                                                                                           | To confirm |
+| Source                                           | Provides                                                         | Access                                                                                                                                | Status     |
+| ------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| WikiTree                                         | Collaborative tree profiles, ancestors, descendants              | No key. Send `appId`. 200 requests/min. Read-only; edits go through the site                                                          | Verified   |
+| Library of Congress / Chronicling America        | Full-text US newspapers, maps, photos                            | loc.gov JSON API, no key. 20 requests/min, one-hour block if exceeded. Legacy API retired 2025. Queries over 100,000 results rejected | Verified   |
+| NARA Catalog API v2                              | Military, immigration, naturalization descriptions and scans     | Free key by email, sent in `x-api-key`. 10,000 queries/month per key                                                                  | Verified   |
+| Open Archives                                    | Dutch and Belgian civil and church records                       | No key. 4 requests/sec. Match endpoint by name and birth year                                                                         | Verified   |
+| Wikidata                                         | Notable people, family links, cross-site IDs                     | SPARQL, CC0, no key                                                                                                                   | To confirm |
+| Internet Archive                                 | City directories, county histories, yearbooks, census film scans | Free search and metadata APIs                                                                                                         | To confirm |
+| Geni, DPLA, Europeana, Trove, DigitalNZ, Gallica | World tree profiles; regional newspapers and archives            | Free app key each                                                                                                                     | To confirm |
 
 ### Tier B: open bulk datasets, installed as optional data packs
 
@@ -550,7 +551,7 @@ data in and return plain data, so these tools are thin wrappers around them.
 - **The AI proposes and the user decides.** AI tools cannot write to the tree. A change happens only when the user accepts a proposal, through `Tree.transact` like any other edit.
 - **Every reason quotes the record.** The app checks each quote against the stored record and drops a reason whose quote is not there. A proposal left with no reason is not shown. This guards against invented evidence.
 - **The source rules still apply.** AI searches go through the connectors and the shared HTTP client, with the same rate limits, quotas and attribution. No scraping. Tier C stays link-only. Each run has a search budget per source, which matters for sources with a monthly quota such as NARA.
-- **Each source must permit it.** A new manifest field, `mayShareWithAi`, says whether a source's record text may be sent to an AI service. It is false until that source's terms have been checked. FamilySearch stays false unless its terms allow it.
+- **Each source must permit it.** A new manifest field, `mayShareWithAi`, says whether a source's record text may be sent to an AI service. It is false until that source's terms have been checked.
 - **Living people are masked** in what the tools return, as "Living person" plus the relationship, unless the user opts in for that tree. DNA data is never offered to the AI.
 - **Record text is untrusted.** A record, a newspaper page or a community tree profile may contain text written as instructions. It is passed as data. Because the tools can only read and propose, the worst result is a bad proposal, which the user reviews.
 - **An activity log** lists each run's searches, the records read and what was sent. It is kept in the app database, not in the tree folder.
@@ -577,7 +578,7 @@ Durations are rough estimates for one developer working with AI assistance.
 | 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                                                                          | 3–4 weeks |
 | 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                                                                      | 2–3 weeks |
 | 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set                                                   | 2–3 weeks |
-| 5. Packs and more sources   | Pack manager, 1950 census index, Open Archives dumps; Geni, regional newspapers, FamilySearch if approved                                                                                                                 | Packs install, search offline, and uninstall cleanly                                                                                                                                                                                    | 2–3 weeks |
+| 5. Packs and more sources   | Pack manager, 1950 census index, Open Archives dumps; Geni, regional newspapers                                                                                                                                           | Packs install, search offline, and uninstall cleanly                                                                                                                                                                                    | 2–3 weeks |
 | 6. Release                  | Reports, accessibility, app icon, auto-update, MSIX, Store submission, user docs                                                                                                                                          | Installable from the Store and GitHub Releases                                                                                                                                                                                          | 2 weeks   |
 | 7. DNA and extras           | DNA tools; transcription of record images, locally or through the AI assistant                                                                                                                                            | Open-ended                                                                                                                                                                                                                              | —         |
 
@@ -590,7 +591,7 @@ connector manifests, and [ACCESS.md](ACCESS.md).
 
 Not done, and why:
 
-- **Keys** (NARA and others) need the owner's own accounts. The FamilySearch application was submitted on 2026-11-11 and is awaiting a response. See [ACCESS.md](ACCESS.md).
+- **Keys** (NARA and others) need the owner's own accounts. The owner has a NARA key since 2026-11-13. The FamilySearch application was submitted on 2026-11-11 and answered on 2026-11-13 without access. See [ACCESS.md](ACCESS.md).
 - **The installer itself was not executed.** Tests ran against its unpacked contents (`release/win-unpacked`), which is what the installer copies.
 - **No app icon.** The default Electron icon is used until Phase 6.
 - **MSIX packaging** needs the Store identity, so it belongs to Phase 6.
@@ -1169,7 +1170,7 @@ Not done, and why:
 
 - **Anthropic's rules for using a Claude plan outside its own apps changed several times in 2026** and may change again. Route A of the AI assistant relies only on ordinary use of Anthropic's own apps. Routes B and C sit behind one interface, and the app works without any of them.
 - **AI proposals can be wrong or invented.** Every reason must quote the stored record, the app checks the quotes, and the user decides. See section 7.
-- **FamilySearch may refuse or delay approval.** Nothing in Phases 1–4 depends on it; the Tier C link is the fallback.
+- **FamilySearch gave no access** (answered 2026-11-13): its API is for businesses that market applications they alone own, not for open-source or personal projects. Nothing in Phases 1–4 depends on it; the Tier C link, built in part 3b, is what the app has.
 - **APIs change or close**, as the Chronicling America legacy API did in 2025. Connectors are isolated, and from Phase 3 a scheduled CI job runs contract checks against live endpoints.
 - **Terms of service.** No scraping anywhere. Rate limits and attribution come from the manifest.
 - **Data quality.** Community trees and machine-read indexes contain errors, so every fact shows its source and nothing is accepted without the user.
@@ -1189,7 +1190,7 @@ Not done, and why:
 
 1. **Open source or private.** Decided 2026-11-11: the repository is public on GitHub under the MIT license.
 2. **Region priority,** which sets connector order. Decided 2026-11-13: the default stands. US, then Netherlands, UK and Ireland, Australia and New Zealand.
-3. **FamilySearch.** Decided 2026-11-11: applied. Awaiting a response; the connector stays optional either way.
+3. **FamilySearch.** Decided 2026-11-11: applied. Answered 2026-11-13: no access for an open-source project. Decided the same day: the Family Tree connector is dropped from the plan and its manifest is removed. The app knows FamilySearch only as a site whose record search it opens in the user's browser.
 4. **AI assistant routes.** Decided 2026-11-11: build route A first, then route C. Route B is built only after Anthropic confirms in writing that starting the user's own unmodified Claude Code from this app is permitted; it also needs the owner to accept Anthropic's Commercial Terms of Service. See [ACCESS.md](ACCESS.md).
 5. **The GeoNames gazetteer.** Decided 2026-11-13: downloaded by the user on first use, not shipped with the app. Built the same day. Its licence is CC BY 4.0, confirmed from GeoNames' own readme; the credit line is in the "Places" window.
 6. **Map tiles.** Decided 2026-11-13: none. The map is drawn from Natural Earth's public-domain outlines, which the app ships with, and asks nothing of the internet. A detailed map can be added later as a download, never as a service that is asked while the user looks.

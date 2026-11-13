@@ -1,6 +1,5 @@
 import type { ConnectorManifest, ConnectorTier } from './manifest';
 import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
-import { familySearchManifest } from './sources/familysearch/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
 import { locManifest } from './sources/loc/manifest';
 import { nara1940CensusManifest } from './sources/nara-1940-census/manifest';
@@ -15,7 +14,6 @@ export const manifests: readonly ConnectorManifest[] = [
   locManifest,
   naraCatalogManifest,
   openArchivesManifest,
-  familySearchManifest,
   nara1950CensusManifest,
   nara1940CensusManifest,
   findAGraveManifest,

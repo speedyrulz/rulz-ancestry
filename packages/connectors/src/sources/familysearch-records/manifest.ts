@@ -19,6 +19,6 @@ export const familySearchRecordsManifest = defineManifest({
     'The app must never fetch this site. Seeing results needs a free FamilySearch account, which the user signs in to in their own browser.',
     'The address of a search (q.givenName, q.surname, q.birthLikeDate.from and .to, q.deathLikeDate.from and .to) follows the query terms in FamilySearch’s developer documentation and what others report of the website; it was not tried against the site.',
     'The user records what they found through the clip form, which creates a citation with the URL and access date.',
-    'This is a different thing from the "familysearch" manifest, which is the Family Tree API.',
+    'There is no connector for the Family Tree API: FamilySearch answered the project’s application on 2026-11-13 without access, which it limits to businesses that market applications they alone own.',
   ],
 });

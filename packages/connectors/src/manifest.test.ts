@@ -71,8 +71,10 @@ describe('registry', () => {
     expect(manifestsByTier('bulk').length).toBe(2);
   });
 
-  it('never caches FamilySearch data beyond the session', () => {
-    expect(getManifest('familysearch')?.cacheTtlHours).toBe(0);
+  it('knows FamilySearch only as a site to open in the browser', () => {
+    // FamilySearch gave the project no access to its API (2026-11-13).
+    expect(getManifest('familysearch')).toBeUndefined();
+    expect(getManifest('familysearch-records')?.tier).toBe('deeplink');
   });
 
   it('carries the published limits that were verified', () => {

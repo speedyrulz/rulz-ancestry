@@ -13,24 +13,22 @@ Terms below were checked on 2026-11-11 unless marked "to confirm".
 
 ## Needed before Phase 3 (federated search)
 
-- [ ] **US National Archives Catalog API key**
-  - Email `Catalog_API@nara.gov` with your name and the email address to tie to the key. Ask for a read-only key.
+- [x] **US National Archives Catalog API key**
+  - **The owner has a key since 2026-11-13.** It is kept outside this repository and is entered in the app when part 3e is built.
+  - How it was requested: email `Catalog_API@nara.gov` with your name and the email address to tie to the key. Ask for a read-only key.
   - Limit: 10,000 queries per month per key. A key over the limit is blocked until the 1st of the next month.
   - Because the limit is per key, each user of the app will enter their own key.
   - Docs: <https://www.archives.gov/research/catalog/help/api>
 
 No key is needed for WikiTree, the Library of Congress, or Open Archives.
 
-## Worth starting now because approval takes time
+## Answered: FamilySearch
 
-- [x] **FamilySearch developer account and app registration** (optional connector)
-  - **Application submitted 2026-11-11. Waiting for FamilySearch to respond.**
-  - When a key arrives: keep it out of this repository, and confirm the environment hostnames and throttling rules from the Authentication guide so the connector manifest can be completed.
-  - Create a developer account and register an app at <https://developers.familysearch.org>. A Beta key is enabled automatically.
-  - Read "App Approval Considerations" before applying: <https://developers.familysearch.org/main/docs/app-approval-considerations>
-  - Production access requires acceptance into the Compatible Solution Program and a compatibility review. Reviewers favour apps that add value to Family Tree and do not put unusual load on it.
-  - Know the limits going in: third-party apps cannot search or display FamilySearch historical records. The app can read the Family Tree and show match summaries, then must send the user to familysearch.org.
-  - The app is designed to work fully without this connector.
+- [x] **FamilySearch developer account and app registration** (connector dropped)
+  - **Application submitted 2026-11-11. FamilySearch answered on 2026-11-13, and the answer gives no access.** In its words, access is limited to businesses and developers who build and market applications that they alone own, "not open source or tools", and is not offered for personal or individual research projects. A listing in its gallery needs a product that brings tens of thousands of users who add to the Family Tree. Beta access is for developers working toward that, and needs a clear statement of what the product adds to the tree.
+  - What this means here: this project is open source and free, so it does not meet the first condition. The owner decided on 2026-11-13 to drop the connector from the plan. The app reaches FamilySearch only through the link that opens its record search in the user's browser (part 3b).
+  - A new application would need a different case: what the app adds to the Family Tree and how it leads its users to add it. That is the owner's decision.
+  - How the application was made: create a developer account and register an app at <https://developers.familysearch.org>.
 
 ## Needed before Phase 4b (optional AI assistant)
 
@@ -46,7 +44,7 @@ signed in with your own Claude account.
   - The conditions and the contact link are on <https://code.claude.com/docs/en/legal-and-compliance>, under "Can customers offer Claude Code in their products?" and "Authentication and credential use".
   - Ask whether a free, open-source desktop app may start the user's own unmodified Claude Code, which the user installed and signed in to themselves, for each AI run.
   - Do not build route B before a written answer.
-- [ ] **Check each source's terms for AI use** before setting `mayShareWithAi` in its manifest. Start with WikiTree, the Library of Congress, Open Archives and NARA. FamilySearch stays off unless its terms allow it.
+- [ ] **Check each source's terms for AI use** before setting `mayShareWithAi` in its manifest. Start with WikiTree, the Library of Congress, Open Archives and NARA.
 - [ ] **Read Anthropic's trademark guidelines** before the feature is named or described in the app: <https://www.anthropic.com/legal/trademark-guidelines>
 
 ## Needed before Phase 5 (more connectors) — to confirm
@@ -71,5 +69,5 @@ on the date above. Confirm before building the connector.
 The app never fetches these sites. It opens a prefilled search in your browser.
 
 - **Find a Grave** is governed by the Ancestry Terms and Conditions, which bar bulk or automated collection: <https://www.ancestry.com/c/legal/termsandconditions>
-- **FamilySearch historical records**, for the reason given above.
+- **FamilySearch historical records.** FamilySearch does not let an outside app search or show them.
 - Others planned for Phase 3 (terms to confirm then): FreeBMD, FreeCEN, FreeREG, Ellis Island, JewishGen, IrishGenealogy.ie, Library and Archives Canada, ScotlandsPeople.
