@@ -8,6 +8,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  net,
   protocol,
   session as electronSession,
   shell,
@@ -17,6 +18,7 @@ import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { createHandlers, toIpcError, type Platform } from './handlers';
+import { GazetteerService } from './gazetteer';
 import { findMediaFile } from './mediafiles';
 import { TreeSession } from './session';
 
@@ -32,6 +34,7 @@ let mainWindow: BrowserWindow | undefined;
 let appDb: Db | undefined;
 let appDbPath = '';
 let treeSession: TreeSession | undefined;
+let gazetteer: GazetteerService | undefined;
 let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
 
 /** A failed check is shown in the window; it must not stop the app from opening. */
@@ -269,8 +272,8 @@ async function serveMedia(request: Request): Promise<Response> {
   });
 }
 
-function registerIpc(session: TreeSession): void {
-  const handlers = createHandlers(session, platform);
+function registerIpc(session: TreeSession, places: GazetteerService): void {
+  const handlers = createHandlers(session, platform, places);
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -323,6 +326,8 @@ if (!app.requestSingleInstanceLock()) {
     const closed = treeSession?.shutdown();
     if (closed?.backupError) console.error(`backup on quit failed: ${closed.backupError}`);
     treeSession = undefined;
+    gazetteer?.close();
+    gazetteer = undefined;
     appDb?.close();
     appDb = undefined;
   });
@@ -348,7 +353,15 @@ if (!app.requestSingleInstanceLock()) {
     treeSession = new TreeSession({ appDb, defaultParentDir: defaultTreesDir() });
     treeSession.start();
 
-    registerIpc(treeSession);
+    // The list of the world's places, downloaded from GeoNames when the user
+    // asks for it. This is the only request the app makes of the internet.
+    // `net.fetch` is looked up at each call, and uses the system's proxy.
+    gazetteer = new GazetteerService({
+      dir: join(app.getPath('userData'), 'gazetteer'),
+      fetch: (url, init) => net.fetch(url, init),
+    });
+
+    registerIpc(treeSession, gazetteer);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     mainWindow.on('closed', () => {

@@ -53,6 +53,24 @@ export {
   type MatchScore,
 } from './match';
 export {
+  PLACE_QUERY_MIN,
+  PLACE_TEXT_MAX,
+  REGION_PRIORITY,
+  fitsRegions,
+  fitsTypedPlace,
+  foldPlace,
+  formatCoordinates,
+  formatGazetteerPlace,
+  isLatinFolded,
+  parsePlaceQuery,
+  placeNameVariants,
+  placeParts,
+  scoreGazetteerHit,
+  type GazetteerHit,
+  type GazetteerPlace,
+  type PlaceQuery,
+} from './place';
+export {
   MEDIA_LIMITS,
   MEDIA_SNIFF_BYTES,
   canOpenOutside,

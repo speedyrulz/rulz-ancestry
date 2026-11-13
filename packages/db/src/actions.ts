@@ -12,6 +12,7 @@ import {
   type Family,
 } from './families';
 import { createPerson, requirePerson, type Person } from './persons';
+import type { PlaceLink } from './places';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
 
 /**
@@ -28,8 +29,12 @@ export interface PersonDraft {
   living?: boolean | null;
   birthDate?: string;
   birthPlace?: string;
+  /** The gazetteer entry the birth place was picked from. */
+  birthPlaceLink?: PlaceLink;
   deathDate?: string;
   deathPlace?: string;
+  /** The gazetteer entry the death place was picked from. */
+  deathPlaceLink?: PlaceLink;
 }
 
 /** Someone already in the tree, or the details of someone to add. */
@@ -61,6 +66,7 @@ function insertDraft(tree: Tree, draft: PersonDraft): Person {
       type: 'birth',
       date: draft.birthDate ?? '',
       place: draft.birthPlace ?? '',
+      ...(draft.birthPlaceLink ? { placeLink: draft.birthPlaceLink } : {}),
     });
   }
   if (filled(draft.deathDate) || filled(draft.deathPlace)) {
@@ -68,6 +74,7 @@ function insertDraft(tree: Tree, draft: PersonDraft): Person {
       type: 'death',
       date: draft.deathDate ?? '',
       place: draft.deathPlace ?? '',
+      ...(draft.deathPlaceLink ? { placeLink: draft.deathPlaceLink } : {}),
     });
   }
   return person;

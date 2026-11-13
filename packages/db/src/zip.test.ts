@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -202,5 +203,90 @@ describe('an archive that cannot be trusted', () => {
     zip.close();
     zip.close();
     expect(() => zip.read(entry, 1_000_000)).toThrow(/closed/);
+  });
+});
+
+/** Everything an entry gives when it is read as a stream. */
+async function streamed(zip: ZipReader, entry: ZipEntry, max = 100_000_000): Promise<Buffer> {
+  const parts: Buffer[] = [];
+  for await (const piece of zip.stream(entry, max)) parts.push(piece);
+  return Buffer.concat(parts);
+}
+
+describe('reading an entry as a stream', () => {
+  /** Three megabytes that do not pack well, so the packed entry spans several pieces too. */
+  function noise(): Buffer {
+    const bytes = randomBytes(3 * 1024 * 1024);
+    // Text-like bytes: they deflate a little, so the entry is stored deflated.
+    for (let at = 0; at < bytes.length; at += 1) bytes[at] = 32 + ((bytes[at] ?? 0) & 63);
+    return bytes;
+  }
+
+  it('gives a deflated and a stored entry whole, and leaves the archive open', async () => {
+    const onDisk = join(tempDir(), 'picture.png');
+    writeFileSync(onDisk, PICTURE);
+    const big = noise();
+    const path = zipOf([
+      { name: 'big.txt', data: big },
+      { name: 'stored.png', file: onDisk },
+      { name: 'empty.txt', data: new Uint8Array(0) },
+    ]);
+    const zip = ZipReader.open(path);
+    try {
+      expect(entryOf(zip, 'big.txt').method).toBe(8);
+      expect(entryOf(zip, 'big.txt').compressedSize).toBeGreaterThan(1024 * 1024);
+      expect((await streamed(zip, entryOf(zip, 'big.txt'))).equals(big)).toBe(true);
+      expect((await streamed(zip, entryOf(zip, 'stored.png'))).equals(PICTURE)).toBe(true);
+      expect(await streamed(zip, entryOf(zip, 'empty.txt'))).toHaveLength(0);
+      // The archive still answers after three streams.
+      expect(zip.read(entryOf(zip, 'stored.png'), 1_000_000).equals(PICTURE)).toBe(true);
+    } finally {
+      zip.close();
+    }
+  });
+
+  it('can be left before its end', async () => {
+    const path = zipOf([{ name: 'big.txt', data: noise() }]);
+    const zip = ZipReader.open(path);
+    try {
+      let count = 0;
+      for await (const piece of zip.stream(entryOf(zip, 'big.txt'), 100_000_000)) {
+        expect(piece.length).toBeGreaterThan(0);
+        count += 1;
+        break;
+      }
+      expect(count).toBe(1);
+      expect(await streamed(zip, entryOf(zip, 'big.txt'))).toHaveLength(3 * 1024 * 1024);
+    } finally {
+      zip.close();
+    }
+  });
+
+  it('stops at an entry that is damaged, too large, or larger than the archive says', async () => {
+    const path = zipOf([
+      { name: 'gedcom.ged', data: TEXT },
+      { name: 'bomb.bin', data: new Uint8Array(4 * 1024 * 1024) },
+    ]);
+    let zip = ZipReader.open(path);
+    try {
+      await expect(streamed(zip, entryOf(zip, 'bomb.bin'), 100_000)).rejects.toThrow(/larger than/);
+    } finally {
+      zip.close();
+    }
+
+    const bytes = readFileSync(path);
+    const deflated = 30 + 'gedcom.ged'.length + 20;
+    bytes[deflated] = (bytes[deflated] ?? 0) ^ 0xff;
+    // The archive now says the second file is ten bytes long.
+    const directory = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    bytes.writeUInt32LE(10, directory + 24);
+    writeFileSync(path, bytes);
+    zip = ZipReader.open(path);
+    try {
+      await expect(streamed(zip, entryOf(zip, 'gedcom.ged'))).rejects.toThrow(ZipError);
+      await expect(streamed(zip, entryOf(zip, 'bomb.bin'))).rejects.toThrow(/larger than/);
+    } finally {
+      zip.close();
+    }
   });
 });

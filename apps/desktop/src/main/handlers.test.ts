@@ -8,6 +8,8 @@ import {
   type AppInfo,
   type ChartInfo,
   type DuplicateList,
+  type GazetteerEntry,
+  type GazetteerStatus,
   type GedcomExportInfo,
   type GedcomImportResult,
   type IpcError,
@@ -20,12 +22,16 @@ import {
   type PersonChange,
   type PersonListPage,
   type PersonPage,
+  type PlaceListPage,
+  type PlaceSuggestions,
   type RelationshipInfo,
   type SourceChange,
   type SourceDetails,
   type SourceListPage,
   type TreeState,
 } from '../shared/ipc';
+import { GazetteerService } from './gazetteer';
+import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
 import { TreeSession } from './session';
 
@@ -35,6 +41,7 @@ let root: string;
 let appDb: Db;
 let session: TreeSession;
 let handlers: ApiHandlers;
+let gazetteer: GazetteerService;
 /** What the fake folder picker answers next; null is a cancelled dialog. */
 let pickedFolder: string | null;
 /** What the fake dialogs for opening and saving a file answer next. */
@@ -110,7 +117,13 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'rulz-handlers-'));
   appDb = openAppDatabase(':memory:');
   session = new TreeSession({ appDb, defaultParentDir: join(root, 'Trees') });
-  handlers = createHandlers(session, platform);
+  gazetteer = new GazetteerService({
+    dir: join(root, 'gazetteer'),
+    fetch: sampleFetch().fetch,
+    countries: SAMPLE_COUNTRIES,
+    minimums: {},
+  });
+  handlers = createHandlers(session, platform, gazetteer);
   pickedFolder = null;
   pickedFile = null;
   savePath = null;
@@ -122,7 +135,9 @@ beforeEach(() => {
   shownFiles = [];
 });
 
-afterEach(() => {
+afterEach(async () => {
+  gazetteer.close();
+  await gazetteer.idle();
   session.shutdown();
   appDb.close();
   rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
@@ -1228,5 +1243,213 @@ describe('GEDCOM files', () => {
       expect((await errorOf('exportGedcom', bad)).code, JSON.stringify(bad)).toBe('invalid');
     }
     expect(existsSync(savePath)).toBe(false);
+  });
+});
+
+describe('places and the gazetteer', () => {
+  const SPRINGFIELD = 4250542;
+  const SPRINGFIELD_TEXT = 'Springfield, Sangamon County, Illinois, USA';
+
+  /** Downloads the sample gazetteer and waits until it is in use. */
+  async function download(): Promise<GazetteerStatus> {
+    const started = await call<GazetteerStatus>('downloadGazetteer');
+    expect(started.job?.phase).toBe('downloading');
+    await gazetteer.idle();
+    return call<GazetteerStatus>('getGazetteerStatus');
+  }
+
+  async function places(filter: 'all' | 'linked' | 'unlinked' = 'all'): Promise<PlaceListPage> {
+    return call<PlaceListPage>('listPlaces', { query: '', filter, offset: 0, limit: 50 });
+  }
+
+  it('has no gazetteer at first, downloads one, and removes it', async () => {
+    const before = await call<GazetteerStatus>('getGazetteerStatus');
+    expect(before).toMatchObject({ installed: null, job: null, error: null });
+    expect(before.downloadBytes).toBeGreaterThan(50_000_000);
+
+    const after = await download();
+    expect(after).toMatchObject({ installed: { places: 5, countries: ['US', 'NL'] }, job: null });
+    expect((await call<GazetteerStatus>('removeGazetteer')).installed).toBeNull();
+  });
+
+  it('stops a download when asked', async () => {
+    await call<GazetteerStatus>('downloadGazetteer');
+    const stopped = await call<GazetteerStatus>('cancelGazetteerDownload');
+    expect(stopped).toMatchObject({ job: null, error: null });
+  });
+
+  it('offers the places of the tree, and those of the gazetteer once it is there', async () => {
+    await openNewTree();
+    await addPerson('Ann', { birthPlace: 'Springdale, Iowa' });
+    const before = await call<PlaceSuggestions>('suggestPlaces', 'spring');
+    expect(before).toEqual({
+      own: [{ text: 'Springdale, Iowa', events: 1, link: null }],
+      gazetteer: [],
+      installed: false,
+    });
+
+    await download();
+    const after = await call<PlaceSuggestions>('suggestPlaces', 'spring');
+    expect(after.installed).toBe(true);
+    expect(after.own).toHaveLength(1);
+    expect(after.gazetteer).toEqual([
+      {
+        geonameId: SPRINGFIELD,
+        text: SPRINGFIELD_TEXT,
+        kind: 'place',
+        lat: 39.80172,
+        lon: -89.64371,
+      },
+      {
+        geonameId: 4409896,
+        text: 'Springfield, Greene County, Missouri, USA',
+        kind: 'place',
+        lat: 37.21533,
+        lon: -93.29824,
+      },
+    ]);
+    const region = await call<PlaceSuggestions>('suggestPlaces', 'Sangamon');
+    expect(region.gazetteer[0]).toMatchObject({
+      kind: 'region',
+      text: 'Sangamon County, Illinois, USA',
+    });
+  });
+
+  it('links the place of an event that was picked from the gazetteer, in the same step', async () => {
+    await download();
+    await openNewTree();
+    const ann = await addPerson('Ann');
+    const state = await call<TreeState>('addPersonEvent', ann, {
+      type: 'residence',
+      place: SPRINGFIELD_TEXT,
+      placeGeonameId: SPRINGFIELD,
+    });
+    expect(state.undo).toBe('Add event');
+    expect((await places()).places).toEqual([
+      {
+        text: SPRINGFIELD_TEXT,
+        events: 1,
+        link: { geonamesId: SPRINGFIELD, name: SPRINGFIELD_TEXT, lat: 39.80172, lon: -89.64371 },
+      },
+    ]);
+    await call<TreeState>('undo');
+    expect((await places()).all).toBe(0);
+    expect((await call<PlaceSuggestions>('suggestPlaces', 'spring')).own).toEqual([]);
+  });
+
+  it('links the birth and death places of a new person', async () => {
+    await download();
+    await openNewTree();
+    await addPerson('Ann', {
+      birthPlace: SPRINGFIELD_TEXT,
+      birthPlaceGeonameId: SPRINGFIELD,
+      deathPlace: 'York',
+      deathPlaceGeonameId: 2633352,
+    });
+    const page = await places('linked');
+    expect(page.places.map((place) => [place.text, place.link?.name])).toEqual([
+      [SPRINGFIELD_TEXT, SPRINGFIELD_TEXT],
+      ['York', 'York, England'],
+    ]);
+    expect(page).toMatchObject({ total: 2, all: 2, linked: 2 });
+  });
+
+  it('saves a place as typed when the gazetteer entry is not there', async () => {
+    await openNewTree();
+    const ann = await addPerson('Ann');
+    await call<TreeState>('addPersonEvent', ann, {
+      type: 'residence',
+      place: 'Springfield',
+      placeGeonameId: SPRINGFIELD,
+    });
+    expect((await places()).places).toEqual([{ text: 'Springfield', events: 1, link: null }]);
+  });
+
+  it('lists the places, offers the entry that fits one best, and links and unlinks them', async () => {
+    await download();
+    await openNewTree();
+    await addPerson('Ann', {
+      birthPlace: 'Springfield, Sangamon, Illinois, USA',
+      deathPlace: 'Somewhere else entirely',
+    });
+    const page = await places();
+    expect(page).toMatchObject({ total: 2, all: 2, linked: 0 });
+    expect(page.places.map((place) => place.text)).toEqual([
+      'Somewhere else entirely',
+      'Springfield, Sangamon, Illinois, USA',
+    ]);
+    const offer = (place: string) => call<GazetteerEntry | null>('offerPlace', place);
+    expect(await offer('Somewhere else entirely')).toBeNull();
+    expect(await offer('Springfield, Sangamon, Illinois, USA')).toEqual({
+      geonameId: SPRINGFIELD,
+      text: SPRINGFIELD_TEXT,
+      kind: 'place',
+      lat: 39.80172,
+      lon: -89.64371,
+    });
+    // A village the gazetteer does not have is not tied to its county with one press.
+    expect(await offer('Smallville, Sangamon, Illinois')).toBeNull();
+    expect(await offer(', Sangamon, Illinois')).toMatchObject({ kind: 'region' });
+
+    const linked = await call<TreeState>(
+      'linkPlace',
+      'Springfield, Sangamon, Illinois, USA',
+      SPRINGFIELD,
+    );
+    expect(linked.undo).toBe('Link place');
+    expect(await places('linked')).toMatchObject({ total: 1, all: 2, linked: 1 });
+    expect((await places('unlinked')).places.map((place) => place.text)).toEqual([
+      'Somewhere else entirely',
+    ]);
+    // The place itself is still as it was typed.
+    expect((await places('linked')).places[0]?.text).toBe('Springfield, Sangamon, Illinois, USA');
+
+    const unlinked = await call<TreeState>('unlinkPlace', 'Springfield, Sangamon, Illinois, USA');
+    expect(unlinked.undo).toBe('Unlink place');
+    expect((await places()).linked).toBe(0);
+  });
+
+  it('keeps the links of a tree when the gazetteer is removed', async () => {
+    await download();
+    await openNewTree();
+    await addPerson('Ann', { birthPlace: 'York', birthPlaceGeonameId: 2633352 });
+    await call<GazetteerStatus>('removeGazetteer');
+    expect((await places()).places[0]?.link).toMatchObject({
+      name: 'York, England',
+      lat: 53.95763,
+    });
+  });
+
+  it('refuses a link to an entry the gazetteer does not have, and what is no place', async () => {
+    await openNewTree();
+    await addPerson('Ann', { birthPlace: 'York' });
+    expect(await errorOf('linkPlace', 'York', 2633352)).toMatchObject({ code: 'rule' });
+    expect(await errorOf('linkPlace', '', 2633352)).toMatchObject({ code: 'invalid' });
+    expect(await errorOf('linkPlace', 'York', -1)).toMatchObject({ code: 'invalid' });
+    expect(await errorOf('linkPlace', 'York', 1.5)).toMatchObject({ code: 'invalid' });
+    expect(await errorOf('offerPlace', 5)).toMatchObject({ code: 'invalid' });
+    expect(
+      await errorOf('listPlaces', { query: '', filter: 'all', offset: 0, limit: 500 }),
+    ).toMatchObject({ code: 'invalid' });
+    expect(
+      await errorOf('addPersonEvent', MISSING, { type: 'birth', placeGeonameId: 'York' }),
+    ).toMatchObject({ code: 'invalid' });
+  });
+
+  it('needs an open tree for the places, but not for the gazetteer', async () => {
+    expect(await errorOf('suggestPlaces', 'york')).toMatchObject({ code: 'no-tree' });
+    expect(
+      await errorOf('listPlaces', { query: '', filter: 'all', offset: 0, limit: 10 }),
+    ).toMatchObject({
+      code: 'no-tree',
+    });
+    expect(await call<GazetteerStatus>('getGazetteerStatus')).toMatchObject({ installed: null });
+    expect(await call<GazetteerEntry | null>('offerPlace', 'York')).toBeNull();
+  });
+
+  it('does not remove the gazetteer while it is being downloaded', async () => {
+    await call<GazetteerStatus>('downloadGazetteer');
+    expect(await errorOf('removeGazetteer')).toMatchObject({ code: 'rule' });
+    await gazetteer.idle();
   });
 });

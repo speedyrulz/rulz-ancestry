@@ -5,14 +5,18 @@ import {
   PEDIGREES,
   SEXES,
   NOTE_MAX,
+  PLACE_TEXT_MAX,
   SOURCE_LIMITS,
   canOpenOutside,
+  formatGazetteerPlace,
   kinshipTerm,
   mediaKind,
   relationshipTerm,
+  type GazetteerPlace,
 } from '@rulz/core';
 import {
   BackupError,
+  GazetteerError,
   GedcomFileError,
   MediaFileError,
   NoTreeError,
@@ -33,6 +37,7 @@ import {
   addPersonFromDraft,
   countMedia,
   countPersons,
+  countPlaces,
   countSearchPersons,
   countSourceCitations,
   countSources,
@@ -54,10 +59,12 @@ import {
   keptLinesOf,
   keptLinesOfSource,
   linkCitation,
+  linkPlace,
   listAllMedia,
   listMedia,
   listMediaUses,
   listPersons,
+  listPlaces,
   listSourceCitations,
   listSources,
   locateMediaFiles,
@@ -70,30 +77,43 @@ import {
   setChildPedigree,
   setMediaFile,
   setPrimaryName,
+  suggestTreePlaces,
   unlinkChild,
   unlinkCitation,
   unlinkMedia,
   unlinkPartner,
+  unlinkPlace,
   updateCitation,
   updateEvent,
   updateMedia,
   updateName,
   updatePerson,
   updateSource,
+  type EventInput as TreeEventInput,
   type Media,
+  type PersonDraft as TreePersonDraft,
+  type PersonRef as TreePersonRef,
+  type PlaceLink,
   type Tree,
+  type TreePlace,
 } from '@rulz/db';
 import { z } from 'zod';
 import type {
   ApiMethod,
   AppInfo,
+  EventInput,
+  GazetteerEntry,
   IpcError,
   MediaInfo,
   PersonChange,
+  PersonDraft,
+  PersonRef,
   PersonSummary,
   RulzApi,
+  TreePlaceInfo,
   TreeState,
 } from '../shared/ipc';
+import type { GazetteerService } from './gazetteer';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
 
 /**
@@ -177,6 +197,9 @@ const pedigree = z.enum(PEDIGREES);
 const living = z.boolean().nullable();
 const none = z.tuple([]);
 
+/** The number GeoNames gives a place. */
+const geonameId = z.number().int().positive().max(4_000_000_000);
+
 const draft = z.strictObject({
   given: text(200).exactOptional(),
   surname: text(200).exactOptional(),
@@ -184,8 +207,10 @@ const draft = z.strictObject({
   living: living.exactOptional(),
   birthDate: text(200).exactOptional(),
   birthPlace: text(500).exactOptional(),
+  birthPlaceGeonameId: geonameId.exactOptional(),
   deathDate: text(200).exactOptional(),
   deathPlace: text(500).exactOptional(),
+  deathPlaceGeonameId: geonameId.exactOptional(),
 });
 
 const personRef = z.union([z.strictObject({ existingId: id }), z.strictObject({ create: draft })]);
@@ -205,6 +230,14 @@ const eventInput = z.strictObject({
   place: text(500).exactOptional(),
   description: text(5000).exactOptional(),
   note: text(NOTE_MAX).exactOptional(),
+  placeGeonameId: geonameId.exactOptional(),
+});
+
+const placeListRequest = z.strictObject({
+  query: text(PLACE_TEXT_MAX),
+  filter: z.enum(['all', 'linked', 'unlinked']),
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1).max(50),
 });
 
 const sourceInput = z.strictObject({
@@ -297,7 +330,61 @@ const childOptions = z.strictObject({
   pedigree: pedigree.exactOptional(),
 });
 
-export function createHandlers(session: TreeSession, platform: Platform): ApiHandlers {
+function entryOf(place: GazetteerPlace): GazetteerEntry {
+  return {
+    geonameId: place.geonameId,
+    text: formatGazetteerPlace(place),
+    kind: place.featureClass === 'A' ? 'region' : 'place',
+    lat: place.lat,
+    lon: place.lon,
+  };
+}
+
+function placeInfo(place: TreePlace): TreePlaceInfo {
+  return { text: place.text, events: place.events, link: place.link };
+}
+
+export function createHandlers(
+  session: TreeSession,
+  platform: Platform,
+  gazetteer: GazetteerService,
+): ApiHandlers {
+  /**
+   * The link for a gazetteer entry the page names by its number. The page
+   * sends the number only; the name and the coordinates are read here. An
+   * entry that is not there (the gazetteer was removed meanwhile) gives no
+   * link, and the place is saved as typed.
+   */
+  const placeLinkOf = (id: number | undefined): PlaceLink | undefined => {
+    const place = id === undefined ? null : gazetteer.get(id);
+    return place === null
+      ? undefined
+      : {
+          geonamesId: place.geonameId,
+          name: formatGazetteerPlace(place),
+          lat: place.lat,
+          lon: place.lon,
+        };
+  };
+  const eventOf = ({ placeGeonameId, ...event }: EventInput): TreeEventInput => {
+    const placeLink = placeLinkOf(placeGeonameId);
+    return placeLink ? { ...event, placeLink } : event;
+  };
+  const draftOf = ({
+    birthPlaceGeonameId,
+    deathPlaceGeonameId,
+    ...fields
+  }: PersonDraft): TreePersonDraft => {
+    const birthPlaceLink = placeLinkOf(birthPlaceGeonameId);
+    const deathPlaceLink = placeLinkOf(deathPlaceGeonameId);
+    return {
+      ...fields,
+      ...(birthPlaceLink ? { birthPlaceLink } : {}),
+      ...(deathPlaceLink ? { deathPlaceLink } : {}),
+    };
+  };
+  const refOf = (ref: PersonRef): TreePersonRef =>
+    'create' in ref ? { create: draftOf(ref.create) } : ref;
   /** Runs an edit and returns the tree's new state. */
   const edit = (run: (tree: Tree) => unknown): TreeState => {
     session.change(run);
@@ -632,8 +719,52 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
       };
     }),
 
+    listPlaces: define<'listPlaces'>(z.tuple([placeListRequest]), (request) => {
+      const tree = session.tree;
+      const filter = {
+        query: request.query,
+        ...(request.filter === 'all' ? {} : { linked: request.filter === 'linked' }),
+      };
+      const places = listPlaces(tree, { ...filter, offset: request.offset, limit: request.limit });
+      return {
+        total: countPlaces(tree, filter),
+        all: countPlaces(tree),
+        linked: countPlaces(tree, { linked: true }),
+        places: places.map(placeInfo),
+      };
+    }),
+
+    offerPlace: define<'offerPlace'>(z.tuple([text(PLACE_TEXT_MAX)]), (place) => {
+      const best = gazetteer.offer(place);
+      return best ? entryOf(best) : null;
+    }),
+
+    suggestPlaces: define<'suggestPlaces'>(z.tuple([text(PLACE_TEXT_MAX)]), (typed) => ({
+      own: suggestTreePlaces(session.tree, typed, 6).map(placeInfo),
+      gazetteer: gazetteer.search(typed, 8).map(entryOf),
+      installed: gazetteer.installed !== null,
+    })),
+
+    getGazetteerStatus: define<'getGazetteerStatus'>(none, () => gazetteer.status()),
+
+    downloadGazetteer: define<'downloadGazetteer'>(none, () => {
+      gazetteer.start();
+      return gazetteer.status();
+    }),
+
+    cancelGazetteerDownload: define<'cancelGazetteerDownload'>(none, async () => {
+      gazetteer.cancel();
+      await gazetteer.idle();
+      return gazetteer.status();
+    }),
+
+    removeGazetteer: define<'removeGazetteer'>(none, () => {
+      gazetteer.remove();
+      return gazetteer.status();
+    }),
+
     addPerson: define<'addPerson'>(z.tuple([draft]), (input) =>
-      link((tree) => ({ personId: addPersonFromDraft(tree, input).id })),
+      link((tree) => ({ personId: addPersonFromDraft(tree, draftOf(input)).id })),
     ),
 
     updatePerson: define<'updatePerson'>(
@@ -670,15 +801,28 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     ),
 
     addPersonEvent: define<'addPersonEvent'>(z.tuple([id, eventInput]), (personId, event) =>
-      edit((tree) => addPersonEvent(tree, personId, event)),
+      edit((tree) => addPersonEvent(tree, personId, eventOf(event))),
     ),
 
     addFamilyEvent: define<'addFamilyEvent'>(z.tuple([id, eventInput]), (familyId, event) =>
-      edit((tree) => addFamilyEvent(tree, familyId, event)),
+      edit((tree) => addFamilyEvent(tree, familyId, eventOf(event))),
     ),
 
     updateEvent: define<'updateEvent'>(z.tuple([id, eventInput]), (eventId, event) =>
-      edit((tree) => updateEvent(tree, eventId, event)),
+      edit((tree) => updateEvent(tree, eventId, eventOf(event))),
+    ),
+
+    linkPlace: define<'linkPlace'>(
+      z.tuple([text(PLACE_TEXT_MAX).min(1), geonameId]),
+      (place, id) => {
+        const placeLink = placeLinkOf(id);
+        if (!placeLink) throw new SessionError('this place is not in the gazetteer any more');
+        return edit((tree) => linkPlace(tree, place, placeLink));
+      },
+    ),
+
+    unlinkPlace: define<'unlinkPlace'>(z.tuple([text(PLACE_TEXT_MAX).min(1)]), (place) =>
+      edit((tree) => unlinkPlace(tree, place)),
     ),
 
     deleteEvent: define<'deleteEvent'>(z.tuple([id]), (eventId) =>
@@ -687,17 +831,20 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
 
     addParent: define<'addParent'>(
       z.tuple([id, personRef, childOptions]),
-      (childId, parent, options) => link((tree) => addParent(tree, childId, parent, options)),
+      (childId, parent, options) =>
+        link((tree) => addParent(tree, childId, refOf(parent), options)),
     ),
 
     addPartner: define<'addPartner'>(
       z.tuple([id, personRef, familyOption]),
-      (personId, partner, options) => link((tree) => addPartner(tree, personId, partner, options)),
+      (personId, partner, options) =>
+        link((tree) => addPartner(tree, personId, refOf(partner), options)),
     ),
 
     addChild: define<'addChild'>(
       z.tuple([id, personRef, childOptions]),
-      (parentId, child, options) => link((tree) => addChildOf(tree, parentId, child, options)),
+      (parentId, child, options) =>
+        link((tree) => addChildOf(tree, parentId, refOf(child), options)),
     ),
 
     removeChild: define<'removeChild'>(z.tuple([id, id]), (familyId, childId) =>
@@ -864,6 +1011,7 @@ const RULE_ERRORS = [
   NotATreeError,
   SchemaTooNewError,
   BackupError,
+  GazetteerError,
   GedcomFileError,
   MediaFileError,
   ZipError,

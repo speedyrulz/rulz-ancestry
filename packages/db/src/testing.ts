@@ -49,6 +49,7 @@ const TREE_TABLES = [
   'citation_link',
   'media',
   'media_link',
+  'place',
 ] as const;
 
 /**
@@ -56,8 +57,16 @@ const TREE_TABLES = [
  * states can be compared exactly. The change log itself is left out.
  */
 export function snapshot(tree: Tree): string {
+  // A tree of an older schema version lacks the tables that came later.
+  const present = new Set(
+    (
+      tree.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+        name: string;
+      }[]
+    ).map((row) => row.name),
+  );
   const tables = Object.fromEntries(
-    TREE_TABLES.map((table) => [
+    TREE_TABLES.filter((table) => present.has(table)).map((table) => [
       table,
       tree.db.prepare(`SELECT * FROM ${table} ORDER BY id`).all(),
     ]),
@@ -115,6 +124,236 @@ export function pngBytes(width: number, height: number, seed = 0): Buffer {
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
 }
+
+/** One line of a GeoNames list of places: nineteen columns with tabs between them. */
+export function geonameLine(fields: {
+  id: number;
+  name: string;
+  ascii?: string;
+  alternates?: string[];
+  lat?: number;
+  lon?: number;
+  fclass?: string;
+  fcode?: string;
+  country?: string;
+  admin1?: string;
+  admin2?: string;
+  population?: number;
+}): string {
+  return [
+    fields.id,
+    fields.name,
+    fields.ascii ?? fields.name,
+    (fields.alternates ?? []).join(','),
+    fields.lat ?? 40,
+    fields.lon ?? -90,
+    fields.fclass ?? 'P',
+    fields.fcode ?? 'PPL',
+    fields.country ?? 'US',
+    '',
+    fields.admin1 ?? '',
+    fields.admin2 ?? '',
+    '',
+    '',
+    fields.population ?? 0,
+    '',
+    '',
+    'America/Chicago',
+    '2024-01-01',
+  ].join('\t');
+}
+
+/** A few lines of each list GeoNames publishes, enough to build a gazetteer in a test. */
+export const GEONAMES_SAMPLE = {
+  countryInfo: [
+    '# ISO\tISO3\tISO-Numeric\tfips\tCountry\tCapital',
+    'US\tUSA\t840\tUS\tUnited States\tWashington',
+    'GB\tGBR\t826\tUK\tUnited Kingdom\tLondon',
+    'NL\tNLD\t528\tNL\tThe Netherlands\tAmsterdam',
+    'FR\tFRA\t250\tFR\tFrance\tParis',
+    'IN\tIND\t356\tIN\tIndia\tNew Delhi',
+    '',
+  ].join('\n'),
+  admin1: [
+    'US.IL\tIllinois\tIllinois\t4896861',
+    'US.MO\tMissouri\tMissouri\t4398678',
+    'US.IA\tIowa\tIowa\t4862182',
+    'GB.ENG\tEngland\tEngland\t6269131',
+    'NL.07\tNorth Holland\tNorth Holland\t2749879',
+    'FR.11\t\u00cele-de-France\tIle-de-France\t3012874',
+    'IN.16\tMaharashtra\tMaharashtra\t1264418',
+    '',
+  ].join('\n'),
+  admin2: [
+    'US.IL.167\tSangamon County\tSangamon County\t4250165',
+    'US.MO.077\tGreene County\tGreene County\t4388802',
+    'US.IA.169\tStory County\tStory County\t4877725',
+    'GB.ENG.Q5\tYork\tYork\t3333216',
+    'NL.07.0363\tGemeente Amsterdam\tGemeente Amsterdam\t2759793',
+    '',
+  ].join('\n'),
+  /** The places of the United States, as in GeoNames' `US.zip`. */
+  US: [
+    geonameLine({
+      id: 4250542,
+      name: 'Springfield',
+      fcode: 'PPLA',
+      admin1: 'IL',
+      admin2: '167',
+      lat: 39.80172,
+      lon: -89.64371,
+      population: 114394,
+    }),
+    geonameLine({
+      id: 4409896,
+      name: 'Springfield',
+      fcode: 'PPLA2',
+      admin1: 'MO',
+      admin2: '077',
+      lat: 37.21533,
+      lon: -93.29824,
+      population: 170188,
+    }),
+    geonameLine({
+      id: 4250165,
+      name: 'Sangamon County',
+      fclass: 'A',
+      fcode: 'ADM2',
+      admin1: 'IL',
+      admin2: '167',
+      lat: 39.75817,
+      lon: -89.65889,
+      population: 194672,
+    }),
+    geonameLine({
+      id: 4896861,
+      name: 'Illinois',
+      fclass: 'A',
+      fcode: 'ADM1',
+      admin1: 'IL',
+      lat: 40.00032,
+      lon: -89.25037,
+      population: 12710158,
+      alternates: ['IL', 'State of Illinois'],
+    }),
+    geonameLine({
+      id: 4250552,
+      name: 'Township of Springfield',
+      fclass: 'A',
+      fcode: 'ADM3',
+      admin1: 'IL',
+      admin2: '167',
+      lat: 39.81,
+      lon: -89.6,
+    }),
+    geonameLine({
+      id: 4846834,
+      name: 'Ames',
+      admin1: 'IA',
+      admin2: '169',
+      lat: 42.03471,
+      lon: -93.61994,
+      population: 66427,
+    }),
+    geonameLine({
+      id: 4250999,
+      name: 'Spring Creek',
+      fclass: 'H',
+      fcode: 'STM',
+      admin1: 'IL',
+      admin2: '167',
+    }),
+    'this line is not a place',
+    geonameLine({ id: 4251000, name: 'Nowhere', lat: 500, lon: 0 }),
+    '',
+  ].join('\n'),
+  /** The places of the Netherlands, as in `NL.zip`. */
+  NL: [
+    geonameLine({
+      id: 2759794,
+      name: 'Amsterdam',
+      fcode: 'PPLC',
+      country: 'NL',
+      admin1: '07',
+      admin2: '0363',
+      lat: 52.37403,
+      lon: 4.88969,
+      population: 741636,
+      alternates: [
+        'Amsterdam',
+        'Amsterd\u00e3o',
+        'Mokum',
+        '\u0410\u043c\u0441\u0442\u0435\u0440\u0434\u0430\u043c',
+      ],
+    }),
+    geonameLine({
+      id: 2759793,
+      name: 'Gemeente Amsterdam',
+      fclass: 'A',
+      fcode: 'ADM2',
+      country: 'NL',
+      admin1: '07',
+      admin2: '0363',
+      lat: 52.37,
+      lon: 4.89,
+      population: 854047,
+    }),
+    '',
+  ].join('\n'),
+  /** Towns of the whole world, as in `cities500.zip`. Two of them are in the lists above too. */
+  cities500: [
+    geonameLine({
+      id: 4250542,
+      name: 'Springfield (from the world list)',
+      fcode: 'PPLA',
+      admin1: 'IL',
+      admin2: '167',
+      population: 1,
+    }),
+    geonameLine({
+      id: 2759794,
+      name: 'Amsterdam',
+      fcode: 'PPLC',
+      country: 'NL',
+      admin1: '07',
+      admin2: '0363',
+      population: 741636,
+    }),
+    geonameLine({
+      id: 2633352,
+      name: 'York',
+      fcode: 'PPLA2',
+      country: 'GB',
+      admin1: 'ENG',
+      admin2: 'Q5',
+      lat: 53.95763,
+      lon: -1.08271,
+      population: 156135,
+    }),
+    geonameLine({
+      id: 2988507,
+      name: 'Paris',
+      fcode: 'PPLC',
+      country: 'FR',
+      admin1: '11',
+      lat: 48.85341,
+      lon: 2.3488,
+      population: 2138551,
+    }),
+    geonameLine({
+      id: 1275339,
+      name: 'Mumbai',
+      fcode: 'PPLA',
+      country: 'IN',
+      admin1: '16',
+      lat: 19.07283,
+      lon: 72.88261,
+      population: 12691836,
+      alternates: ['Bombay', 'Mumbai'],
+    }),
+    '',
+  ].join('\n'),
+} as const;
 
 /** Number of steps that can currently be undone. */
 export function undoDepth(tree: Tree): number {

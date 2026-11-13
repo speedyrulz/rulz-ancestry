@@ -27,6 +27,7 @@ import {
   toDraft,
   type PersonFieldsValue,
 } from '../format';
+import { PlaceField } from './places';
 import { DateField, Dialog, FormDialog, SelectField, TextAreaField, TextField } from './ui';
 
 const SEX_OPTIONS = SEXES.map((sex) => [sex, SEX_LABELS[sex]] as const);
@@ -41,6 +42,16 @@ interface PersonFieldsProps {
 export function PersonFields({ value, onChange }: PersonFieldsProps) {
   const set = <K extends keyof PersonFieldsValue>(key: K, next: PersonFieldsValue[K]) =>
     onChange({ ...value, [key]: next });
+  /** A place, with the entry of the place list it was picked from; typing forgets the entry. */
+  const setPlace = (
+    key: 'birthPlace' | 'deathPlace',
+    idKey: 'birthPlaceGeonameId' | 'deathPlaceGeonameId',
+    text: string,
+    geonameId: number | undefined,
+  ) => {
+    const { [idKey]: _forgotten, ...rest } = value;
+    onChange({ ...rest, [key]: text, ...(geonameId === undefined ? {} : { [idKey]: geonameId }) });
+  };
   return (
     <div className="field-grid">
       <TextField
@@ -70,12 +81,13 @@ export function PersonFields({ value, onChange }: PersonFieldsProps) {
         onChange={(next) => set('birthDate', next)}
         testId="person-birth-date"
       />
-      <TextField
+      <PlaceField
         label="Birth place"
         value={value.birthPlace}
-        onChange={(next) => set('birthPlace', next)}
+        onChange={(next, geonameId) =>
+          setPlace('birthPlace', 'birthPlaceGeonameId', next, geonameId)
+        }
         testId="person-birth-place"
-        maxLength={500}
       />
       <DateField
         label="Death date"
@@ -83,12 +95,13 @@ export function PersonFields({ value, onChange }: PersonFieldsProps) {
         onChange={(next) => set('deathDate', next)}
         testId="person-death-date"
       />
-      <TextField
+      <PlaceField
         label="Death place"
         value={value.deathPlace}
-        onChange={(next) => set('deathPlace', next)}
+        onChange={(next, geonameId) =>
+          setPlace('deathPlace', 'deathPlaceGeonameId', next, geonameId)
+        }
         testId="person-death-place"
-        maxLength={500}
       />
     </div>
   );
@@ -348,6 +361,8 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
   const [custom, setCustom] = useState(startsCustom ? event.type : '');
   const [date, setDate] = useState(event?.dateText ?? '');
   const [place, setPlace] = useState(event?.placeText ?? '');
+  /** The entry of the place list the place was picked from; typing forgets it. */
+  const [placeGeonameId, setPlaceGeonameId] = useState<number | undefined>(undefined);
   const [description, setDescription] = useState(event?.description ?? '');
   const [note, setNote] = useState(event?.note ?? '');
   const descriptionId = useId();
@@ -361,7 +376,14 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
   const submit = () => {
     const type = choice === OTHER_TYPE ? custom.trim() : choice;
     if (type === '') return Promise.reject(new Error('Say what kind of event this is'));
-    return onSubmit({ type, date, place, description, note });
+    return onSubmit({
+      type,
+      date,
+      place,
+      description,
+      note,
+      ...(placeGeonameId === undefined || place.trim() === '' ? {} : { placeGeonameId }),
+    });
   };
 
   return (
@@ -393,12 +415,14 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
           <div />
         )}
         <DateField label="Date" value={date} onChange={setDate} testId="event-date" />
-        <TextField
+        <PlaceField
           label="Place"
           value={place}
-          onChange={setPlace}
+          onChange={(next, geonameId) => {
+            setPlace(next);
+            setPlaceGeonameId(geonameId);
+          }}
           testId="event-place"
-          maxLength={500}
         />
       </div>
       <div className="field">

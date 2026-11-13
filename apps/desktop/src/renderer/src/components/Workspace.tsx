@@ -9,6 +9,7 @@ import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
 import { MediaLibraryDialog } from './media';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
+import { PlacesDialog } from './places';
 import { SourcesDialog } from './sources';
 
 interface Notice {
@@ -49,6 +50,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     | 'import-report'
     | 'media'
     | 'sources'
+    | 'places'
     | null
   >(null);
   /** What the right-hand side shows for the person selected: their details, or a chart. */
@@ -214,6 +216,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            title="The places in this tree, and the list of the world's places"
+            onClick={() => setDialog('places')}
+            data-testid="open-places"
+          >
+            Places
+          </button>
+          <button
+            type="button"
             title="The pictures and documents in this tree"
             onClick={() => setDialog('media')}
             data-testid="open-media"
@@ -367,6 +377,9 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           }}
           onClose={() => setDialog(null)}
         />
+      )}
+      {dialog === 'places' && (
+        <PlacesDialog tree={tree} onTree={onTree} onClose={() => setDialog(null)} />
       )}
       {dialog === 'media' && (
         <MediaLibraryDialog

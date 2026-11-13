@@ -15,8 +15,10 @@ and documents to people, events, families, citations and sources, and look at
 a picture at full size. The pictures and documents a GEDCOM file names are read
 and written, and a GEDZip file takes the files themselves along. A person, an
 event and a source can each carry a note. One real export from Ancestry has
-been tried and comes back out line for line. Places (the second half of part
-2d) are next; there is no record search yet. See
+been tried and comes back out line for line. The app offers places while you
+type, and can link each place of a tree to where it lies on the map, from a
+list of the world's places that it downloads when you ask. A map and a
+timeline (part 2e) are next; there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -113,6 +115,30 @@ Pictures and documents in GEDCOM files:
 - Archives over 4 GB are not read or written. Nothing is downloaded from a web
   address. No GEDZip file from another program has been tried.
 
+Places:
+
+- **The place of an event is the text you type,** and the app never changes it.
+- **Places are offered while you type:** first the places your tree already
+  has, then places from all over the world once the place list is downloaded.
+- **The place list is downloaded when you ask,** with "Download the place
+  list" under "Places" on the tree screen: about 100 MB, from
+  [GeoNames](https://www.geonames.org/), licensed
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It becomes a file
+  of about 76 MB in the app's own folder, holding 550,000 places: every town,
+  village, township and county of the United States, the Netherlands, the
+  United Kingdom, Ireland, Australia and New Zealand, and the towns of 500
+  people and more elsewhere. It can be removed again.
+- **This download is the only thing the app asks of the internet.** It sends
+  nothing about you or your tree.
+- **Linking a place** says where it lies. "Places" lists every place of the
+  tree, offers the entry of the place list that fits each best, and links it
+  with one press; every event at that place then shares the link. A place
+  picked from the list while typing is linked at once.
+- **A tree keeps the coordinates of its linked places,** so it does not need
+  the place list on another PC.
+- Links are not written to a GEDCOM file. There is no map yet, and places are
+  linked one at a time.
+
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
 default, and while it is on, details of the people being researched are sent to
@@ -208,6 +234,15 @@ docs/                 Plan and access checklist
   `packages/db/src/zip.ts` hands out bytes, and the media folder files them
   under their hash. An entry larger than the limit is not unpacked, whatever
   size the archive states.
+- **The text of a place is the user's.** Linking a place to the place list
+  stores the entry's name and coordinates beside the text
+  (`packages/db/src/places.ts`); it never rewrites the text, and it changes no
+  line of an imported GEDCOM file.
+- **The app asks nothing of the internet unless the user says so.** The one
+  request it makes is the download of the place list, from fixed addresses on
+  one host (`apps/desktop/src/main/gazetteer.ts`). What arrives is not
+  trusted: each file has a size limit, archives are checked, the new list is
+  built beside the old one and swapped in only when complete.
 - **Schema changes are migrations.** A change to the tree database is a new
   numbered file in `packages/db/src/schema`; a migration that has shipped is
   never edited. A tree is copied to its backups folder before a migration

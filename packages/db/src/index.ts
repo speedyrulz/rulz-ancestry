@@ -232,6 +232,27 @@ export { CitationLoader, extractSources, type CitationOwner } from './gedcom/cit
 export { MediaLoader, extractMedia, type MediaOwner } from './gedcom/medialoader';
 export { ZipError, ZipReader, writeZip, type ZipEntry, type ZipInput } from './zip';
 export {
+  countPlaces,
+  getPlaceLink,
+  linkPlace,
+  listPlaces,
+  suggestTreePlaces,
+  unlinkPlace,
+  type PlaceLink,
+  type PlaceListOptions,
+  type TreePlace,
+} from './places';
+export {
+  GAZETTEER_FILE_NAME,
+  Gazetteer,
+  GazetteerBuilder,
+  GazetteerError,
+  type GazetteerFound,
+  type GazetteerInfo,
+  type GazetteerMinimums,
+  type GazetteerSearchOptions,
+} from './gazetteer';
+export {
   exportGedcom,
   exportGedcomFile,
   type ExportedFile,

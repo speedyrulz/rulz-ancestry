@@ -1463,6 +1463,71 @@ ul.media-grid,
   background: var(--bg);
 }
 
+/* Places */
+
+/* The places offered while one is typed, laid over the window at the field. */
+.place-offers {
+  position: fixed;
+  z-index: 5;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 20%);
+}
+
+.place-offers ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.place-offers li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.place-offers li .muted {
+  font-size: 12px;
+}
+
+.place-offers li.active {
+  background: var(--accent-soft);
+}
+
+.place-offers .hint {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.place-offers ul:empty + .hint {
+  border-top: none;
+}
+
+.gazetteer-panel {
+  margin-bottom: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.gazetteer-panel a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.gazetteer-panel .dialog-text {
+  margin-bottom: 0;
+}
+
+.places-box {
+  min-height: 120px;
+}
+
 /* A note, with its lines as typed. */
 .note-text {
   margin: 0 0 8px;

@@ -2,6 +2,7 @@ import { cleanNote, newId, parseDate, type DateCalendar, type DateQualifier } fr
 import { sql } from './connection';
 import { requireFamily } from './families';
 import { requirePerson } from './persons';
+import { setPlaceLink, type PlaceLink } from './places';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
 
 export interface TreeEvent {
@@ -31,6 +32,11 @@ export interface EventInput {
   place?: string;
   description?: string;
   note?: string;
+  /**
+   * The gazetteer entry the place was picked from. It is linked to the place
+   * text in the same step; every event with that text then shares it.
+   */
+  placeLink?: PlaceLink;
 }
 
 interface EventRow {
@@ -103,6 +109,7 @@ function insertEvent(
   const type = cleanType(input.type);
   const id = newId();
   const now = Date.now();
+  const place = (input.place ?? '').trim();
   sql(
     tree.db,
     `INSERT INTO event (id, type, date_text, date_qualifier, date_calendar, date_min_jdn,
@@ -112,7 +119,7 @@ function insertEvent(
     id,
     type,
     ...dateColumns(input.date ?? ''),
-    (input.place ?? '').trim(),
+    place,
     (input.description ?? '').trim(),
     cleanNote(input.note ?? ''),
     now,
@@ -136,6 +143,7 @@ function insertEvent(
     `INSERT INTO event_participant (id, event_id, person_id, family_id, role, sort_order)
      VALUES (?, ?, ?, ?, 'principal', ?)`,
   ).run(newId(), id, personId, familyId, (last ?? -1) + 1);
+  if (input.placeLink && place !== '') setPlaceLink(tree, place, input.placeLink);
   return requireEvent(tree, id);
 }
 
@@ -165,6 +173,7 @@ export function updateEvent(tree: Tree, id: string, patch: Partial<EventInput>):
     const description =
       patch.description === undefined ? current.description : patch.description.trim();
     const note = patch.note === undefined ? current.note : cleanNote(patch.note);
+    if (patch.placeLink && place !== '') setPlaceLink(tree, place, patch.placeLink);
     const unchanged =
       type === current.type &&
       date[0] === current.dateText &&

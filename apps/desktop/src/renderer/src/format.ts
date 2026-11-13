@@ -100,8 +100,11 @@ export interface PersonFieldsValue {
   sex: Sex;
   birthDate: string;
   birthPlace: string;
+  /** The entry of the place list the birth place was picked from, if it was. */
+  birthPlaceGeonameId?: number;
   deathDate: string;
   deathPlace: string;
+  deathPlaceGeonameId?: number;
 }
 
 export const EMPTY_PERSON: PersonFieldsValue = {
@@ -128,6 +131,12 @@ export function toDraft(value: PersonFieldsValue): PersonDraft {
   for (const field of fields) {
     const text = value[field].trim();
     if (text !== '') draft[field] = text;
+  }
+  if (draft.birthPlace !== undefined && value.birthPlaceGeonameId !== undefined) {
+    draft.birthPlaceGeonameId = value.birthPlaceGeonameId;
+  }
+  if (draft.deathPlace !== undefined && value.deathPlaceGeonameId !== undefined) {
+    draft.deathPlaceGeonameId = value.deathPlaceGeonameId;
   }
   return draft;
 }

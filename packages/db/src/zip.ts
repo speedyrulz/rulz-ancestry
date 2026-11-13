@@ -1,5 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync, writeSync } from 'node:fs';
-import { crc32, deflateRawSync, inflateRawSync } from 'node:zlib';
+import { Readable, pipeline } from 'node:stream';
+import { crc32, createInflateRaw, deflateRawSync, inflateRawSync } from 'node:zlib';
 
 /**
  * Reading and writing zip archives, as far as a GEDZip file needs: a GEDCOM
@@ -253,6 +254,59 @@ export class ZipReader {
       }
       return read;
     };
+  }
+
+  /**
+   * The bytes of an entry piece by piece, unpacked as they are asked for, so
+   * a file of hundreds of megabytes is never in memory as a whole. Fails
+   * when the entry turns out larger than `maxBytes` or than the archive
+   * says, and at the end when its checksum is wrong. The archive must stay
+   * open until the last piece has been taken.
+   */
+  async *stream(entry: ZipEntry, maxBytes: number): AsyncGenerator<Buffer, void, void> {
+    this.#check(entry, maxBytes);
+    if (entry.compressedSize === 0) {
+      if (entry.size !== 0) throw new ZipError(`${entry.name} is damaged in this zip file`);
+      return;
+    }
+    const start = this.#dataStart(entry);
+    const fd = this.#fd;
+    // Read here, not by a file stream: a file stream closes the archive
+    // when it is done, and the archive has more entries to give.
+    function* pieces(): Generator<Buffer> {
+      for (let at = 0; at < entry.compressedSize; at += CHUNK) {
+        yield readAt(fd, start + at, Math.min(CHUNK, entry.compressedSize - at));
+      }
+    }
+    const packed = Readable.from(pieces(), { objectMode: false });
+    let unpacked: Readable = packed;
+    if (entry.method === 8) {
+      const inflate = createInflateRaw();
+      // An error in reading ends the unpacking with that error.
+      pipeline(packed, inflate, () => undefined);
+      unpacked = inflate;
+    }
+    let given = 0;
+    let check = 0;
+    try {
+      for await (const piece of unpacked as AsyncIterable<Buffer>) {
+        given += piece.length;
+        if (given > entry.size || given > maxBytes) {
+          throw new ZipError(`${entry.name} is larger than the archive says`);
+        }
+        check = crc32(piece, check);
+        yield piece;
+      }
+    } catch (error) {
+      if (error instanceof ZipError) throw error;
+      throw new ZipError(`${entry.name} is damaged in this zip file`);
+    } finally {
+      packed.destroy();
+      unpacked.destroy();
+    }
+    if (given !== entry.size || check !== entry.crc) {
+      throw new ZipError(`${entry.name} is damaged in this zip file`);
+    }
   }
 
   close(): void {

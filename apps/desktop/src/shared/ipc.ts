@@ -464,8 +464,11 @@ export interface PersonDraft {
   living?: boolean | null;
   birthDate?: string;
   birthPlace?: string;
+  /** The gazetteer entry the birth place was picked from; see {@link EventInput}. */
+  birthPlaceGeonameId?: number;
   deathDate?: string;
   deathPlace?: string;
+  deathPlaceGeonameId?: number;
 }
 
 /** Someone already in the tree, or the details of someone to add. */
@@ -486,6 +489,98 @@ export interface EventInput {
   place?: string;
   description?: string;
   note?: string;
+  /**
+   * The gazetteer entry the place was picked from, by its GeoNames number.
+   * The place is linked to it in the same step. Left out when the place was
+   * typed, or changed after it was picked.
+   */
+  placeGeonameId?: number;
+}
+
+/** Where a place lies: the gazetteer entry its text is linked to. */
+export interface PlaceLinkInfo {
+  /** The number GeoNames gives the place; null when the coordinates come from elsewhere. */
+  geonamesId: number | null;
+  /** The gazetteer's own name for the place, written out in full. */
+  name: string;
+  lat: number;
+  lon: number;
+}
+
+/** One place of the open tree: a text that events give as their place. */
+export interface TreePlaceInfo {
+  /** The place as typed. */
+  text: string;
+  /** How many events give this place. */
+  events: number;
+  link: PlaceLinkInfo | null;
+}
+
+/** One entry of the gazetteer, as it is offered. */
+export interface GazetteerEntry {
+  geonameId: number;
+  /** The entry written out as a place: "Springfield, Sangamon County, Illinois, USA". */
+  text: string;
+  /** A town or village, or a region such as a county, a state or a country. */
+  kind: 'place' | 'region';
+  lat: number;
+  lon: number;
+}
+
+/** What is offered while a place is being typed. */
+export interface PlaceSuggestions {
+  /** Places the tree already has that fit, best first. */
+  own: TreePlaceInfo[];
+  /** Entries of the gazetteer that fit, best first. Empty when it is not downloaded. */
+  gazetteer: GazetteerEntry[];
+  /** Whether the gazetteer has been downloaded. */
+  installed: boolean;
+}
+
+export interface PlaceListRequest {
+  /** Only places whose text holds this; empty for all. */
+  query: string;
+  filter: 'all' | 'linked' | 'unlinked';
+  offset: number;
+  /** At most 50. */
+  limit: number;
+}
+
+export interface PlaceListPage {
+  /** How many places fit the request. */
+  total: number;
+  /** How many places the tree has, and how many of them are linked. */
+  all: number;
+  linked: number;
+  places: TreePlaceInfo[];
+}
+
+/** The gazetteer on this computer, and the download that fetches it. */
+export interface GazetteerStatus {
+  /** The gazetteer that is in use, or null when none has been downloaded. */
+  installed: {
+    places: number;
+    /** When it was downloaded, in Unix milliseconds. */
+    builtAt: number;
+    /** The countries that are in it down to their villages, by their two letters. */
+    countries: string[];
+  } | null;
+  /** The download under way, or null. */
+  job: {
+    phase: 'downloading' | 'building';
+    /** Which of the files is being worked on, counted from 1, and how many there are. */
+    step: number;
+    steps: number;
+    file: string;
+    /** Bytes downloaded so far. */
+    bytes: number;
+    /** Places taken into the gazetteer so far. */
+    places: number;
+  } | null;
+  /** Why the last download did not finish. Null when it did, or when none was tried. */
+  error: string | null;
+  /** About how much a download fetches, in bytes. */
+  downloadBytes: number;
 }
 
 /** The result of an edit that added or linked a person. */
@@ -692,6 +787,24 @@ export interface RulzApi {
   listAllMedia(request: MediaListRequest): Promise<MediaListPage>;
   /** A file with everything it is attached to. Null when the file is gone. */
   getMedia(mediaId: string): Promise<MediaDetails | null>;
+  /** The places of the open tree, in the order of the alphabet. */
+  listPlaces(request: PlaceListRequest): Promise<PlaceListPage>;
+  /** What to offer for a place that is being typed: places of the tree, and gazetteer entries. */
+  suggestPlaces(typed: string): Promise<PlaceSuggestions>;
+  /**
+   * The gazetteer entry to offer for a place of the tree, for linking it with
+   * one press, or null. Asked for one place at a time, so that a long list of
+   * places never keeps the app from answering.
+   */
+  offerPlace(text: string): Promise<GazetteerEntry | null>;
+
+  // The gazetteer: GeoNames' list of the world's places, kept on this computer.
+  getGazetteerStatus(): Promise<GazetteerStatus>;
+  /** Starts the download; it goes on after this returns. Ask the status to follow it. */
+  downloadGazetteer(): Promise<GazetteerStatus>;
+  cancelGazetteerDownload(): Promise<GazetteerStatus>;
+  /** Removes the gazetteer from this computer. Trees keep the places they linked. */
+  removeGazetteer(): Promise<GazetteerStatus>;
 
   // Changing the open tree. Each call is one undo step.
   addPerson(draft: PersonDraft): Promise<PersonChange>;
@@ -708,6 +821,9 @@ export interface RulzApi {
   addFamilyEvent(familyId: string, event: EventInput): Promise<TreeState>;
   updateEvent(eventId: string, event: EventInput): Promise<TreeState>;
   deleteEvent(eventId: string): Promise<TreeState>;
+  /** Links a place text to a gazetteer entry; every event with that place shares the link. */
+  linkPlace(text: string, geonameId: number): Promise<TreeState>;
+  unlinkPlace(text: string): Promise<TreeState>;
   addParent(
     childId: string,
     parent: PersonRef,
@@ -818,6 +934,13 @@ export const API_METHODS = [
   'listMedia',
   'listAllMedia',
   'getMedia',
+  'listPlaces',
+  'suggestPlaces',
+  'offerPlace',
+  'getGazetteerStatus',
+  'downloadGazetteer',
+  'cancelGazetteerDownload',
+  'removeGazetteer',
   'addPerson',
   'updatePerson',
   'deletePerson',
@@ -829,6 +952,8 @@ export const API_METHODS = [
   'addFamilyEvent',
   'updateEvent',
   'deleteEvent',
+  'linkPlace',
+  'unlinkPlace',
   'addParent',
   'addPartner',
   'addChild',

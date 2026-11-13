@@ -363,10 +363,28 @@ source gains: note
 gedcom_record.parts  -- a person's NOTE line carries the mark 'note'
 ```
 
+Added in schema version 8 (`packages/db/src/schema/008-places.ts`):
+
+```sql
+place(id, text UNIQUE, geonames_id, name, lat, lon, created_at, updated_at)
+  -- text: a place as typed in events, compared without regard to case
+  -- name, lat, lon: a copy of the gazetteer entry the text is linked to
+index on event(place_text)                                   -- for the list of a tree's places
+```
+
+The gazetteer is not part of a tree. It is one SQLite file of its own in the
+profile folder (`gazetteer\geonames.db`, built by `packages/db/src/gazetteer.ts`):
+
+```sql
+place(geonameid, name, lat, lon, fclass, fcode, country, admin1, admin2, population)
+place_name(folded, geonameid, alternate, population, country) -- every name, folded, in order
+country(code, name)   admin1(code, name)   admin2(code, name)
+meta(key, value)                                              -- places, built_at, countries
+```
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
-place(id, name, parent_id, geonames_id, lat, lon)            -- Phase 2; event gains place_id
 source gains: repository_id, connector_id, url
 citation gains: url, accessed_at, external_record_id
 media_link gains: a region of the picture
@@ -403,7 +421,7 @@ Rules:
 
 - **IDs** are UUIDv7 (`newId()` in `packages/core`) so trees can be merged. The cross-reference ids of an imported GEDCOM file (`@I1@`) are kept in `gedcom_record.xref` and used again on export; a person added later gets the first free `I` number, a family the first free `F` number.
 - **Dates** keep the text as typed, plus a normalized day-number range, a qualifier (about, before, between) and a calendar. `parseDate()` in `packages/core` reads GEDCOM 5.5.1 and 7.0 dates and common English forms. Text it cannot read is kept as a phrase with no range.
-- **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten.
+- **Places** keep the text as typed and only link to a standardized GeoNames entry. The user's text is never overwritten. The link belongs to the text, not to one event: every event with the same place shares it, and an event whose place is retyped follows its new text.
 - **What the app has no fields for is kept as written.** Every line of an imported GEDCOM file is stored: a line that became a name, an event, a family link, a source, a citation or a file together with the id of what it became, and every other line (notes, repositories, other programs' own tags) exactly as it was. The export puts each line back in its place. A name, event, source, citation or file that was not edited since the import is written from its original lines; one that was edited gets only the edited lines rewritten.
 - **A citation is one place in a source, and can support several facts.** It is linked to a person or a family as a whole, to an event, or to a name. Editing it changes it for every fact it supports. In a GEDCOM file it is written out under each of them.
 - **A citation exists only while it supports something.** When its last link goes, the citation goes too, whether the user removed the link or deleted the event, name, person or family. GEDCOM has no place to write a citation that supports nothing, so such a citation would be lost in an export without anyone being told. The source stays, and Undo brings the citation back.
@@ -701,13 +719,13 @@ Not done, and why:
 
 ### Phase 2 breakdown
 
-| Part | Scope                                                                                                                                      | Status                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
-| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12**                    |
-| 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12**                    |
-| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12**                    |
-| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Notes **done 2026-11-13**; places next |
-| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned                                |
+| Part | Scope                                                                                                                                      | Status              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
+| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12** |
+| 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12** |
+| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12** |
+| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | **Done 2026-11-13** |
+| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned             |
 
 The phase's test ("a scanned record can be attached, cited and viewed at full
 zoom") is met by parts 2a and 2b for a scan added in the app. Part 2b was first
@@ -717,10 +735,82 @@ records needs the same three things together as sources did (an import, a
 migration for trees imported earlier, and a test that the two agree). With
 part 2c a scan that comes with an imported tree is attached, cited and viewed
 in the same way. Two
-things decide how 2d and 2e are built and need the owner. The first was
-decided on 2026-11-13: the GeoNames gazetteer is downloaded by the user on
-first use, not shipped with the app. The second is open: where map tiles come
-from, since free tile servers limit how an app may use them.
+things decided how 2d and 2e are built and needed the owner. The first was
+decided on 2026-11-13 and built the same day: the GeoNames gazetteer is
+downloaded by the user on first use, not shipped with the app. The second is
+open and holds up part 2e: where map tiles come from, since free tile servers
+limit how an app may use them.
+
+### Phase 2d outcome: places (2026-11-13)
+
+The second half of part 2d. With it the part is done.
+
+Delivered:
+
+- **A list of the world's places, downloaded when the user asks.** "Places" on the tree screen says what the list is, how large the download is and where it comes from, and has the button. The app fetches ten files from GeoNames, about 100 MB: three lists of the names of countries and their divisions; every town, village, township and county of the six countries of the region priority; and the towns of 500 people and more of the rest of the world. From them it builds one file of 76 MB that holds 550,187 places. On the development PC the download took 7 seconds and the build 14. The list can be downloaded again and removed.
+- **Places offered while typing,** in the place field of the event form and of the forms that add a person. The places the tree already has come first, with how many events give each; then places from the list. The arrow keys move through them, Enter takes one, Escape puts them away. The tree's own places are offered before anything is downloaded.
+- **Finding a place in the list.** The name is looked up by its start, without regard to case, accents and punctuation. Text after a comma narrows it to a county, a state or a country: "Springfield, Ill", "York, England", "Kinsale, Co. Cork". A place is also found by its other names ("Bombay", "Den Haag") and without the words that say what it is ("Sangamon" for Sangamon County, "Monroe" for Township of Monroe). When a whole text finds nothing, the text after its first comma is tried, up to three times, because many places in family trees start with a ward, a church or a street, or with nothing.
+- **Linking a place.** A place picked from the list while typing is linked in the same undo step as the event. The "Places" window lists every place of the tree with the number of events at it and, for a place without a link, the entry that fits best ("Perhaps: …") with a button that links it. A county or a state that was found only by leaving out the start of the text is not offered this way. Another entry can be looked for by hand, and a link can be taken away. The list can be searched and narrowed to the places without a link.
+- **A linked place knows where it lies; its text does not change.** The tree keeps a copy of the entry's name and coordinates, so a tree that is copied to a computer without the list still has them. This is what part 2e draws its map from.
+- **Tried on the owner's real export from Ancestry:** it imports with nothing to report and exports with no line changed, as before. Its events give 260 different places. For 255 of them a search of the list finds an entry; the other five are not places of a kind the list holds, or are not spelt as the list spells them. 243 are offered an entry with a button, and for 12 the entry found is a county or a state that has to be picked by hand. With every one of the 243 linked, the export is still the same, line for line.
+- **Tests.** Unit tests went from 709 to 830 and end-to-end tests from 33 to 34. The end-to-end test drives the built app through a failed download, a download, the offers and the links, with the app's requests answered from sample files; it never reaches GeoNames.
+
+Decided while building:
+
+- **The link is kept by the text of the place, not by a column on the event.** The plan had `event.place_id`. Three views were asked for before building. Two (the primary's and the Opus helper's) preferred the text: one link then covers every event at that place, which matters for a tree with hundreds of imported places; editing an event, merging people and Undo need no code for places; and the migration writes no rows, so an upgraded tree and a fresh import cannot differ. The Codex helper preferred a link on each event, because one text can mean two places ("Springfield"). That case is real but rare, the answer is to write the place more fully, and a link on one event can be added later without undoing this.
+- **No hierarchy of places in the tree** (`parent_id`). The list has the hierarchy in its own codes, and the map needs coordinates only.
+- **Which files.** The world file (`allCountries.zip`, 420 MB) would be four times the download for places few users need; the towns file alone (`cities500.zip`) lacks the hamlets and townships family history is full of. Of each country file only two of GeoNames' classes are kept: where people live (P) and countries and their divisions (A). Streams, hills, schools and cemeteries are left out.
+- **Other names in Latin letters only.** GeoNames lists each place's names in every script. Keeping only those a user here can type halves the file.
+- **A plain index over the folded names, not the full-text index** the tree search uses. A place is looked up by the start of its whole name, which a sorted index answers directly; the full-text index matches single words. On the real list a search for a name took at most 16 ms, and one narrowed by a region, which weighs up to 8,000 names, about 60 ms.
+- **How a place is written.** As family historians write it and as Ancestry does: town, county, state, "USA" for the United States; town, county, and England, Scotland, Wales or Northern Ireland for the United Kingdom, without the kingdom; town and county for Ireland; town, province or state, and country elsewhere. This is only the text put in the field when an entry is picked; the user can change it.
+- **Order of the offers.** The whole name typed comes before a name that only starts with it. After that count the number of people who live there, whether the name is the place's main one, and whether the country is one of the region priority. A town comes before the county or municipality named after it. The weights were set by hand against some forty searches on the real list and are not measured against anything.
+- **The download is made safe by what it refuses.** The addresses are fixed in the code: one host, ten file names. A file larger than its limit is given up, whether the server announces the size or not; so is a download from which nothing arrives for a minute, an answer that points to another address (no redirect is followed), an archive whose checksum is wrong, a list with a line of more than 100,000 characters, and a result of fewer than 100,000 places or with a list of names cut short. The new file is built beside the old one and put in its place only when it is complete; when anything fails the old one stays in use and nothing is left behind. GeoNames publishes no checksums of its files, so that the files are GeoNames' own rests on the HTTPS connection alone.
+- **The list is built in the main process, a piece at a time.** Each piece of the archive is unpacked, read and written, and then other work gets its turn. The slowest answer of the main process during a build was 0.6 seconds, at the very end. A worker thread was not needed.
+- **GeoNames' licence was confirmed** from its own readme on 2026-11-13: Creative Commons Attribution 4.0. The credit, with links to GeoNames and to the licence, stands in the "Places" window, and each offered place says "From GeoNames".
+- **GEDCOM is left alone.** A link is not written to a GEDCOM file and not read from one. Coordinates a file gives under a place (`MAP`, `LATI`, `LONG`) stay lines kept as written, as before.
+
+Changed from before:
+
+- **The tree schema is at version 8.** An earlier build cannot open a tree once this build has opened it; a copy is put in the backups folder first. The upgrade adds a table and an index and changes no row.
+- **The app now asks something of the internet,** for the first time: the ten files, from one host, when the user presses "Download the place list" or "Download again", and at no other time. It sends nothing about the user or the tree. Every other part of the app works without it.
+- **The zip reader can hand out an entry piece by piece** (`ZipReader.stream`), so that a list of 350 MB is never in memory as a whole.
+
+Found by the reviews, and what was done:
+
+Two helpers reviewed the change without seeing each other's findings or the primary's opinion of it: a Claude Opus subagent and OpenAI Codex. Each finding was checked against the code, and where it was about speed against a measurement on the real list, before it was acted on. Neither found a way to lose data.
+
+- **A redirect could have sent a request to another host** (Codex). The download followed redirects and checked afterwards where the file had come from, so the request to the other address had already been made. The request now refuses redirects outright. Checked in the built app: a redirect fails, and GeoNames' own files, which do not redirect, arrive.
+- **Stopping the app in the moment a new list took the place of the old one lost the old one** (Codex). The old file had been renamed and nothing put it back. The next start now puts it back.
+- **An archive with one endless line could have filled the memory** (Codex). The text of a list was gathered up until a line ended, up to the size limit of the whole list. A line of more than 100,000 characters now ends the build; GeoNames' longest is about 10,000. The limit for one unpacked list went from 2 GB to 1 GB.
+- **A list of names that arrived cut short could have passed** (Codex). Only the number of places was checked. The lists of countries, of states and of counties now have a least number each (200, 3,000 and 30,000; the real lists hold 252, 3,865 and 47,753), and a build that falls short is thrown away with the old list kept.
+- **Listing the places of a tree could keep the app from answering** (Opus). The list looked up the entry that fits best for each of its fifty places in one go. Measured on the real list, looking up a short name with a region took 90 ms, so a page of such places would have taken over four seconds; the owner's real tree took up to 0.2 seconds a page. The list now comes without the entries, and the window asks for them one place at a time and keeps what it was told. A look-up with a region also went from 90 ms to 60: the name of a county or a state is prepared once, not for every place in it, and a name that both of the search's queries bring is weighed once.
+- **One press could tie a place to the middle of its state** (Opus). "St John's Church, Smallville, Kansas", with no Smallville in the list, was offered Kansas, because the search leaves out the start of a text that finds nothing. A county, a state or a country that was found only that way is no longer offered with a button; looking for the place by hand still finds it. A region written on its own, or after an empty place for the town (", Story, Iowa"), is offered as before. In the owner's real tree this takes the button from 12 of 255 places.
+- **A new list that could not be opened stayed in the place of the list** (Opus), when there had been none before, and every later start reported it. It is now removed. No test covers exactly this: nothing in a test can make a complete file fail to open at that moment. A swap that fails a step earlier is covered, and keeps the old list in use.
+- **A refused answer kept its connection** (Opus), until the program cleared it away by itself. It is now let go at once. An empty length in an answer's headers was also read as "nothing will arrive" and failed the download; it is now read as no length given.
+- **Enter took an offer while a letter was being composed** (Opus), which matters to anyone who types with an input method. Keys that belong to composing are now left alone. Not covered by a test: the tests cannot compose a letter.
+- **Finishing the build blocks the main process** (Codex, Opus). True, and measured on the real list: 0.6 seconds, once, at the end of a build. Opus expected several seconds from a made-up list; the real one does not bear that out. Left as it is.
+- **Places that differ only in the case of a letter outside A to Z are two places** (Codex, Opus). True; SQLite sets the case alike for those 26 letters only. Left as it is: a test now states it, and it is listed under "Not done".
+- **Closing the app during a build does not wait for the build to stop** (Opus). True. What the build leaves behind is cleared away at the next start, which a test covers. Left as it is.
+
+Not done:
+
+- **The map and the timeline** (part 2e), and the decision on map tiles that the map waits for.
+- **Coordinates in GEDCOM files:** neither written for a linked place nor read from a file that has them. A tree that goes out as GEDCOM and comes back has lost its links.
+- **A link for one event alone,** for a text that means two places.
+- **Linking many places at once.** Each place is linked with one press, one at a time. A real tree of 260 places takes 243 presses, and 12 searches by hand.
+- **A person's page does not show which places are linked.** Only the "Places" window does.
+- **Changing how a place is written in every event at once.**
+- **Other countries in full, and choosing the countries.** The six of the region priority are fixed in the code. Elsewhere only towns of 500 people and more are found.
+- **Old names and old borders.** A place is found by an old name only where GeoNames lists it among its other names, and counties are those of today.
+- **Churches, cemeteries, farms and streets** are not in the list.
+- **Coordinates typed by hand,** for a place the list does not have. The table allows for them; no screen does.
+- **Places are not in the tree search.**
+- **The order of the offers takes no account of the tree:** a tree whose places all lie in one state is still offered a larger town of the same name in another state first.
+- **The download shows the bytes so far, not how far it is,** and a download that was cut short starts again from the beginning. Nothing says when GeoNames has a newer list.
+- **The offers can cover the buttons under a field** at the foot of a form, until one is taken or Escape is pressed.
+- **A place text of more than 500 characters,** which only an imported file can hold, is listed but cannot be linked.
+- **Texts that differ only in the case of letters outside English** ("Ö" and "ö") are two places; SQLite folds the case of the English letters only.
+- **Not tried:** a slow or broken connection other than in tests, a proxy, and a second Windows PC. The real download was done once, through the built app, before the review. The packaged app ran the tests for places, notes and the basics on this PC, with sample files in place of GeoNames.
 
 ### Phase 2d outcome: notes (2026-11-13)
 
@@ -755,7 +845,7 @@ Changed from before:
 
 Not done:
 
-- **Places:** the place table, the download of the GeoNames place list, and suggestions while typing.
+- **Places:** built later the same day; see "Phase 2d outcome: places".
 - **A note whose whole text looks like a pointer** (`@X1@`) is written without the doubling of `@` that would mark it as text, and reads back as a pointer. This was already so for the note of a citation.
 - **A person who was deleted before the upgrade and is brought back by Undo after it** has their note as a kept line, not as the note.
 - **A family has no note field.** A note under a family record stays as a line kept as written, and is shown nowhere, as before.
@@ -908,5 +998,5 @@ Not done, and why:
 2. **Region priority,** which sets connector order. Decided 2026-11-13: the default stands. US, then Netherlands, UK and Ireland, Australia and New Zealand.
 3. **FamilySearch.** Decided 2026-11-11: applied. Awaiting a response; the connector stays optional either way.
 4. **AI assistant routes.** Decided 2026-11-11: build route A first, then route C. Route B is built only after Anthropic confirms in writing that starting the user's own unmodified Claude Code from this app is permitted; it also needs the owner to accept Anthropic's Commercial Terms of Service. See [ACCESS.md](ACCESS.md).
-5. **The GeoNames gazetteer.** Decided 2026-11-13: downloaded by the user on first use, not shipped with the app. Its licence is believed to be CC BY 4.0, which asks for a credit line; confirm it when the download is built.
+5. **The GeoNames gazetteer.** Decided 2026-11-13: downloaded by the user on first use, not shipped with the app. Built the same day. Its licence is CC BY 4.0, confirmed from GeoNames' own readme; the credit line is in the "Places" window.
 6. **Map tiles.** Open. Needed for part 2e.
