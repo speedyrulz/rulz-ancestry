@@ -345,6 +345,42 @@ describe('exporting pictures and documents', () => {
     expect(result).toMatchObject({ media: 3, mediaNotHeld: 3, mediaWithheld: 0, files: [] });
   });
 
+  it('leaves a FILE line with no value as it is, as Ancestry writes them', () => {
+    // The shape of a media record in a real export from Ancestry (2025.08).
+    const text = file(
+      '5.5.1',
+      '0 @U1@ SUBM',
+      '1 NAME Ann Lee',
+      '0 @I1@ INDI',
+      '1 NAME Ann /Lee/',
+      '1 OBJE @O1@',
+      '2 _PRIM Y',
+      '0 @O1@ OBJE',
+      '1 FILE',
+      '2 FORM jpg',
+      '3 TYPE image',
+      '3 _MTYPE portrait',
+      '3 _STYPE jpeg',
+      '3 _SIZE 15509',
+      '2 TITL Ann Lee',
+      '1 _OID 0a1b2c3d',
+      '1 _ORIG u',
+    );
+    const tree = memoryTree();
+    const report = importText(tree, text);
+    expect(report).toMatchObject({ media: 1, mediaHeld: 0, issues: [] });
+    const lines = text.split(/\r\n|\n/).slice(0, -1);
+    expect(firstDifference(bodyOf(exportLines(tree)), bodyOf(lines))).toBeNull();
+    // An edit of the title still changes that line only.
+    const media = listAllMedia(tree)[0];
+    expect(media).toMatchObject({ title: 'Ann Lee', origin: '', sha256: null });
+    if (!media) return;
+    updateMedia(tree, media.id, { title: 'Ann Lee, 1910' });
+    expect(bodyOf(exportLines(tree))).toEqual(
+      bodyOf(lines).map((line) => (line === '2 TITL Ann Lee' ? '2 TITL Ann Lee, 1910' : line)),
+    );
+  });
+
   it('rewrites one line of a record whose title was edited', () => {
     const { tree, id } = imported();
     updateMedia(tree, id('M1'), { title: 'Ann Lee, 1910' });

@@ -602,12 +602,15 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
    * along in the archive is named by its path there. A file added in the app
    * is named the same way even when no archive is written: it has no other
    * name. A file that came from an imported GEDCOM file and does not go along
-   * keeps the path or address that file gave, so nothing is said here.
+   * keeps its FILE line as that file wrote it, so nothing is said here. That
+   * holds for an empty line too: Ancestry writes `1 FILE` with no value.
    */
+  const fromFile = new Set<string>(writtenInPlace);
+  for (const record of stored) if (record.kind === 'media') fromFile.add(record.id);
   const fileOf = (media: MediaRow): { file?: MediaFileReference } => {
     const stored = withFiles ? mediaFilePath(tree, media) : null;
     const carried = stored !== null && existsSync(stored);
-    if (!carried && media.origin !== '') return {};
+    if (!carried && fromFile.has(media.id)) return {};
     const path = archivePathOf(media);
     if (carried && !packed.has(media.id)) {
       packed.add(media.id);

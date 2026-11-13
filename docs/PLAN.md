@@ -123,6 +123,22 @@ Electron, TypeScript, React and SQLite, in a pnpm monorepo.
 - **GEDCOM 7.0 has no place for a description in place,** so an export to 7.0 turns each into a record with pointers. The lines the app has no fields for come along into the record.
 - Measured in the unit tests, on a solid-state disk and with the files just written: a GEDZip file with 100 files of 5 MB each (500 MB) is written in 0.7 seconds and imported in 1.1 seconds, and those 100 files are found in a folder and taken in 1.1 seconds. Upgrading the 10,000-person sample tree, which has 1,000 lines that point at one portrait, takes 0.4 seconds. The import and the export of that sample take as long as before this part, measured three times each on the same day: 4.0 to 4.6 seconds and 1.2 to 1.5 seconds in the unit test, on a busier machine than the earlier figures were taken on. In the app the import took 4.9 seconds on the production build and 3.4 seconds on the packaged app, in one run each.
 
+### Findings from the first real export (2026-11-13)
+
+The owner's tree was exported from Ancestry (export version 2025.08: 162 people, 48 families, 90 sources, 79 media records, 10,038 lines) and run through the import and the export. The file itself is not in the repository and must never be.
+
+- **It imports with nothing to report and exports line for line,** after one fix. The import made 711 events, 687 citations with 1,378 links, and 79 pictures and documents, in 0.3 seconds.
+- **Ancestry writes `1 FILE` with no value.** No media record of the file names a file or a web address. The export took the empty value for "added in the app" and wrote a name of its own making, which changed 79 lines. It now leaves the FILE line of every imported record as written unless the file goes along in an archive.
+- **So "Find the files in a folder" cannot find anything for an Ancestry tree:** there is no name to look for. Only "Choose the file" works, one picture at a time. The title is the only handle (`2 TITL` under `1 FILE`), and Ancestry's downloads are not known to be named after it. To be designed: matching by title, or by the size and dimensions the record gives (`_SIZE`, `_WDTH`, `_HGHT`).
+- **Ancestry's description of a picture is `1 _DSCR`,** not a note, in 33 of 79 records; it is kept as written and not shown. A date and a place of the picture (`1 DATE`, `1 PLAC`) are also kept and not shown. Seven records give a web address under `1 _ORIG` / `2 _URL`, which is where the picture came from, not the file.
+- **Under a person, a media line carries `_PRIM Y` (21 of 79) and a cropping (`_CROP`, 5).** This is the portrait the plan lacks; it is kept and not shown.
+- **There is not one note on a person, an event or a family.** The only notes are in source records (85 of 90), most of them long. Part 2d should start from the note of a source.
+- **Ancestry writes a marriage or divorce under a person** (`1 MARR` under `INDI`, 7 times; `1 DIV`, 3 times) as well as under the family. These ten are not events; they are kept as written and show as GEDCOM text on the person's page.
+- **Places are plain text of one to five parts** separated by commas (of 787 place values, 277 have three parts, 260 four and 93 one), as the gazetteer work assumed. One has eight.
+- **Sources carry `_APID` everywhere,** `PUBL` with a date and a place under it, and one repository for all 90. Citations have `PAGE`, and sometimes `DATA` with a `WWW` line, which is the address of the record: 111 of them. This is the web address the citation form has no field for yet.
+- **The file ends its lines with a line feed alone, and 16 values have a carriage return in them.** The export writes those 16 lines without it. It is one more case in which an export is not identical; the others are listed under "Phase 1c outcome".
+- Not covered by one file: a large tree, a tree with living people marked private, and what Ancestry writes for notes, since this tree has none.
+
 ## 3. Architecture
 
 ```
@@ -692,10 +708,10 @@ records needs the same three things together as sources did (an import, a
 migration for trees imported earlier, and a test that the two agree). With
 part 2c a scan that comes with an imported tree is attached, cited and viewed
 in the same way. Two
-things decide how 2d and 2e are built and need the owner: whether the GeoNames
-gazetteer may be bundled or downloaded (its licence is still on the "to
-confirm" list in section 4), and where map tiles come from, since free tile
-servers limit how an app may use them.
+things decide how 2d and 2e are built and need the owner. The first was
+decided on 2026-11-13: the GeoNames gazetteer is downloaded by the user on
+first use, not shipped with the app. The second is open: where map tiles come
+from, since free tile servers limit how an app may use them.
 
 ### Phase 2a outcome
 
@@ -837,6 +853,8 @@ Not done, and why:
 ## 10. Open decisions
 
 1. **Open source or private.** Decided 2026-11-11: the repository is public on GitHub under the MIT license.
-2. **Region priority,** which sets connector order. Default: US, then Netherlands, UK and Ireland, Australia and New Zealand.
+2. **Region priority,** which sets connector order. Decided 2026-11-13: the default stands. US, then Netherlands, UK and Ireland, Australia and New Zealand.
 3. **FamilySearch.** Decided 2026-11-11: applied. Awaiting a response; the connector stays optional either way.
 4. **AI assistant routes.** Decided 2026-11-11: build route A first, then route C. Route B is built only after Anthropic confirms in writing that starting the user's own unmodified Claude Code from this app is permitted; it also needs the owner to accept Anthropic's Commercial Terms of Service. See [ACCESS.md](ACCESS.md).
+5. **The GeoNames gazetteer.** Decided 2026-11-13: downloaded by the user on first use, not shipped with the app. Its licence is believed to be CC BY 4.0, which asks for a credit line; confirm it when the download is built.
+6. **Map tiles.** Open. Needed for part 2e.
