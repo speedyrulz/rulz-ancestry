@@ -5,21 +5,32 @@ import {
   citationSourceOf,
   cleanText,
   deepLinkSources,
+  internetArchiveConnector,
+  internetArchiveManifest,
+  locConnector,
+  locManifest,
   wikitreeConnector,
   wikitreeManifest,
   type ConnectorManifest,
   type DeepLinkSource,
+  type HostMemory,
   type HttpFetch,
+  type SearchAnswer,
+  type SearchOptions,
   type SourceConnector,
 } from '@rulz/connectors';
 import {
   CITATION_LIMITS,
   describeDate,
   isEmptyQuery,
+  isEmptyTextQuery,
   parseDate,
   queryYear,
+  textQueryProblem,
   type ExternalRecord,
+  type PageRequest,
   type PersonQuery,
+  type TextQuery,
 } from '@rulz/core';
 import {
   citedUrls,
@@ -43,12 +54,15 @@ import type {
   RecordSearchResult,
   RecordSearchSetup,
   RecordSourceInfo,
+  TextSearchRequest,
 } from '../shared/ipc';
 
 /**
  * The search for records outside the tree. This is the one place where
  * something of a tree leaves the PC: a name and two years, typed or confirmed
  * by the user, go to a source the user sees named, when they press "Search".
+ * A source of newspapers or books is asked for words instead, which start as
+ * the person's name, and for the years they were printed in.
  *
  * Three rules are kept here, in the main process, so that no page and no later
  * part of the app can go around them:
@@ -79,6 +93,22 @@ import type {
 /** The setting that holds the day the user agreed to the notice. */
 export const RECORD_SEARCH_NOTICE_SETTING = 'recordSearch.noticeAgreedAt';
 
+/** The setting that holds which wording of the notice the user agreed to. */
+export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion';
+
+/**
+ * The wording of the notice. It goes up when the notice has more to say: more
+ * that is sent, or someone else it is sent to. An agreement to an earlier
+ * wording does not count, and the notice is shown again.
+ *
+ * 1: a name and two years, to WikiTree, and in a link to sites opened in the browser.
+ * 2: also words and the years of printing, to the Library of Congress and the Internet Archive.
+ */
+export const RECORD_SEARCH_NOTICE_VERSION = 2;
+
+/** The setting that holds what the client keeps about a host between runs of the app. */
+export const recordSearchHostSetting = (host: string) => `recordSearch.host.${host}`;
+
 /** How many results are asked for at a time. */
 export const RECORD_SEARCH_PAGE = 20;
 
@@ -106,6 +136,30 @@ export function userAgentOf(appVersion: string): string {
 
 const EMPTY_QUERY: PersonQuery = { given: '', surname: '', birthYear: null, deathYear: null };
 
+const EMPTY_TEXT_QUERY: TextQuery = {
+  words: '',
+  phrase: true,
+  fromYear: null,
+  toYear: null,
+  state: '',
+};
+
+/**
+ * What of the search form each source is sent, in words for the notice and
+ * the form. A source that is not named here is not offered: the user must be
+ * told what goes to it. Keep these true to the connectors (`*SearchParams`).
+ */
+const ASKS: Readonly<Record<string, string>> = {
+  [wikitreeManifest.id]: 'the given name, the last name and the years of birth and death',
+  [locManifest.id]:
+    'the words, the years of printing and the state. It looks in the text of newspaper pages',
+  [internetArchiveManifest.id]:
+    'the words only. It looks in the titles, authors and descriptions of books, not inside them',
+};
+
+/** One of the searches of a source, with what it is asked already in it. */
+type Ask = (page: PageRequest, options: SearchOptions) => Promise<SearchAnswer>;
+
 export class RecordSearchService {
   readonly #appDb: Db;
   readonly #http: HttpClient;
@@ -122,32 +176,64 @@ export class RecordSearchService {
   constructor(options: RecordSearchOptions) {
     this.#appDb = options.appDb;
     this.#now = options.now ?? Date.now;
+    // A source's pause and its count of requests outlast the app: the Library
+    // of Congress shuts a client out for an hour, whether or not the app was
+    // closed in between. They are kept with the app's settings, not in a tree.
+    const appDb = this.#appDb;
+    const memory: HostMemory = {
+      load: (host) => {
+        const kept = getSetting(appDb, recordSearchHostSetting(host));
+        return kept === null ? null : (JSON.parse(kept) as unknown);
+      },
+      save: (host, record) =>
+        setSetting(appDb, recordSearchHostSetting(host), JSON.stringify(record)),
+    };
     this.#http = new HttpClient({
       fetch: options.fetch,
       userAgent: userAgentOf(options.appVersion),
       now: this.#now,
+      memory,
     });
-    this.#connectors = [wikitreeConnector(this.#http.for(wikitreeManifest))];
+    const connectors: SourceConnector[] = [
+      wikitreeConnector(this.#http.for(wikitreeManifest)),
+      locConnector(this.#http.for(locManifest)),
+      internetArchiveConnector(this.#http.for(internetArchiveManifest)),
+    ];
+    this.#connectors = connectors.filter(({ manifest }) => ASKS[manifest.id] !== undefined);
   }
 
-  /** True once the user has agreed to the notice. */
+  /** True once the user has agreed to the notice as it is worded now. */
   get agreed(): boolean {
-    return getSetting(this.#appDb, RECORD_SEARCH_NOTICE_SETTING) !== null;
+    // An agreement from before the wordings were numbered was to the first.
+    // Anything that is no whole number is no agreement.
+    const kept = getSetting(this.#appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING) ?? '1';
+    const version = /^[1-9]\d{0,5}$/.test(kept) ? Number(kept) : 0;
+    return (
+      getSetting(this.#appDb, RECORD_SEARCH_NOTICE_SETTING) !== null &&
+      version >= RECORD_SEARCH_NOTICE_VERSION
+    );
   }
 
   agree(): void {
     if (!this.agreed) {
       setSetting(this.#appDb, RECORD_SEARCH_NOTICE_SETTING, new Date(this.#now()).toISOString());
+      setSetting(
+        this.#appDb,
+        RECORD_SEARCH_NOTICE_VERSION_SETTING,
+        String(RECORD_SEARCH_NOTICE_VERSION),
+      );
     }
   }
 
   sources(): RecordSourceInfo[] {
-    return this.#connectors.map(({ manifest }) => ({
-      id: manifest.id,
-      name: manifest.name,
-      attribution: manifest.attribution,
-      termsUrl: manifest.termsUrl,
-      pausedUntil: this.#http.pausedUntil(manifest),
+    return this.#connectors.map((connector) => ({
+      id: connector.manifest.id,
+      name: connector.manifest.name,
+      searches: connector.searchPersons === undefined ? 'text' : 'person',
+      asks: ASKS[connector.manifest.id] ?? '',
+      attribution: connector.manifest.attribution,
+      termsUrl: connector.manifest.termsUrl,
+      pausedUntil: this.#http.pausedUntil(connector.manifest),
     }));
   }
 
@@ -163,6 +249,7 @@ export class RecordSearchService {
       allowed,
       agreed: this.agreed,
       query: allowed ? queryOf(tree, personId) : EMPTY_QUERY,
+      text: allowed ? textQueryOf(queryOf(tree, personId)) : EMPTY_TEXT_QUERY,
       sources: this.sources(),
       links: this.links(),
     };
@@ -252,14 +339,53 @@ export class RecordSearchService {
       connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
       citation: {
         page: cleanText(`${record.title} (${record.key})`, CITATION_LIMITS.page),
-        text: factsText(record),
+        text: record.kind === 'person' ? factsText(record) : printText(record),
         url: record.url,
         accessedAt: localDay(this.#now()),
       },
     };
   }
 
-  async search(tree: Tree, request: RecordSearchRequest): Promise<RecordSearchResult> {
+  /** Asks a source that keeps people for a person. */
+  search(tree: Tree, request: RecordSearchRequest): Promise<RecordSearchResult> {
+    const { query } = request;
+    return this.#search(
+      tree,
+      request,
+      isEmptyQuery(query) ? 'Give a name to search for.' : null,
+      (connector) => {
+        const ask = connector.searchPersons?.bind(connector);
+        return ask === undefined ? null : (page, options) => ask(query, page, options);
+      },
+    );
+  }
+
+  /** Asks a source of newspapers or books for words. */
+  searchTexts(tree: Tree, request: TextSearchRequest): Promise<RecordSearchResult> {
+    const { query } = request;
+    return this.#search(
+      tree,
+      request,
+      isEmptyTextQuery(query) ? 'Give words to search for.' : textQueryProblem(query),
+      (connector) => {
+        const ask = connector.searchTexts?.bind(connector);
+        return ask === undefined ? null : (page, options) => ask(query, page, options);
+      },
+    );
+  }
+
+  /**
+   * One search at one source, of either kind. The rules are the same for
+   * both: the notice, the person who may be living, one search per source at
+   * a time. `unfit` says why what is asked cannot be sent; `askOf` gives the
+   * search of the source to make, or null when the source has no such search.
+   */
+  async #search(
+    tree: Tree,
+    request: { personId: string; sourceId: string; offset: number },
+    unfit: string | null,
+    askOf: (connector: SourceConnector) => Ask | null,
+  ): Promise<RecordSearchResult> {
     const { sourceId } = request;
     const fail = (problem: RecordSearchProblem): RecordSearchResult => ({
       ok: false,
@@ -267,7 +393,8 @@ export class RecordSearchService {
       problem,
     });
     const connector = this.#connectors.find(({ manifest }) => manifest.id === sourceId);
-    if (connector === undefined) {
+    const ask = connector === undefined ? null : askOf(connector);
+    if (connector === undefined || ask === null) {
       return fail({ kind: 'source', message: 'This source is not known.', retryAt: null });
     }
     if (!this.agreed) {
@@ -280,17 +407,14 @@ export class RecordSearchService {
     // Looked at again at each search: the person may have been edited since the form opened.
     const refusal = this.#refusal(tree, request.personId);
     if (refusal !== null) return fail(refusal);
-    if (isEmptyQuery(request.query)) {
-      return fail({ kind: 'empty', message: 'Give a name to search for.', retryAt: null });
-    }
+    if (unfit !== null) return fail({ kind: 'empty', message: unfit, retryAt: null });
 
     this.#underWay.get(sourceId)?.abort();
     const abort = new AbortController();
     this.#underWay.set(sourceId, abort);
     const closed = this.#closed;
     try {
-      const answer = await connector.searchPersons(
-        request.query,
+      const answer = await ask(
         { offset: request.offset, limit: RECORD_SEARCH_PAGE },
         {
           signal: abort.signal,
@@ -381,8 +505,35 @@ function isOnSite(address: string, manifest: ConnectorManifest): boolean {
   }
 }
 
+/** What a result says of a text, as the citation keeps it: who made it, and when it was printed. */
+function printText(record: Extract<ExternalRecord, { kind: 'text' }>): string {
+  const parsed = record.date === '' ? null : parseDate(record.date);
+  const date = (parsed === null ? null : describeDate(parsed)) ?? record.date;
+  return [record.by === '' ? '' : `By ${record.by}`, date === '' ? '' : `Published ${date}`]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/**
+ * What the search of newspapers and books starts with for a person: their
+ * name as a phrase, printed between the year of their birth and the year
+ * after their death, which is when a death is still written about.
+ */
+function textQueryOf(person: PersonQuery): TextQuery {
+  return {
+    words: [person.given, person.surname]
+      .map((part) => part.trim())
+      .filter((part) => part !== '')
+      .join(' '),
+    phrase: true,
+    fromYear: person.birthYear,
+    toYear: person.deathYear === null ? null : Math.min(person.deathYear + 1, 9999),
+    state: '',
+  };
+}
+
 /** What a result says of a person, as the citation keeps it: one line for the birth, one for the death. */
-function factsText(record: ExternalRecord): string {
+function factsText(record: Extract<ExternalRecord, { kind: 'person' }>): string {
   return record.facts
     .map((fact) => {
       const parsed = fact.date === '' ? null : parseDate(fact.date);

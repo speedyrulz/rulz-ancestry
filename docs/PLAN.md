@@ -739,7 +739,7 @@ Not done, and why:
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 3a   | The HTTP client, the connector interface, the search for a person at WikiTree, the search window, and a check against WikiTree itself                       | **Done 2026-11-13** |
 | 3b   | Attaching a result as a citation (a web address and the date consulted on a citation), the clip form, and the links to sites the app never fetches (Tier C) | **Done 2026-11-13** |
-| 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | Planned             |
+| 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | **Done 2026-11-14** |
 | 3d   | Open Archives and Wikidata                                                                                                                                  | Planned             |
 | 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | Planned             |
 
@@ -748,6 +748,57 @@ results and one click attaches a record as a citation") is met with one source
 before more are added. Sources that need a key come last. Three views were asked
 for on the split and on part 3a (the primary, an Opus helper and a Codex helper);
 they agreed on this order, except that Codex put the Tier C links last.
+
+### Phase 3c outcome: newspapers and books, searched for words (2026-11-14)
+
+Delivered:
+
+- **A second form in the search window, "Newspapers and books".** It asks for words, whether they must stand together, the years of printing and a state of the United States. It starts with the person's name as a phrase, from the year of their birth to the year after their death. Under it stands which service is sent what.
+- **The Library of Congress connector** (`packages/connectors/src/sources/loc/search.ts`). It searches the pages of Chronicling America through the JSON API of loc.gov: `collections/chronicling-america/` with `dl=page`, `qs`, `ops` (`PHRASE` or `AND`), `searchType=advanced`, `start_date`, `end_date` and `location_state`, as the Library's own tutorial has it. A result is one page of a newspaper.
+- **The Internet Archive connector** (`sources/internet-archive/search.ts`), with a new manifest. It asks `advancedsearch.php` for texts and is sent the words only.
+- **Results that are not people.** A record is a person or a text (`PersonRecord`, `TextRecord` in `packages/core/src/records.ts`); a text has a title, the date it was printed and who made it. A connector offers `searchPersons`, `searchTexts`, or both.
+- **Attaching works as for a person.** One click cites the page or the book for the person: the source is the site, and the citation holds the title and key, who made it and when it was printed, the address and today's date.
+- **A pause that outlasts the app.** The client keeps, with the app's settings, until when a host must be left alone and when it was last asked (`HostMemory` in `http.ts`). After a restart the Library's hour still holds, and so does its count of 20 requests a minute.
+- **A pause on a page that asks "are you a robot".** A source that names its own pause is left alone when it answers with a web page in place of JSON, or with "forbidden" and a web page.
+- **The notice has a number.** It now names three services and says what each is sent. An agreement to an earlier wording does not count, and the notice is shown again.
+- **Checks against the services themselves** for both, beside the one for WikiTree (`pnpm test:contract`).
+
+Decided while building:
+
+- **Both services were tried before the connectors were written,** with a handful of requests for a writer who died in 1910. What the code relies on was seen in their answers: the phrase search, one-sided year limits, the state filter and paging at the Library; the field list and paging at the Archive.
+- **No snippet.** The Library's answer does not say where on a page the words stand: its `description` is the start of the page's text. Showing it would mislead, so a result has no excerpt. Getting one takes a further request per result to the Library's text services.
+- **The link of a result is made by the app.** The Library's own link carries the words of the search; the app's link is the page alone. For the Archive it is the item's page.
+- **The Internet Archive is searched in what is written about a book, not inside it.** The Archive documents no API for a search inside its texts; its website uses one it marks as beta, on another host, and the app does not. A family history is found by the family's name in its title, not by a person named on one of its pages. The window says so.
+- **The years go to the Library only.** At the Archive they would be compared with the year a book was published, which says little about whom it is about.
+- **Nothing typed can be a command to a service's search.** Quotes, brackets and the other signs of a query language are taken out before the words are sent. For the Archive the words are also put in small letters, because AND, OR, NOT and TO in capitals are commands to it.
+- **At most 150 years at a time,** and the first year not after the last. The Library does not page past 100,000 results.
+- **What is kept between runs is not trusted.** A pause ends a day from now at the latest, a request counts as sent now at the latest, and a setting that cannot be read is as good as none. Only the times are kept, not what was asked.
+- **The Internet Archive's limit is the project's own:** 30 requests a minute. The Archive publishes none; its page for automated access asks for a descriptive User-Agent, for honouring "too many requests", and for caching.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code. The Opus review stopped partway at a usage limit and was resumed, so it read the code with the first four fixes in it.
+
+- **A page that asks "are you a robot" did not pause the source when it came with an error status** (Codex), and was known only by two ways of starting (Opus). "Forbidden" now pauses a source that names its own pause, and so does any web page in place of an answer.
+- **"More results" could ask for the same page for ever** (Codex), when a page came with fewer results than were asked for. The next results are now those of the next page, however few came.
+- **A damaged setting could keep a source shut for good** (Codex): a pause far in the future was cut to a day at every start, and never ended. What is read is now written back as it was understood.
+- **A damaged number of the notice's wording counted as an agreement** (Codex): "Infinity" is a number at least 2. Only a whole number counts now.
+- **What is typed went to the Library of Congress with its quotes and brackets** (Opus), while the Archive's connector took such signs out. The Library's now does too; a hyphen and an apostrophe stay.
+- **A source that asked for a minute was left alone for a minute,** although its manifest says it shuts a client out for an hour (Opus). The manifest's time now holds at least.
+- **A clock set back while the app ran could shut a source until the app was started again** (Opus). Times in the future are put right at every request, not only when they are read from the settings.
+- **Opening the search window wrote the settings of every host** (Opus), after the third fix above. It now writes only when there was something to put right.
+- **Left:** a damaged setting can still shut one source for a day at most. The client does not know, when it reads a setting, which source the host belongs to.
+
+Turned down from the design views: a snippet of the matching text (the Library gives none with a result), the scrape API and the beta full-text search of the Archive, a kind of record for each sort of text (one kind serves both), and making the first request after a start wait a full minute (the times of the last requests are kept instead).
+
+Tests: unit tests went from 960 to 1005, end-to-end tests from 37 to 38. The end-to-end tests answer in the place of all three services and fail on any other request.
+
+Not done:
+
+- **A search inside the text of books.** See above.
+- **Where on a newspaper page the words stand,** and the words marked on the page when it opens in the browser.
+- **The Internet Archive's Terms of Use were not read.** The page could not be read by the tools the manifest was written with. The project owner should read it: <https://archive.org/about/terms>.
+- **A search without a person,** as in part 3a.
+- **Other collections of the Library of Congress** (photographs, maps), and newspapers outside the United States.
+- **Sorting, and a county or a town.** The state is the only place a search can be kept to.
 
 ### Phase 3b outcome: attaching a result, the clip form and links to other sites (2026-11-13)
 
@@ -841,7 +892,7 @@ Not done:
 - **Attaching a result to the tree.** Done in part 3b.
 - **Any source but WikiTree.**
 - **A search without a person,** and a search by place.
-- **A pause that outlasts the app.** A source's pause is forgotten when the app closes. It matters for the Library of Congress, in part 3c.
+- **A pause that outlasts the app.** Done in part 3c.
 - **Signing in to WikiTree,** which would show private profiles the user is trusted with.
 - **Relatives of a result,** and the reading of one record in full.
 

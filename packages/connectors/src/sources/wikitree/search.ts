@@ -2,13 +2,13 @@ import {
   QUERY_YEAR_SPREAD,
   externalDate,
   type ExternalFact,
-  type ExternalRecord,
+  type PersonRecord,
   type Page,
   type PageRequest,
   type PersonQuery,
 } from '@rulz/core';
 import { z } from 'zod';
-import { ConnectorError, cleanText, type SourceConnector } from '../../connector';
+import { ConnectorError, cleanText, type PersonConnector } from '../../connector';
 import type { SourceClient } from '../../http';
 import { wikitreeManifest } from './manifest';
 
@@ -105,7 +105,7 @@ const PUBLIC = 50;
  * private one. A profile of a living person is left out too: the app shows
  * no living people of others. What does not say which it is, is left out.
  */
-function recordOf(match: unknown): ExternalRecord | null {
+function recordOf(match: unknown): PersonRecord | null {
   if (!isObject(match)) return null;
   const key = typeof match['Name'] === 'string' ? match['Name'].trim().replace(/ /g, '_') : '';
   if (!PROFILE_NAME.test(key)) return null;
@@ -135,7 +135,7 @@ function recordOf(match: unknown): ExternalRecord | null {
 }
 
 /** Reads WikiTree's answer to a search. Throws a `ConnectorError` when it is not one. */
-export function parseWikitreeSearch(data: unknown, asked: PageRequest): Page<ExternalRecord> {
+export function parseWikitreeSearch(data: unknown, asked: PageRequest): Page<PersonRecord> {
   const parsed = answerSchema.safeParse(data);
   if (!parsed.success) {
     throw new ConnectorError('format', 'WikiTree answered in a way the app cannot read.');
@@ -192,7 +192,7 @@ export function wikitreeSearchParams(
   };
 }
 
-export function wikitreeConnector(client: SourceClient): SourceConnector {
+export function wikitreeConnector(client: SourceClient): PersonConnector {
   if (client.manifest.id !== wikitreeManifest.id) {
     throw new Error('the WikiTree connector needs the client of WikiTree');
   }

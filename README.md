@@ -21,8 +21,10 @@ list of the world's places that it downloads when you ask. A person's page
 tells their life as a timeline and marks its places on a map. Phase 2 is
 complete with that. Phase 3 has started: the app can search WikiTree for a
 person of your tree and attach a result to the person as a source with one
-click. It opens a search at Find a Grave or FamilySearch in your browser, and
-a page you find there becomes a source when you paste its address. See
+click. It searches the newspapers of the Library of Congress and the books of
+the Internet Archive for words, such as the person's name. It opens a search at
+Find a Grave or FamilySearch in your browser, and a page you find there becomes
+a source when you paste its address. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -169,8 +171,22 @@ Searching for records:
 - **What is sent:** those four fields, to WikiTree, when you press "Search".
   Nothing else of your tree, nothing while you type, nothing in the
   background. The app says so before the first search and asks you to agree.
+- **Newspapers and books** have a form of their own, for words. It starts with
+  the person's name as a phrase, printed between the year of their birth and
+  the year after their death, and you can add a state.
+  [Chronicling America](https://www.loc.gov/collections/chronicling-america/)
+  at the Library of Congress is searched in the text of its newspaper pages.
+  The [Internet Archive](https://archive.org/) is searched in the titles,
+  authors and descriptions of its books, not inside them, and is sent the
+  words only. The form says which service is sent what.
+- **A result of these is found by its words alone.** Whether a newspaper page
+  or a book is about your person is for you to read. A result does not say
+  where on the page the words stand.
 - **Living people:** the app does not search for a person who may be living,
   and shows no profiles of living people or private profiles.
+- **A service that asks to be left alone is left alone,** also after you close
+  and reopen the app. The Library of Congress shuts a program out for an hour
+  when it is asked too often.
 - **Results** show a name, the birth and the death, and a link that opens the
   profile in your browser. They are not kept, and nothing is added to your
   tree unless you attach one.
@@ -293,8 +309,8 @@ docs/                 Plan and access checklist
   records. Sites whose terms bar automated access are never asked: the app
   only builds a search address for them and hands it to the user's browser
   (`packages/connectors/src/links.ts`, which has no way to fetch), under the
-  same notice and the same rule for living people. A search sends a name and two years, after the user has agreed to
-  a notice, never for a person who may be living, and only through the client
+  same notice and the same rule for living people. A search sends a name and two years, or words and the years of printing,
+  after the user has agreed to a notice in its current wording, never for a person who may be living, and only through the client
   of the source (`apps/desktop/src/main/records.ts`,
   `packages/connectors/src/http.ts`): its address only, within its limits,
   without cookies. The download asks fixed addresses on

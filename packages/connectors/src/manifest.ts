@@ -41,8 +41,10 @@ export const connectorManifestSchema = z
       })
       .optional(),
     /**
-     * How long the source is left alone after it answers "too many requests"
-     * without saying for how long, in seconds. The client's own pause when absent.
+     * How long the source shuts a client out that asked too often, in
+     * seconds. The source is left alone for this long at least after it
+     * answers "too many requests", "forbidden", or with a web page in place
+     * of an answer. The client's own pause when absent.
      */
     pauseSeconds: z.number().int().positive().optional(),
     /** A hard cap per key over a longer period, when the source states one. */

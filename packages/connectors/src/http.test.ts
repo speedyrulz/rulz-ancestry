@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HttpClient, HttpError, addressOf, retryAfterMs, type HttpFetch } from './http';
+import {
+  HttpClient,
+  HttpError,
+  addressOf,
+  retryAfterMs,
+  type HostMemory,
+  type HostRecord,
+  type HttpFetch,
+} from './http';
 import type { ConnectorManifest } from './manifest';
 
 const source: ConnectorManifest = {
@@ -423,5 +431,232 @@ describe('HttpClient', () => {
     });
     await client.getJson('a');
     expect(asked).toHaveLength(1);
+  });
+});
+
+describe('what the client keeps for the next time the app runs', () => {
+  /** A place that keeps what it is given, as the settings of the app do. */
+  function memoryOf(kept: Record<string, unknown> = {}) {
+    const saved: [string, HostRecord][] = [];
+    const memory: HostMemory = {
+      load: (host) => kept[host],
+      save: (host, record) => {
+        kept[host] = structuredClone(record);
+        saved.push([host, structuredClone(record)]);
+      },
+    };
+    return { memory, kept, saved };
+  }
+
+  const hourly = { ...source, pauseSeconds: 3600 };
+
+  it('still leaves a source alone after the app was closed and started again', async () => {
+    const { memory, kept } = memoryOf();
+    const first = setup(() => new Response('', { status: 429 }), { memory }, hourly);
+    await failure(first.client.getJson('a'));
+    expect(kept['example.org']).toMatchObject({ pausedUntil: first.clock.now + 3_600_000 });
+
+    // The app starts again: a new client, the same place.
+    const second = setup(() => json({}), { memory }, hourly);
+    expect(second.http.pausedUntil(hourly)).toBe(second.clock.now + 3_600_000);
+    const error = await failure(second.client.getJson('a'));
+    expect([error.kind, error.retryAt]).toEqual(['paused', second.clock.now + 3_600_000]);
+    expect(second.asked).toHaveLength(0);
+
+    second.clock.now += 3_600_001;
+    await second.client.getJson('a');
+    expect(second.asked).toHaveLength(1);
+  });
+
+  it('counts the requests sent before the app was closed', async () => {
+    const { memory, kept, saved } = memoryOf();
+    const first = setup(() => json({}), { memory });
+    await first.client.getJson('a');
+    await first.client.getJson('b');
+    await first.client.getJson('c');
+    expect(saved).toHaveLength(3);
+    expect(kept['example.org']).toEqual({
+      pausedUntil: 0,
+      sent: [1_000_000, 1_000_000, 1_000_000],
+    });
+
+    // Three were sent within the ten seconds of the limit, so the fourth waits
+    // for them to be ten seconds old, although this client sent none of them.
+    const second = setup(() => json({}), { memory, maxWaitMs: 60_000 });
+    second.clock.now += 4_000;
+    await second.client.getJson('d');
+    expect(second.asked.map((request) => request.at)).toEqual([1_010_000]);
+  });
+
+  it('takes nothing that was kept on trust', async () => {
+    const day = 24 * 3_600_000;
+    // A pause far in the future, as after a change of the clock, ends a day from now.
+    const far = setup(() => json({}), {
+      memory: memoryOf({ 'example.org': { pausedUntil: 9e15, sent: [] } }).memory,
+    });
+    expect(far.http.pausedUntil(source)).toBe(far.clock.now + day);
+
+    // And it ends then, however often the app is started meanwhile: what was
+    // read is kept as it was understood.
+    const stuck = memoryOf({ 'example.org': { pausedUntil: 9e15, sent: [] } });
+    const one = setup(() => json({}), { memory: stuck.memory });
+    expect(one.http.pausedUntil(source)).toBe(one.clock.now + day);
+    expect(stuck.kept['example.org']).toMatchObject({ pausedUntil: one.clock.now + day });
+    const two = setup(() => json({}), { memory: stuck.memory });
+    two.clock.now += day - 1000;
+    expect(two.http.pausedUntil(source)).toBe(one.clock.now + day);
+    two.clock.now += 2000;
+    expect(two.http.pausedUntil(source)).toBeNull();
+
+    // Times in the future count as now, and what is no time is left out.
+    const odd = setup(() => json({}), {
+      memory: memoryOf({
+        'example.org': {
+          pausedUntil: 'tomorrow',
+          sent: [9e15, 'now', null, -5, Number.NaN, 999_000],
+        },
+      }).memory,
+      maxWaitMs: 60_000,
+    });
+    expect(odd.http.pausedUntil(source)).toBeNull();
+    await odd.client.getJson('a');
+    await odd.client.getJson('b');
+    // Two were counted from before: the second request here is the fourth of the span.
+    expect(odd.asked.map((request) => request.at)).toEqual([1_000_000, 1_009_000]);
+
+    for (const kept of [null, 'text', 7, [], { sent: 'many' }]) {
+      const plain = setup(() => json({}), { memory: memoryOf({ 'example.org': kept }).memory });
+      await plain.client.getJson('a');
+      expect(plain.asked).toHaveLength(1);
+    }
+  });
+
+  it('leaves a source alone for the time of its manifest at least, whatever it asks for', async () => {
+    // The source says "a minute", and its manifest says it shuts a client out for an hour.
+    const short = setup(
+      () => new Response('', { status: 429, headers: { 'retry-after': '60' } }),
+      {},
+      hourly,
+    );
+    expect((await failure(short.client.getJson('a'))).retryAt).toBe(short.clock.now + 3_600_000);
+    // A longer time that it asks for still holds.
+    const long = setup(
+      () => new Response('', { status: 429, headers: { 'retry-after': '7200' } }),
+      {},
+      hourly,
+    );
+    expect((await failure(long.client.getJson('a'))).retryAt).toBe(long.clock.now + 7_200_000);
+  });
+
+  it('is not shut for good by a clock that is set back while the app runs', async () => {
+    const day = 24 * 3_600_000;
+    const { client, clock, asked } = setup(() => json({}), { maxWaitMs: 60_000 });
+    // The clock of these tests starts near nought; it is put forward so that it can go back.
+    clock.now += 40 * day;
+    const start = clock.now;
+    await client.getJson('a');
+    await client.getJson('b');
+    await client.getJson('c');
+    // The clock goes back a week. The three requests now lie in the future.
+    clock.now -= 7 * day;
+    await client.getJson('d');
+    // They count as sent now: the fourth waits for the ten seconds of the limit, and no longer.
+    expect(asked[3]?.at).toBe(clock.now);
+    expect(asked[3]?.at).toBe(start - 7 * day + 10_000);
+
+    const paused = setup(() => new Response('', { status: 429 }), {}, hourly);
+    paused.clock.now += 40 * day;
+    await failure(paused.client.getJson('a'));
+    paused.clock.now -= 30 * day;
+    expect(paused.http.pausedUntil(hourly)).toBe(paused.clock.now + day);
+  });
+
+  it('writes nothing about a host when there was nothing to put right', () => {
+    const fresh = memoryOf();
+    const quiet = setup(() => json({}), { memory: fresh.memory });
+    expect(quiet.http.pausedUntil(source)).toBeNull();
+    expect(fresh.saved).toHaveLength(0);
+  });
+
+  it('goes on when the place fails', async () => {
+    const broken: HostMemory = {
+      load: () => {
+        throw new Error('the settings cannot be read');
+      },
+      save: () => {
+        throw new Error('the settings cannot be written');
+      },
+    };
+    const { http, client, clock, asked } = setup(
+      () => (asked.length === 1 ? json({}) : new Response('', { status: 429 })),
+      { memory: broken },
+      hourly,
+    );
+    await client.getJson('a');
+    expect((await failure(client.getJson('b'))).kind).toBe('paused');
+    // The pause still holds while the app runs.
+    expect(http.pausedUntil(hourly)).toBe(clock.now + 3_600_000);
+  });
+
+  it('pauses when a source that names its own pause sends a web page in place of an answer', async () => {
+    const { memory, kept } = memoryOf();
+    const page = '<!DOCTYPE html>\n<html><body>Please show that you are no robot.</body></html>';
+    const { http, client, clock, asked } = setup(() => new Response(page), { memory }, hourly);
+    const error = await failure(client.getJson('a'));
+    expect([error.kind, error.retryAt]).toEqual(['paused', clock.now + 3_600_000]);
+    expect(http.pausedUntil(hourly)).toBe(clock.now + 3_600_000);
+    expect(kept['example.org']).toMatchObject({ pausedUntil: clock.now + 3_600_000 });
+    expect((await failure(client.getJson('b'))).kind).toBe('paused');
+    expect(asked).toHaveLength(1);
+
+    // The same page with "forbidden" pauses too.
+    const forbidden = setup(
+      () =>
+        new Response(page, {
+          status: 403,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        }),
+      {},
+      hourly,
+    );
+    const shut = await failure(forbidden.client.getJson('a'));
+    expect([shut.kind, shut.status, shut.retryAt]).toEqual([
+      'paused',
+      403,
+      forbidden.clock.now + 3_600_000,
+    ]);
+    // So does "forbidden" without a page, and a page that starts another way.
+    const plain = setup(() => new Response('{}', { status: 403 }), {}, hourly);
+    expect((await failure(plain.client.getJson('a'))).kind).toBe('paused');
+    for (const body of [
+      '<!-- challenge -->\n<head></head>',
+      '  <head><title>Wait</title></head>',
+    ]) {
+      const odd = setup(() => new Response(body), {}, hourly);
+      expect((await failure(odd.client.getJson('a'))).kind, body).toBe('paused');
+    }
+    const typed = setup(
+      () => new Response('Please wait', { headers: { 'content-type': 'text/html' } }),
+      {},
+      hourly,
+    );
+    expect((await failure(typed.client.getJson('a'))).kind).toBe('paused');
+    // "Forbidden" from a source that names no pause is an error like another.
+    const other = setup(
+      () => new Response(page, { status: 403, headers: { 'content-type': 'text/html' } }),
+    );
+    expect((await failure(other.client.getJson('a'))).kind).toBe('status');
+    const missing = setup(
+      () => new Response(page, { status: 404, headers: { 'content-type': 'text/html' } }),
+      {},
+      hourly,
+    );
+    expect((await failure(missing.client.getJson('a'))).kind).toBe('status');
+    expect(missing.http.pausedUntil(hourly)).toBeNull();
+
+    // Something else that is no JSON is a fault of the answer, and no reason to pause.
+    const text = setup(() => new Response('not found'), {}, hourly);
+    expect((await failure(text.client.getJson('a'))).kind).toBe('format');
+    expect(text.http.pausedUntil(hourly)).toBeNull();
   });
 });

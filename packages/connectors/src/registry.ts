@@ -1,6 +1,7 @@
 import type { ConnectorManifest, ConnectorTier } from './manifest';
 import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
+import { internetArchiveManifest } from './sources/internet-archive/manifest';
 import { locManifest } from './sources/loc/manifest';
 import { nara1940CensusManifest } from './sources/nara-1940-census/manifest';
 import { nara1950CensusManifest } from './sources/nara-1950-census/manifest';
@@ -12,6 +13,7 @@ import { wikitreeManifest } from './sources/wikitree/manifest';
 export const manifests: readonly ConnectorManifest[] = [
   wikitreeManifest,
   locManifest,
+  internetArchiveManifest,
   naraCatalogManifest,
   openArchivesManifest,
   nara1950CensusManifest,

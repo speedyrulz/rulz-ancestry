@@ -27,7 +27,9 @@ function profile(number: number, extra: object = {}) {
 /**
  * Makes the app's requests to the internet answer as WikiTree would, the first four
  * results and then the rest of `total`, and notes every address asked for. With
- * `busy`, the answer is "too many requests". The tests never reach WikiTree.
+ * `busy`, the answer is "too many requests". The Library of Congress answers with
+ * one page of a newspaper and the Internet Archive with one book, both made up.
+ * The tests never reach any of them.
  */
 async function answerSearches(
   app: ElectronApplication,
@@ -57,6 +59,43 @@ async function answerSearches(
         if (served.busy) {
           return Promise.resolve(
             new Response('slow down', { status: 429, headers: { 'retry-after': '600' } }),
+          );
+        }
+        const host = new URL(url).host;
+        if (host === 'www.loc.gov') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                pagination: { current: 1, of: 1, next: null },
+                results: [
+                  {
+                    id: 'http://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
+                    title: 'Image 8 of The Ashford gazette (Ashford, Vt.), May 1, 1903',
+                    date: '1903-05-01',
+                  },
+                ],
+              }),
+            ),
+          );
+        }
+        if (host === 'archive.org') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                response: {
+                  numFound: 1,
+                  start: 0,
+                  docs: [
+                    {
+                      identifier: 'marshfamily00exam',
+                      title: 'Marsh family.',
+                      creator: 'Fenwick, Henrietta.',
+                      year: 1930,
+                    },
+                  ],
+                },
+              }),
+            ),
           );
         }
         const start = Number(new URL(url).searchParams.get('start') ?? '0');
@@ -293,4 +332,76 @@ test('attaches a result as a source, opens a search in the browser, and cites a 
     1,
   );
   await window.getByTestId('record-search-close').click();
+});
+
+test('searches newspapers and books for words, and attaches a page of a newspaper', async ({
+  app,
+  window,
+}) => {
+  await answerSearches(app, 2);
+  await createTree(window, 'Texts');
+  await addPerson(window, {
+    given: 'Josiah',
+    surname: 'Marsh',
+    birthDate: '12 MAR 1850',
+    deathDate: 'ABT 1912',
+  });
+
+  await window.getByTestId('open-records').click();
+  // The notice says what each service is sent.
+  const sources = window.getByTestId('record-notice-sources');
+  await expect(sources).toContainText('WikiTree: the given name, the last name and the years');
+  await expect(sources).toContainText('Library of Congress');
+  await expect(sources).toContainText('Internet Archive: the words only');
+  await window.getByTestId('record-agree').click();
+
+  // The form starts with the name as a phrase, from the birth to the year after the death.
+  await expect(window.getByTestId('record-words')).toHaveValue('Josiah Marsh');
+  await expect(window.getByTestId('record-phrase')).toBeChecked();
+  await expect(window.getByTestId('record-from')).toHaveValue('1850');
+  await expect(window.getByTestId('record-to')).toHaveValue('1913');
+  await expect(window.getByTestId('record-text-sends')).toContainText('Internet Archive');
+  expect(await askedOfInternet(app)).toEqual([]);
+
+  // Years that do not fit are said so, and nothing can be sent.
+  await window.getByTestId('record-from').fill('1950');
+  await expect(window.getByTestId('record-text-problem')).toBeVisible();
+  await expect(window.getByTestId('record-text-go')).toBeDisabled();
+  await window.getByTestId('record-from').fill('1850');
+  await window.getByTestId('record-state').selectOption('Vermont');
+
+  await window.getByTestId('record-text-go').click();
+  const newspapers = window.getByTestId('records-loc');
+  const books = window.getByTestId('records-internet-archive');
+  await expect(newspapers.getByTestId('record-result')).toHaveCount(1);
+  await expect(newspapers).toContainText('Image 8 of The Ashford gazette');
+  await expect(newspapers.getByTestId('record-print')).toHaveText('published 1 May 1903');
+  await expect(newspapers.getByTestId('record-link')).toHaveAttribute(
+    'href',
+    'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
+  );
+  await expect(books.getByTestId('record-result')).toHaveCount(1);
+  await expect(books.getByTestId('record-print')).toHaveText('Fenwick, Henrietta., published 1930');
+
+  // Two requests: one to each, and none to the source that keeps people.
+  const asked = (await askedOfInternet(app)).map((address) => new URL(address));
+  expect(asked.map((url) => url.host).sort()).toEqual(['archive.org', 'www.loc.gov']);
+  const library = asked.find((url) => url.host === 'www.loc.gov');
+  expect(library?.searchParams.get('qs')).toBe('Josiah Marsh');
+  expect(library?.searchParams.get('start_date')).toBe('1850-01-01');
+  expect(library?.searchParams.get('end_date')).toBe('1913-12-31');
+  expect(library?.searchParams.get('location_state')).toBe('vermont');
+  await expect(window.getByTestId('records-wikitree')).toHaveCount(0);
+
+  await newspapers.getByTestId('record-attach').click();
+  await expect(newspapers.getByTestId('record-attached')).toBeVisible();
+  await expect(window.getByTestId('undo')).toHaveAttribute('title', 'Undo Attach record (Ctrl+Z)');
+  expect(await askedOfInternet(app)).toHaveLength(2);
+
+  await window.getByTestId('record-search-close').click();
+  const cited = window.getByTestId('person-citation');
+  await expect(cited).toHaveCount(1);
+  await expect(cited).toContainText('Library of Congress');
+  await expect(cited).toContainText('Image 8 of The Ashford gazette');
+  await expect(cited).toContainText('Published 1 May 1903');
 });

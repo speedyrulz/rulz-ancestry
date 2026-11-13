@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { calendarToJdn } from './date';
-import { externalDate, isEmptyQuery, queryYear } from './records';
+import {
+  TEXT_QUERY_YEAR_SPAN,
+  US_STATES,
+  externalDate,
+  isEmptyQuery,
+  isEmptyTextQuery,
+  queryYear,
+  textQueryProblem,
+  textQueryWords,
+  type TextQuery,
+} from './records';
 
 const day = (year: number, month: number, date: number) =>
   calendarToJdn('gregorian', year, month, date);
@@ -52,5 +62,44 @@ describe('isEmptyQuery', () => {
     expect(isEmptyQuery({ given: '', surname: 'Marsh', birthYear: null, deathYear: null })).toBe(
       false,
     );
+  });
+});
+
+describe('a query for texts', () => {
+  const query = (changes: Partial<TextQuery> = {}): TextQuery => ({
+    words: 'Josiah Marsh',
+    phrase: true,
+    fromYear: 1850,
+    toYear: 1911,
+    state: '',
+    ...changes,
+  });
+
+  it('sends its words trimmed, with one space between them', () => {
+    expect(textQueryWords(query({ words: '  Josiah \t  Marsh\n' }))).toBe('Josiah Marsh');
+    expect(isEmptyTextQuery(query({ words: ' \n ' }))).toBe(true);
+    expect(isEmptyTextQuery(query())).toBe(false);
+  });
+
+  it('needs years in order, and not too many of them', () => {
+    expect(textQueryProblem(query())).toBeNull();
+    expect(textQueryProblem(query({ fromYear: null, toYear: null }))).toBeNull();
+    expect(textQueryProblem(query({ fromYear: 1700, toYear: null }))).toBeNull();
+    expect(textQueryProblem(query({ fromYear: 1900, toYear: 1900 }))).toBeNull();
+    expect(textQueryProblem(query({ fromYear: 1901, toYear: 1900 }))).toEqual(expect.any(String));
+    expect(
+      textQueryProblem(query({ fromYear: 1800, toYear: 1800 + TEXT_QUERY_YEAR_SPAN })),
+    ).toBeNull();
+    expect(
+      textQueryProblem(query({ fromYear: 1800, toYear: 1801 + TEXT_QUERY_YEAR_SPAN })),
+    ).toEqual(expect.any(String));
+  });
+
+  it('knows the states a search can be kept to, and no other', () => {
+    expect(US_STATES).toHaveLength(52);
+    expect(new Set(US_STATES).size).toBe(52);
+    expect(textQueryProblem(query({ state: 'Vermont' }))).toBeNull();
+    expect(textQueryProblem(query({ state: 'vermont' }))).toEqual(expect.any(String));
+    expect(textQueryProblem(query({ state: 'Atlantis' }))).toEqual(expect.any(String));
   });
 });

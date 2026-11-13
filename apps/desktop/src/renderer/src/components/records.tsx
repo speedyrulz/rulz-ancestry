@@ -1,4 +1,13 @@
-import { describeDate, parseDate, type ExternalRecord, type PersonQuery } from '@rulz/core';
+import {
+  TEXT_QUERY_MAX,
+  US_STATES,
+  describeDate,
+  parseDate,
+  textQueryProblem,
+  type ExternalRecord,
+  type PersonQuery,
+  type TextQuery,
+} from '@rulz/core';
 import { useEffect, useRef, useState } from 'react';
 import type {
   PersonCitationInfo,
@@ -19,6 +28,11 @@ import { Dialog, TextField } from './ui';
  * decides whether a search may be made at all (see `main/records.ts`); this
  * window only says what it decided.
  *
+ * There are two forms. One asks sources that keep people for a person: a
+ * name and two years. The other asks sources of newspapers and books for
+ * words, which start as the person's name, and for the years they were
+ * printed in. Each form says which source is sent what.
+ *
  * A result can be attached to the person as a source with one click. For
  * sites the app does not search itself, a button opens a search in the
  * user's browser, and a page found there is cited by pasting its address.
@@ -30,6 +44,30 @@ interface Form {
   birthYear: string;
   deathYear: string;
 }
+
+/** The form for newspapers and books, as typed. */
+interface TextForm {
+  words: string;
+  phrase: boolean;
+  fromYear: string;
+  toYear: string;
+  state: string;
+}
+
+const NO_TEXT: TextQuery = { words: '', phrase: true, fromYear: null, toYear: null, state: '' };
+
+function textFormOf(query: TextQuery): TextForm {
+  return {
+    words: query.words,
+    phrase: query.phrase,
+    fromYear: query.fromYear === null ? '' : String(query.fromYear),
+    toYear: query.toYear === null ? '' : String(query.toYear),
+    state: query.state,
+  };
+}
+
+/** What a search asks for: a person, or words. */
+type Asked = { kind: 'person'; query: PersonQuery } | { kind: 'text'; query: TextQuery };
 
 /** What one source has answered so far. */
 interface Found {
@@ -106,16 +144,24 @@ function Result({ record, attached, busy, onAttach }: ResultProps) {
       <a href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
         {record.title}
       </a>
-      {record.sex !== null && (
+      {record.kind === 'person' && record.sex !== null && (
         <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
       )}
-      {record.facts.map((fact) => (
-        <div key={fact.type} className="record-fact">
-          {fact.type === 'birth' ? 'Born' : 'Died'}
-          {fact.date !== '' && ` ${dateWords(fact.date)}`}
-          {fact.place !== '' && `, ${fact.place}`}
+      {record.kind === 'person' &&
+        record.facts.map((fact) => (
+          <div key={fact.type} className="record-fact">
+            {fact.type === 'birth' ? 'Born' : 'Died'}
+            {fact.date !== '' && ` ${dateWords(fact.date)}`}
+            {fact.place !== '' && `, ${fact.place}`}
+          </div>
+        ))}
+      {record.kind === 'text' && (record.by !== '' || record.date !== '') && (
+        <div className="record-fact" data-testid="record-print">
+          {[record.by, record.date === '' ? '' : `published ${dateWords(record.date)}`]
+            .filter((part) => part !== '')
+            .join(', ')}
         </div>
-      ))}
+      )}
     </li>
   );
 }
@@ -164,6 +210,11 @@ function SourceResults({
         </ol>
       )}
       {found.total === 0 && <p className="muted">Nothing found.</p>}
+      {source.searches === 'text' && found.items.length > 0 && (
+        <p className="hint">
+          Found by the words alone. Whether a text is about this person is for you to read.
+        </p>
+      )}
       {found.hidden > 0 && (
         <p className="hint" data-testid="record-hidden">
           {countOf(found.hidden, 'result', 'results')} {found.hidden === 1 ? 'is' : 'are'} not
@@ -191,6 +242,46 @@ function SourceResults({
   );
 }
 
+interface SourceListProps {
+  sources: RecordSourceInfo[];
+  found: Record<string, Found>;
+  /** The results the person's page cites, as "source, key". */
+  attached: ReadonlySet<string>;
+  attaching: string | null;
+  onAttach: (source: RecordSourceInfo, record: ExternalRecord) => void;
+  onMore: (source: RecordSourceInfo, offset: number) => void;
+}
+
+/** The results of the sources of one form, each under the name of its source. */
+function SourceList({ sources, found, attached, attaching, onAttach, onMore }: SourceListProps) {
+  return (
+    <>
+      {sources.map((source) => (
+        <SourceResults
+          key={source.id}
+          source={source}
+          found={found[source.id] ?? NOTHING}
+          attached={
+            new Set(
+              (found[source.id]?.items ?? [])
+                .filter((record) => attached.has(attachedKey(source.id, record.key)))
+                .map((record) => record.key),
+            )
+          }
+          attaching={attaching}
+          onAttach={(record) => onAttach(source, record)}
+          onMore={() => {
+            const offset = found[source.id]?.nextOffset;
+            if (offset !== null && offset !== undefined) onMore(source, offset);
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+const attachedKey = (sourceId: string, key: string) => `${sourceId}\n${key}`;
+
 interface RecordSearchDialogProps {
   personId: string;
   /** The person's name, for the title. */
@@ -201,8 +292,6 @@ interface RecordSearchDialogProps {
   onTree: (tree: TreeState) => void;
   onClose: () => void;
 }
-
-const attachedKey = (sourceId: string, key: string) => `${sourceId}\n${key}`;
 
 export function RecordSearchDialog({
   personId,
@@ -222,11 +311,13 @@ export function RecordSearchDialog({
       deathYear: null,
     }),
   );
+  const [textForm, setTextForm] = useState<TextForm>(textFormOf(NO_TEXT));
   /** What was last sent, so that "More results" asks for more of the same. */
   const [sent, setSent] = useState<PersonQuery | null>(null);
+  const [sentText, setSentText] = useState<TextQuery | null>(null);
   const [found, setFound] = useState<Record<string, Found>>({});
-  /** Counts the searches, so that an answer to an older one is not shown. */
-  const round = useRef(0);
+  /** Counts the searches of each form, so that an answer to an older one is not shown. */
+  const round = useRef({ person: 0, text: 0 });
   /** The results the person's page cites, as "source, key". */
   const [attached, setAttached] = useState<ReadonlySet<string>>(new Set());
   const [attaching, setAttaching] = useState<string | null>(null);
@@ -246,6 +337,7 @@ export function RecordSearchDialog({
         }
         setSetup(loaded);
         setForm(formOf(loaded.query));
+        setTextForm(textFormOf(loaded.text));
       },
       (problem: unknown) => {
         if (current) setError(errorMessage(problem));
@@ -255,7 +347,7 @@ export function RecordSearchDialog({
       current = false;
       // An answer that comes after the window has closed is not shown anywhere,
       // and a search that has not been sent yet is not sent.
-      round.current += 1;
+      round.current = { person: round.current.person + 1, text: round.current.text + 1 };
       void api.cancelRecordSearch().catch(() => undefined);
     };
   }, [personId]);
@@ -265,7 +357,23 @@ export function RecordSearchDialog({
   const named = form.given.trim() !== '' || form.surname.trim() !== '';
   const ready = named && birthYear !== undefined && deathYear !== undefined;
 
-  const ask = (query: PersonQuery, source: RecordSourceInfo, offset: number, mine: number) => {
+  const fromYear = yearOf(textForm.fromYear);
+  const toYear = yearOf(textForm.toYear);
+  /** What the form for newspapers and books asks for now; null while a year is no year. */
+  const typedText: TextQuery | null =
+    fromYear === undefined || toYear === undefined
+      ? null
+      : {
+          words: textForm.words.trim(),
+          phrase: textForm.phrase,
+          fromYear,
+          toYear,
+          state: textForm.state,
+        };
+  const textProblem = typedText === null ? null : textQueryProblem(typedText);
+  const textReady = typedText !== null && typedText.words !== '' && textProblem === null;
+
+  const ask = (asked: Asked, source: RecordSourceInfo, offset: number, mine: number) => {
     setFound((all) => ({
       ...all,
       [source.id]: {
@@ -279,9 +387,14 @@ export function RecordSearchDialog({
         ...all,
         [source.id]: { ...(all[source.id] ?? NOTHING), busy: false, problem },
       }));
-    api.searchRecords({ personId, sourceId: source.id, query, offset }).then(
+    const request = { personId, sourceId: source.id, offset };
+    const answer =
+      asked.kind === 'person'
+        ? api.searchRecords({ ...request, query: asked.query })
+        : api.searchRecordTexts({ ...request, query: asked.query });
+    answer.then(
       (result) => {
-        if (round.current !== mine) return;
+        if (round.current[asked.kind] !== mine) return;
         if (!result.ok) {
           failed(result.problem);
           return;
@@ -309,7 +422,7 @@ export function RecordSearchDialog({
         });
       },
       (problem: unknown) => {
-        if (round.current !== mine) return;
+        if (round.current[asked.kind] !== mine) return;
         failed({ kind: 'failed', message: errorMessage(problem), retryAt: null });
       },
     );
@@ -357,10 +470,21 @@ export function RecordSearchDialog({
     const query = typed();
     if (setup === null || query === null) return;
     setProblem(null);
-    round.current += 1;
+    round.current.person += 1;
     setSent(query);
-    setFound({});
-    for (const source of setup.sources) ask(query, source, 0, round.current);
+    for (const source of personSources) {
+      ask({ kind: 'person', query }, source, 0, round.current.person);
+    }
+  };
+
+  const searchTexts = () => {
+    if (setup === null || typedText === null || !textReady) return;
+    setProblem(null);
+    round.current.text += 1;
+    setSentText(typedText);
+    for (const source of textSources) {
+      ask({ kind: 'text', query: typedText }, source, 0, round.current.text);
+    }
   };
 
   const agree = () => {
@@ -370,10 +494,14 @@ export function RecordSearchDialog({
     );
   };
 
-  const sourceNames = setup?.sources.map((source) => source.name).join(', ') ?? '';
+  const personSources = setup?.sources.filter((source) => source.searches === 'person') ?? [];
+  const textSources = setup?.sources.filter((source) => source.searches === 'text') ?? [];
+  const sourceNames = personSources.map((source) => source.name).join(', ');
   const linkNames = setup?.links.map((link) => link.name).join(', ') ?? '';
   const set = (field: keyof Form) => (value: string) =>
     setForm((now) => ({ ...now, [field]: value }));
+  const setText = (field: 'words' | 'fromYear' | 'toYear' | 'state') => (value: string) =>
+    setTextForm((now) => ({ ...now, [field]: value }));
 
   return (
     <Dialog title={`Search records for ${name}`} onClose={onClose} testId="record-search" wide>
@@ -404,13 +532,24 @@ export function RecordSearchDialog({
           </p>
           <ul>
             <li>
-              <strong>What is sent:</strong> the given name, the last name and the years of birth
-              and death that the search form shows, and nothing else of your tree. You can change or
-              empty each of them before you search.
+              <strong>What is sent, and to whom:</strong> what the search forms show, and nothing
+              else of your tree. You can change or empty each field before you search.
+              <ul data-testid="record-notice-sources">
+                {setup.sources.map((source) => (
+                  <li key={source.id}>
+                    {source.name}: {source.asks}.
+                  </li>
+                ))}
+              </ul>
             </li>
             <li>
-              <strong>To whom:</strong> {sourceNames}. Like any website, a service also sees the
-              internet address of your PC, and it has its own privacy rules.
+              <strong>What you type is sent as you type it.</strong> The forms start with the name
+              and the years of this person. Words you add, such as another name or a place, go to
+              the service too.
+            </li>
+            <li>
+              <strong>What a service sees besides:</strong> like any website, the internet address
+              of your PC. Each service has its own privacy rules.
             </li>
             <li>
               <strong>When:</strong> only when you press &quot;Search&quot;. Nothing is sent while
@@ -418,9 +557,9 @@ export function RecordSearchDialog({
             </li>
             <li>
               <strong>Other sites:</strong> {linkNames}. The app does not ask these itself. A button
-              opens a search there in your own browser, and the same four fields are part of the
-              address it opens. That site, and your browser&apos;s history, then hold them; if you
-              are signed in there, the site knows who searched.
+              opens a search there in your own browser, and the name and the years of the search for
+              people are part of the address it opens. That site, and your browser&apos;s history,
+              then hold them; if you are signed in there, the site knows who searched.
             </li>
             <li>
               <strong>Living people:</strong> the app does not search for a person who may be
@@ -428,7 +567,9 @@ export function RecordSearchDialog({
             </li>
             <li>
               <strong>What is kept:</strong> results stay in the app&apos;s memory until the tree or
-              the app closes. Nothing is added to your tree unless you attach a result.
+              the app closes. Nothing is added to your tree unless you attach a result. The app
+              notes when it asked each service, and until when a service asked to be left alone, so
+              that it does not ask too often; it does not note what was asked.
             </li>
           </ul>
           <div className="dialog-actions">
@@ -444,6 +585,7 @@ export function RecordSearchDialog({
 
       {setup !== null && setup.allowed && setup.agreed && (
         <>
+          <h3>People</h3>
           <form
             className="record-form"
             onSubmit={(event) => {
@@ -505,35 +647,128 @@ export function RecordSearchDialog({
             </p>
           )}
 
-          {sent !== null &&
-            setup.sources.map((source) => (
-              <SourceResults
-                key={source.id}
-                source={source}
-                found={found[source.id] ?? NOTHING}
-                attached={
-                  new Set(
-                    (found[source.id]?.items ?? [])
-                      .filter((record) => attached.has(attachedKey(source.id, record.key)))
-                      .map((record) => record.key),
-                  )
+          {sent !== null && (
+            <SourceList
+              sources={personSources}
+              found={found}
+              attached={attached}
+              attaching={attaching}
+              onAttach={attach}
+              onMore={(source, offset) =>
+                ask({ kind: 'person', query: sent }, source, offset, round.current.person)
+              }
+            />
+          )}
+
+          <h3>Newspapers and books</h3>
+          <form
+            className="record-form"
+            data-testid="record-text-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              searchTexts();
+            }}
+          >
+            <TextField
+              label="Words"
+              value={textForm.words}
+              onChange={setText('words')}
+              maxLength={TEXT_QUERY_MAX}
+              testId="record-words"
+            />
+            <label className="record-check">
+              <input
+                type="checkbox"
+                checked={textForm.phrase}
+                onChange={(event) =>
+                  setTextForm((now) => ({ ...now, phrase: event.target.checked }))
                 }
-                attaching={attaching}
-                onAttach={(record) => attach(source, record)}
-                onMore={() => {
-                  const offset = found[source.id]?.nextOffset;
-                  if (offset !== null && offset !== undefined)
-                    ask(sent, source, offset, round.current);
-                }}
-              />
-            ))}
+                data-testid="record-phrase"
+              />{' '}
+              These words together, in this order
+            </label>
+            <TextField
+              label="Printed from (year)"
+              value={textForm.fromYear}
+              onChange={setText('fromYear')}
+              maxLength={4}
+              testId="record-from"
+              hint={
+                fromYear === undefined ? <p className="error">A year, such as 1850.</p> : undefined
+              }
+            />
+            <TextField
+              label="Printed until (year)"
+              value={textForm.toYear}
+              onChange={setText('toYear')}
+              maxLength={4}
+              testId="record-to"
+              hint={
+                toYear === undefined ? <p className="error">A year, such as 1911.</p> : undefined
+              }
+            />
+            <div className="field">
+              <label htmlFor="record-state">Newspapers of (state)</label>
+              <select
+                id="record-state"
+                value={textForm.state}
+                onChange={(event) => setText('state')(event.target.value)}
+                data-testid="record-state"
+              >
+                <option value="">Any state</option>
+                {US_STATES.map((state) => (
+                  <option key={state} value={state}>
+                    {state}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {textProblem !== null && (
+              <p className="error" role="alert" data-testid="record-text-problem">
+                {textProblem}
+              </p>
+            )}
+            <div className="hint" data-testid="record-text-sends">
+              &quot;Search&quot; sends what this form shows, and nothing else:
+              <ul>
+                {textSources.map((source) => (
+                  <li key={source.id}>
+                    {source.name}: {source.asks}.
+                  </li>
+                ))}
+              </ul>
+              The years start as the year of birth and the year after the death, which is when a
+              newspaper may still write about a death.
+            </div>
+            <button
+              type="submit"
+              className="primary"
+              disabled={!textReady}
+              data-testid="record-text-go"
+            >
+              Search
+            </button>
+          </form>
+
+          {sentText !== null && (
+            <SourceList
+              sources={textSources}
+              found={found}
+              attached={attached}
+              attaching={attaching}
+              onAttach={attach}
+              onMore={(source, offset) =>
+                ask({ kind: 'text', query: sentText }, source, offset, round.current.text)
+              }
+            />
+          )}
 
           <section className="record-source" data-testid="record-links">
             <h3>Other sites</h3>
             <p className="hint">
-              The app does not search these sites itself. A button opens a search for the four
-              fields above in your browser, at the site. A page you find there, or anywhere else,
-              becomes a source when you paste its address here.
+              The app does not search these sites itself. A button opens a search for the name and
+              the years under &quot;People&quot; in your browser, at the site. A page you find
+              there, or anywhere else, becomes a source when you paste its address here.
             </p>
             <ul className="record-links">
               {setup.links.map((link) => (

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BACKUP_DIR_NAME, openAppDatabase, type Db } from '@rulz/db';
+import { BACKUP_DIR_NAME, getSetting, openAppDatabase, setSetting, type Db } from '@rulz/db';
 import {
   API_METHODS,
   type AppInfo,
@@ -36,7 +36,13 @@ import {
   type TreeState,
 } from '../shared/ipc';
 import { GazetteerService } from './gazetteer';
-import { RecordSearchService } from './records';
+import {
+  RECORD_SEARCH_NOTICE_SETTING,
+  RECORD_SEARCH_NOTICE_VERSION,
+  RECORD_SEARCH_NOTICE_VERSION_SETTING,
+  RecordSearchService,
+  recordSearchHostSetting,
+} from './records';
 import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
 import { TreeSession } from './session';
@@ -48,6 +54,7 @@ let appDb: Db;
 let session: TreeSession;
 let handlers: ApiHandlers;
 const QUERY = { given: 'Ada', surname: 'Test', birthYear: 1850, deathYear: null };
+const TEXT = { words: 'Ada Test', phrase: true, fromYear: 1850, toYear: 1911, state: '' };
 let gazetteer: GazetteerService;
 let records: RecordSearchService;
 /** Every address the search for records asked for. */
@@ -72,6 +79,38 @@ const sourceAnswer = [
     total: 2,
   },
 ];
+/** What the Library of Congress answers in these tests: two pages of newspapers that are made up. */
+const newspaperAnswer = {
+  pagination: { current: 1, from: 1, of: 2, next: null },
+  results: [
+    {
+      id: 'http://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
+      title: 'Image 8 of The Ashford gazette (Ashford, Vt.), May 1, 1903',
+      url: 'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8&q=ada+test',
+      date: '1903-05-01',
+    },
+    { id: 'https://elsewhere.example/resource/sn99000001/1903-05-01/ed-1/?sp=9' },
+  ],
+};
+/** What the Internet Archive answers in these tests: one book that is made up. */
+const bookAnswer = {
+  responseHeader: { status: 0 },
+  response: {
+    numFound: 1,
+    start: 0,
+    docs: [
+      { identifier: 'testfamily00exam', title: 'Test family.', creator: 'Fenwick, H.', year: 1930 },
+    ],
+  },
+};
+/** What a source answers when asked; a test can put its own answer in its place. */
+let answerOf: (url: string) => Response;
+const usualAnswer = (url: string): Response => {
+  const host = new URL(url).host;
+  const data =
+    host === 'www.loc.gov' ? newspaperAnswer : host === 'archive.org' ? bookAnswer : sourceAnswer;
+  return new Response(JSON.stringify(data));
+};
 /** What the fake folder picker answers next; null is a cancelled dialog. */
 let pickedFolder: string | null;
 /** What the fake dialogs for opening and saving a file answer next. */
@@ -160,12 +199,13 @@ beforeEach(() => {
     minimums: {},
   });
   askedOfSources = [];
+  answerOf = usualAnswer;
   records = new RecordSearchService({
     appDb,
     appVersion: '0.0.0',
     fetch: (url) => {
       askedOfSources.push(url);
-      return Promise.resolve(new Response(JSON.stringify(sourceAnswer)));
+      return Promise.resolve(answerOf(url));
     },
   });
   handlers = createHandlers(session, platform, gazetteer, records);
@@ -212,6 +252,38 @@ describe('argument checks', () => {
       ['getRecordSearch', 'not-an-id'],
       ['agreeToRecordSearch', true],
       ['cancelRecordSearch', 'now'],
+      ['searchRecordTexts', { personId: MISSING, sourceId: 'loc', offset: 0 }],
+      [
+        'searchRecordTexts',
+        { personId: MISSING, sourceId: 'loc', offset: 0, query: { ...TEXT, state: 'Atlantis' } },
+      ],
+      [
+        'searchRecordTexts',
+        { personId: MISSING, sourceId: 'loc', offset: 0, query: { ...TEXT, phrase: 'yes' } },
+      ],
+      [
+        'searchRecordTexts',
+        { personId: MISSING, sourceId: 'loc', offset: 0, query: { ...TEXT, fromYear: 0 } },
+      ],
+      [
+        'searchRecordTexts',
+        {
+          personId: MISSING,
+          sourceId: 'loc',
+          offset: 0,
+          query: { ...TEXT, words: 'x'.repeat(201) },
+        },
+      ],
+      [
+        'searchRecordTexts',
+        {
+          personId: MISSING,
+          sourceId: 'loc',
+          offset: 0,
+          query: { ...TEXT, url: 'https://x.example' },
+        },
+      ],
+      ['searchRecordTexts', { personId: MISSING, sourceId: 'loc', offset: 5000, query: TEXT }],
       ['attachRecord', { personId: MISSING, sourceId: 'wikitree' }],
       ['attachRecord', { personId: MISSING, sourceId: 'wikitree', key: '' }],
       [
@@ -1585,7 +1657,21 @@ describe('the search for records', () => {
       birthYear: 1850,
       deathYear: 1915,
     });
-    expect(setup.sources.map((source) => source.id)).toEqual(['wikitree']);
+    expect(setup.sources.map((source) => [source.id, source.searches])).toEqual([
+      ['wikitree', 'person'],
+      ['loc', 'text'],
+      ['internet-archive', 'text'],
+    ]);
+    // Every source says what it is sent.
+    expect(setup.sources.every((source) => source.asks !== '')).toBe(true);
+    // Newspapers are asked for the name as a phrase, from the birth to the year after the death.
+    expect(setup.text).toEqual({
+      words: 'Ada Test',
+      phrase: true,
+      fromYear: 1850,
+      toYear: 1916,
+      state: '',
+    });
     expect(setup.sources[0]?.pausedUntil).toBeNull();
     expect(await call('getRecordSearch', MISSING)).toBeNull();
     expect(askedOfSources).toEqual([]);
@@ -1652,6 +1738,7 @@ describe('the search for records', () => {
       expect(setup.allowed).toBe(false);
       // Nothing of the person is handed to the form.
       expect(setup.query).toEqual({ given: '', surname: '', birthYear: null, deathYear: null });
+      expect(setup.text).toMatchObject({ words: '', fromYear: null, toYear: null });
       expect(await search(person)).toMatchObject({ ok: false, problem: { kind: 'living' } });
     }
     expect(askedOfSources).toEqual([]);
@@ -1906,5 +1993,280 @@ describe('a web page cited by its address', () => {
       page: 'p. 2',
       url: '',
     });
+  });
+});
+
+describe('the search of newspapers and books', () => {
+  const search = (personId: string, sourceId = 'loc', query: object = TEXT, offset = 0) =>
+    call<RecordSearchResult>('searchRecordTexts', { personId, sourceId, query, offset });
+  const attach = (personId: string, sourceId: string, key: string) =>
+    call<AttachRecordResult>('attachRecord', { personId, sourceId, key });
+
+  it('asks the Library of Congress for the words, the years and the state', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await search(ada, 'loc', { ...TEXT, state: 'Vermont' });
+    if (!found.ok) throw new Error(found.problem.message);
+    // The second result does not lead to the Library, and is left out.
+    expect(found.items).toEqual([
+      {
+        connectorId: 'loc',
+        key: 'sn99000001/1903-05-01/ed-1/seq-8',
+        kind: 'text',
+        title: 'Image 8 of The Ashford gazette (Ashford, Vt.), May 1, 1903',
+        url: 'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
+        date: '1 MAY 1903',
+        by: '',
+      },
+    ]);
+    expect(found).toMatchObject({ total: 2, hidden: 0, attached: [], cached: false });
+    expect(askedOfSources).toHaveLength(1);
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe(
+      'https://www.loc.gov/collections/chronicling-america/',
+    );
+    // The words, the years and the state, and nothing else of the tree.
+    expect(Object.fromEntries(asked.searchParams)).toEqual({
+      dl: 'page',
+      ops: 'PHRASE',
+      qs: 'Ada Test',
+      searchType: 'advanced',
+      start_date: '1850-01-01',
+      end_date: '1911-12-31',
+      location_state: 'vermont',
+      fo: 'json',
+      at: 'results,pagination',
+      c: '20',
+      sp: '1',
+    });
+  });
+
+  it('asks the Internet Archive for the words alone', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await search(ada, 'internet-archive', { ...TEXT, state: 'Vermont' });
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items).toEqual([
+      {
+        connectorId: 'internet-archive',
+        key: 'testfamily00exam',
+        kind: 'text',
+        title: 'Test family.',
+        url: 'https://archive.org/details/testfamily00exam',
+        date: '1930',
+        by: 'Fenwick, H.',
+      },
+    ]);
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe('https://archive.org/advancedsearch.php');
+    expect(asked.searchParams.get('q')).toBe('("ada test") AND mediatype:texts');
+    expect(asked.search).not.toContain('1850');
+    expect(asked.search.toLowerCase()).not.toContain('vermont');
+  });
+
+  it('keeps the rules of every search: the notice, living people, a person of the tree', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const rita = await addPerson('Rita', { birthDate: '1990' });
+    expect(await search(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    await call('agreeToRecordSearch');
+    for (const sourceId of ['loc', 'internet-archive']) {
+      expect(await search(rita, sourceId)).toMatchObject({
+        ok: false,
+        problem: { kind: 'living' },
+      });
+      expect(await search(MISSING, sourceId)).toMatchObject({
+        ok: false,
+        problem: { kind: 'gone' },
+      });
+    }
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('refuses what cannot be sent, and a source that has no such search', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    for (const query of [
+      { ...TEXT, words: '   ' },
+      { ...TEXT, fromYear: 1900, toYear: 1850 },
+      { ...TEXT, fromYear: 1600, toYear: 1900 },
+    ]) {
+      expect(await search(ada, 'loc', query)).toMatchObject({
+        ok: false,
+        problem: { kind: 'empty' },
+      });
+    }
+    // WikiTree is not asked for words, and the newspapers are not asked for a person.
+    expect(await search(ada, 'wikitree')).toMatchObject({ ok: false, problem: { kind: 'source' } });
+    expect(
+      await call<RecordSearchResult>('searchRecords', {
+        personId: ada,
+        sourceId: 'loc',
+        query: QUERY,
+        offset: 0,
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'source' } });
+    expect(await search(ada, 'find-a-grave')).toMatchObject({
+      ok: false,
+      problem: { kind: 'source' },
+    });
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('attaches a page of a newspaper and a book as sources', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await search(ada, 'loc');
+    await search(ada, 'internet-archive');
+    const asked = askedOfSources.length;
+
+    const page = await attach(ada, 'loc', 'sn99000001/1903-05-01/ed-1/seq-8');
+    const book = await attach(ada, 'internet-archive', 'testfamily00exam');
+    if (!page.ok || !book.ok) throw new Error('a result was not attached');
+    expect([page.added, book.added]).toEqual([true, true]);
+    expect(book.tree.sources).toBe(2);
+    const cited = (await call<PersonPage>('getPersonPage', ada)).citations;
+    expect(cited).toMatchObject([
+      {
+        sourceTitle: 'Library of Congress (Chronicling America)',
+        page: 'Image 8 of The Ashford gazette (Ashford, Vt.), May 1, 1903 (sn99000001/1903-05-01/ed-1/seq-8)',
+        text: 'Published 1 May 1903',
+        url: 'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
+      },
+      {
+        sourceTitle: 'Internet Archive',
+        page: 'Test family. (testfamily00exam)',
+        text: 'By Fenwick, H.\nPublished 1930',
+        url: 'https://archive.org/details/testfamily00exam',
+      },
+    ]);
+    // Nothing was sent to attach them, and the next search knows them.
+    expect(askedOfSources).toHaveLength(asked);
+    expect(await search(ada, 'loc')).toMatchObject({
+      ok: true,
+      attached: ['sn99000001/1903-05-01/ed-1/seq-8'],
+    });
+    // A result the search never showed is not attached.
+    expect(await attach(ada, 'loc', 'sn99000001/1903-05-01/ed-1/seq-9')).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+  });
+});
+
+describe('the notice of the search, when it has more to say', () => {
+  it('does not count an agreement to an earlier wording', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    // As an earlier build left it: a day, and no number of the wording.
+    setSetting(appDb, RECORD_SEARCH_NOTICE_SETTING, '2026-11-13T12:00:00.000Z');
+    expect((await call<RecordSearchSetup>('getRecordSearch', ada)).agreed).toBe(false);
+    expect(
+      await call<RecordSearchResult>('searchRecords', {
+        personId: ada,
+        sourceId: 'wikitree',
+        query: QUERY,
+        offset: 0,
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    expect(askedOfSources).toEqual([]);
+
+    // A number of the wording that is none is no agreement either.
+    for (const damaged of ['Infinity', '1e9', '2.5', ' 2', '-2', 'two', '', '0']) {
+      setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, damaged);
+      expect((await call<RecordSearchSetup>('getRecordSearch', ada)).agreed, damaged).toBe(false);
+    }
+    // One from a later build counts: a later wording says no less.
+    setSetting(
+      appDb,
+      RECORD_SEARCH_NOTICE_VERSION_SETTING,
+      String(RECORD_SEARCH_NOTICE_VERSION + 1),
+    );
+    expect((await call<RecordSearchSetup>('getRecordSearch', ada)).agreed).toBe(true);
+    setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, '1');
+
+    await call('agreeToRecordSearch');
+    expect(getSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING)).toBe(
+      String(RECORD_SEARCH_NOTICE_VERSION),
+    );
+    expect((await call<RecordSearchSetup>('getRecordSearch', ada)).agreed).toBe(true);
+  });
+});
+
+describe('a source that asks to be left alone', () => {
+  const search = (personId: string) =>
+    call<RecordSearchResult>('searchRecordTexts', {
+      personId,
+      sourceId: 'loc',
+      query: TEXT,
+      offset: 0,
+    });
+
+  it('is still left alone after the app was closed and started again', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    // The Library sends a page that asks whether one is a robot.
+    answerOf = () => new Response('<!DOCTYPE html><html><body>Are you a robot?</body></html>');
+    const paused = await search(ada);
+    expect(paused).toMatchObject({ ok: false, problem: { kind: 'paused' } });
+    if (paused.ok || paused.problem.retryAt === null) throw new Error('no time was given');
+    const until = paused.problem.retryAt;
+    // An hour, as the manifest of the Library says.
+    expect(until - Date.now()).toBeGreaterThan(3_500_000);
+    expect(
+      JSON.parse(getSetting(appDb, recordSearchHostSetting('www.loc.gov')) ?? '{}'),
+    ).toMatchObject({ pausedUntil: until });
+
+    // The app starts again: a new service, the same settings.
+    answerOf = usualAnswer;
+    const again = new RecordSearchService({
+      appDb,
+      appVersion: '0.0.0',
+      fetch: (url) => {
+        askedOfSources.push(url);
+        return Promise.resolve(answerOf(url));
+      },
+    });
+    const sources = again.sources();
+    expect(sources.find((source) => source.id === 'loc')?.pausedUntil).toBe(until);
+    expect(sources.find((source) => source.id === 'wikitree')?.pausedUntil).toBeNull();
+    const asked = askedOfSources.length;
+    expect(
+      await again.searchTexts(session.tree, {
+        personId: ada,
+        sourceId: 'loc',
+        query: TEXT,
+        offset: 0,
+      }),
+    ).toMatchObject({
+      ok: false,
+      problem: { kind: 'paused', retryAt: until },
+    });
+    expect(askedOfSources).toHaveLength(asked);
+  });
+
+  it('goes on when what was kept about a source cannot be read', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    setSetting(appDb, recordSearchHostSetting('www.loc.gov'), 'not JSON');
+    const service = new RecordSearchService({
+      appDb,
+      appVersion: '0.0.0',
+      fetch: (url) => Promise.resolve(answerOf(url)),
+    });
+    expect(
+      await service.searchTexts(session.tree, {
+        personId: ada,
+        sourceId: 'loc',
+        query: TEXT,
+        offset: 0,
+      }),
+    ).toMatchObject({ ok: true });
   });
 });

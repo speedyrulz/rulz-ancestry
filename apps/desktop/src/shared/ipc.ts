@@ -17,6 +17,7 @@ import type {
   Pedigree,
   PersonQuery,
   Sex,
+  TextQuery,
 } from '@rulz/core';
 
 export interface AppInfo {
@@ -549,6 +550,10 @@ export interface RecordSourceInfo {
   /** The source's id, as in its manifest. */
   id: string;
   name: string;
+  /** What the source is asked for: a person, or words that a text has. */
+  searches: 'person' | 'text';
+  /** What of the search form is sent to the source, in words for the user. */
+  asks: string;
   /** The credit shown with every result of the source. */
   attribution: string;
   /** The page with the source's terms. */
@@ -574,6 +579,8 @@ export interface RecordSearchSetup {
   agreed: boolean;
   /** The person's name and years. Empty when `allowed` is false. */
   query: PersonQuery;
+  /** What the search of newspapers and books starts with. Empty when `allowed` is false. */
+  text: TextQuery;
   sources: RecordSourceInfo[];
   /** The sites a search can be opened at in the browser. */
   links: RecordLinkInfo[];
@@ -589,12 +596,23 @@ export interface RecordSearchRequest {
   offset: number;
 }
 
+/** A search of a source of newspapers or books. */
+export interface TextSearchRequest {
+  /** The person the search is for. Nothing is sent when they may be living. */
+  personId: string;
+  sourceId: string;
+  /** What is sent to the source: this, or the part of it the source is asked for, and nothing else. */
+  query: TextQuery;
+  /** How many results come before the first that is asked for. */
+  offset: number;
+}
+
 export interface RecordSearchProblem {
   kind:
     | 'notice' /* the user has not agreed to the notice */
     | 'living' /* the person may be living */
     | 'gone' /* the person is no longer in the tree */
-    | 'empty' /* the query names nobody */
+    | 'empty' /* the query names nobody, or cannot be sent as it is */
     | 'source' /* the source is not known */
     | 'record' /* the record is not one the search showed for this person */
     | 'paused' /* the source must be left alone until `retryAt` */
@@ -940,6 +958,11 @@ export interface RulzApi {
    * person is not one who may be living.
    */
   searchRecords(request: RecordSearchRequest): Promise<RecordSearchResult>;
+  /**
+   * Asks one source of newspapers or books for words. The same rules hold as
+   * for `searchRecords`.
+   */
+  searchRecordTexts(request: TextSearchRequest): Promise<RecordSearchResult>;
   /** Gives up the searches that are under way. For when the search window closes. */
   cancelRecordSearch(): Promise<void>;
   /**
@@ -1115,6 +1138,7 @@ export const API_METHODS = [
   'getRecordSearch',
   'agreeToRecordSearch',
   'searchRecords',
+  'searchRecordTexts',
   'cancelRecordSearch',
   'attachRecord',
   'openRecordLink',

@@ -7,6 +7,8 @@ import {
   NOTE_MAX,
   PLACE_TEXT_MAX,
   SOURCE_LIMITS,
+  TEXT_QUERY_MAX,
+  US_STATES,
   canOpenOutside,
   cleanDay,
   formatGazetteerPlace,
@@ -294,6 +296,15 @@ const personQuery = z.strictObject({
   surname: text(100),
   birthYear: z.number().int().min(1).max(9999).nullable(),
   deathYear: z.number().int().min(1).max(9999).nullable(),
+});
+
+/** What a source of newspapers or books is asked for. Whether the years fit each other is looked at where it is sent. */
+const textQuery = z.strictObject({
+  words: text(TEXT_QUERY_MAX),
+  phrase: z.boolean(),
+  fromYear: z.number().int().min(1).max(9999).nullable(),
+  toYear: z.number().int().min(1).max(9999).nullable(),
+  state: z.string().refine((state) => state === '' || US_STATES.includes(state)),
 });
 
 const siteId = z.string().regex(/^[a-z0-9-]{1,40}$/);
@@ -638,6 +649,18 @@ export function createHandlers(
         }),
       ]),
       (request) => records.search(session.tree, request),
+    ),
+
+    searchRecordTexts: define<'searchRecordTexts'>(
+      z.tuple([
+        z.strictObject({
+          personId: id,
+          sourceId: siteId,
+          query: textQuery,
+          offset: z.number().int().min(0).max(1000),
+        }),
+      ]),
+      (request) => records.searchTexts(session.tree, request),
     ),
 
     cancelRecordSearch: define<'cancelRecordSearch'>(none, () => records.cancel()),

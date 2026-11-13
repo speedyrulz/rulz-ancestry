@@ -30,7 +30,7 @@ test('creates its database inside the profile folder', async ({ window, userData
 
 test('lists the data sources from the connector registry', async ({ window }) => {
   await expect(window.getByTestId('source-count')).toHaveText(
-    '8 (4 live, 2 downloadable, 2 link-only)',
+    '9 (5 live, 2 downloadable, 2 link-only)',
   );
 });
 

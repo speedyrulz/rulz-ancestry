@@ -1702,6 +1702,18 @@ ul.media-grid,
   justify-self: start;
 }
 
+.record-check {
+  grid-column: 1 / -1;
+}
+
+.record-form select {
+  width: 100%;
+}
+
+.record-form .hint ul {
+  margin: 0.25rem 0;
+}
+
 .record-source {
   margin-top: 1.25rem;
   border-top: 1px solid var(--border);

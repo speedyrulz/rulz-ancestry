@@ -84,6 +84,27 @@ export interface HttpClientOptions {
   pauseMs?: number;
   /** How many answers are kept in memory. */
   cacheEntries?: number;
+  /** Where the client keeps what must outlast the app. Without it, that is forgotten when the app closes. */
+  memory?: HostMemory;
+}
+
+/** What is kept about a host for the next time the app runs. */
+export interface HostRecord {
+  /** Until when the host must be left alone, in Unix milliseconds; 0 when it may be asked. */
+  pausedUntil: number;
+  /** The times of the last requests, in Unix milliseconds, oldest first. */
+  sent: number[];
+}
+
+/**
+ * A place outside the client for what it knows about a host. A source that
+ * shuts a client out for an hour does so whether or not the app was closed in
+ * between, and so does its count of requests per minute.
+ */
+export interface HostMemory {
+  /** What was kept about a host. Whatever comes back is checked before it is used. */
+  load(host: string): unknown;
+  save(host: string, record: HostRecord): void;
 }
 
 export interface JsonRequest {
@@ -126,6 +147,9 @@ const DEFAULTS = {
 
 /** The longest pause a source can ask for. A longer one is cut to this. */
 const LONGEST_PAUSE_MS = 24 * 3_600_000;
+
+/** No more times of requests than this are kept about a host. */
+const SENT_KEPT = 1000;
 
 const defaultWait = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -218,6 +242,7 @@ export class HttpClient {
   readonly #maxBytes: number;
   readonly #pauseMs: number;
   readonly #cacheEntries: number;
+  readonly #memory: HostMemory | undefined;
   readonly #hosts = new Map<string, HostState>();
   /** Answers by address. A Map keeps the order they were put in, oldest first. */
   readonly #kept = new Map<string, Kept>();
@@ -236,6 +261,7 @@ export class HttpClient {
     this.#maxBytes = options.maxBytes ?? DEFAULTS.maxBytes;
     this.#pauseMs = options.pauseMs ?? DEFAULTS.pauseMs;
     this.#cacheEntries = options.cacheEntries ?? DEFAULTS.cacheEntries;
+    this.#memory = options.memory;
   }
 
   /** The client of one source. */
@@ -257,7 +283,7 @@ export class HttpClient {
 
   /** Until when a source must be left alone, in Unix milliseconds; null when it may be asked. */
   pausedUntil(manifest: ConnectorManifest): number | null {
-    const until = this.#hosts.get(new URL(manifest.baseUrl).host)?.pausedUntil ?? 0;
+    const until = this.#host(new URL(manifest.baseUrl).host).pausedUntil;
     return until > this.#now() ? until : null;
   }
 
@@ -322,22 +348,16 @@ export class HttpClient {
       }
       if (response.status === 429 || response.status === 503) {
         const asked = retryAfterMs(response.headers.get('retry-after'), this.#now());
-        // A source that says "too many" and "ask again now" in one breath is
-        // still left alone for the span of its limit.
-        const least = (manifest.rateLimit?.perSeconds ?? 0) * 1000;
-        const pause = Math.min(Math.max(asked ?? this.#pauseOf(manifest), least), LONGEST_PAUSE_MS);
-        const until = this.#now() + pause;
-        // A pause is never cut short by a later answer that asks for a shorter one.
-        const host = this.#host(url.host);
-        host.pausedUntil = Math.max(host.pausedUntil, until);
         await response.body?.cancel().catch(() => undefined);
-        throw new HttpError('paused', `${manifest.name} asks to be left alone for a while.`, {
-          status: response.status,
-          retryAt: this.#host(url.host).pausedUntil,
-        });
+        throw this.#pause(manifest, url.host, asked, response.status);
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
+        // "Forbidden" is how a source that names its own pause shuts a client
+        // out, or asks it to prove that it is no robot.
+        if (response.status === 403 && manifest.pauseSeconds !== undefined) {
+          throw this.#pause(manifest, url.host, null, response.status);
+        }
         throw new HttpError('status', `${manifest.name} answered with error ${response.status}.`, {
           status: response.status,
         });
@@ -353,6 +373,13 @@ export class HttpClient {
       try {
         data = JSON.parse(text);
       } catch {
+        // A source that names its own pause sends a web page in place of an
+        // answer when it has been asked too often: a page that asks to prove
+        // one is no robot. Asking on would make it worse.
+        const page = /^\s*</.test(text) || /html/i.test(response.headers.get('content-type') ?? '');
+        if (manifest.pauseSeconds !== undefined && page) {
+          throw this.#pause(manifest, url.host, null, response.status);
+        }
         throw new HttpError('format', `${manifest.name} answered with something other than JSON.`);
       }
       const fetchedAt = this.#now();
@@ -380,13 +407,103 @@ export class HttpClient {
     return manifest.pauseSeconds === undefined ? this.#pauseMs : manifest.pauseSeconds * 1000;
   }
 
+  /**
+   * Leaves a host alone from now on: for as long as it asked, or for the
+   * manifest's own pause. Gives the error to throw.
+   */
+  #pause(
+    manifest: ConnectorManifest,
+    hostName: string,
+    asked: number | null,
+    status: number,
+  ): HttpError {
+    // A source that says "too many" and "ask again now" in one breath is
+    // still left alone for the span of its limit.
+    // And one whose manifest names a pause is left alone for that long at
+    // least: it is how long the source says it shuts a client out, and asking
+    // again meanwhile can make it longer.
+    const least = Math.max(
+      (manifest.rateLimit?.perSeconds ?? 0) * 1000,
+      (manifest.pauseSeconds ?? 0) * 1000,
+    );
+    const pause = Math.min(Math.max(asked ?? this.#pauseOf(manifest), least), LONGEST_PAUSE_MS);
+    // A pause is never cut short by a later answer that asks for a shorter one.
+    const host = this.#host(hostName);
+    host.pausedUntil = Math.max(host.pausedUntil, this.#now() + pause);
+    this.#remember(hostName, host);
+    return new HttpError('paused', `${manifest.name} asks to be left alone for a while.`, {
+      status,
+      retryAt: host.pausedUntil,
+    });
+  }
+
   #host(host: string): HostState {
     let state = this.#hosts.get(host);
     if (state === undefined) {
-      state = { sent: [], pausedUntil: 0, turn: Promise.resolve() };
+      const recalled = this.#recall(host);
+      state = { ...recalled, turn: Promise.resolve() };
       this.#hosts.set(host, state);
+      // What was read is kept as it was understood: a pause that was cut to
+      // a day ends in a day, and is not cut to a day again at the next start.
+      if (recalled.pausedUntil > 0 || recalled.sent.length > 0) this.#remember(host, state);
     }
+    return this.#settle(state);
+  }
+
+  /**
+   * Puts right what a clock that was set back would leave wrong: a request
+   * counts as sent now at the latest, and a pause ends a day from now at the
+   * latest. Without this, a source could be shut until the app is started again.
+   */
+  #settle(state: HostState): HostState {
+    const now = this.#now();
+    if (state.pausedUntil > now + LONGEST_PAUSE_MS) state.pausedUntil = now + LONGEST_PAUSE_MS;
+    if (state.sent.some((at) => at > now)) state.sent = state.sent.map((at) => Math.min(at, now));
     return state;
+  }
+
+  /**
+   * What was kept about a host when the app last ran. Nothing of it is taken
+   * on trust: a pause ends a day from now at the latest, and a request counts
+   * as sent now at the latest, whatever a changed clock or a damaged setting says.
+   */
+  #recall(host: string): HostRecord {
+    const nothing: HostRecord = { pausedUntil: 0, sent: [] };
+    if (this.#memory === undefined) return nothing;
+    let kept: unknown;
+    try {
+      kept = this.#memory.load(host);
+    } catch {
+      return nothing;
+    }
+    if (typeof kept !== 'object' || kept === null) return nothing;
+    const { pausedUntil, sent } = kept as Record<string, unknown>;
+    const now = this.#now();
+    const isTime = (value: unknown): value is number =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0;
+    return {
+      pausedUntil: isTime(pausedUntil) ? Math.min(pausedUntil, now + LONGEST_PAUSE_MS) : 0,
+      sent: Array.isArray(sent)
+        ? sent
+            .filter(isTime)
+            .slice(-SENT_KEPT)
+            .map((at) => Math.min(at, now))
+            .sort((a, b) => a - b)
+        : [],
+    };
+  }
+
+  /** Keeps what is known about a host for the next time the app runs. A failure to keep it stops nothing. */
+  #remember(host: string, state: HostState): void {
+    if (this.#memory === undefined) return;
+    try {
+      this.#memory.save(host, {
+        pausedUntil: state.pausedUntil,
+        sent: state.sent.slice(-SENT_KEPT),
+      });
+    } catch {
+      // The search goes on; the pause still holds while the app runs.
+    }
   }
 
   /**
@@ -414,6 +531,7 @@ export class HttpClient {
       for (;;) {
         if (signal.aborted) throw new HttpError('cancelled', 'The request was given up.');
         const now = this.#now();
+        this.#settle(state);
         if (state.pausedUntil > now) {
           throw new HttpError('paused', `${manifest.name} asks to be left alone for a while.`, {
             retryAt: state.pausedUntil,
@@ -422,6 +540,7 @@ export class HttpClient {
         state.sent = state.sent.filter((at) => at > now - span);
         if (state.sent.length < limit.requests) {
           state.sent.push(now);
+          this.#remember(host, state);
           return;
         }
         const free = (state.sent[0] ?? now) + span;

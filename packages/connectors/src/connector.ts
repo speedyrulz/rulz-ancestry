@@ -1,20 +1,49 @@
-import type { ExternalRecord, Page, PageRequest, PersonQuery } from '@rulz/core';
+import type {
+  ExternalRecord,
+  Page,
+  PageRequest,
+  PersonQuery,
+  PersonRecord,
+  TextQuery,
+  TextRecord,
+} from '@rulz/core';
 import type { ConnectorManifest } from './manifest';
 
 /**
  * What every source that can be searched offers. A connector is made with the
  * client of its source (see `http.ts`) and reads the source's answers into
- * the shapes of `@rulz/core`. Later parts add a search by text, the reading of
- * one record and of a person's relatives.
+ * the shapes of `@rulz/core`. A source offers the searches it has: one that
+ * keeps people is asked for a person, one that keeps newspapers or books for
+ * words. Later parts add the reading of one record and of a person's relatives.
  */
 export interface SourceConnector {
   readonly manifest: ConnectorManifest;
   /** Looks for records of a person. Rejects with an `HttpError` or a `ConnectorError`. */
-  searchPersons(
+  searchPersons?(
     query: PersonQuery,
     page: PageRequest,
     options?: SearchOptions,
   ): Promise<SearchAnswer>;
+  /** Looks for texts that have some words. Rejects with an `HttpError` or a `ConnectorError`. */
+  searchTexts?(query: TextQuery, page: PageRequest, options?: SearchOptions): Promise<SearchAnswer>;
+}
+
+/** A source that is asked for a person. */
+export interface PersonConnector extends SourceConnector {
+  searchPersons(
+    query: PersonQuery,
+    page: PageRequest,
+    options?: SearchOptions,
+  ): Promise<SearchAnswer<PersonRecord>>;
+}
+
+/** A source that is asked for words. */
+export interface TextConnector extends SourceConnector {
+  searchTexts(
+    query: TextQuery,
+    page: PageRequest,
+    options?: SearchOptions,
+  ): Promise<SearchAnswer<TextRecord>>;
 }
 
 export interface SearchOptions {
@@ -27,8 +56,8 @@ export interface SearchOptions {
   beforeSend?: () => void;
 }
 
-export interface SearchAnswer {
-  page: Page<ExternalRecord>;
+export interface SearchAnswer<R extends ExternalRecord = ExternalRecord> {
+  page: Page<R>;
   /** When the source gave this answer, in Unix milliseconds. */
   fetchedAt: number;
   /** True when the answer was kept from an earlier search and nothing was sent. */

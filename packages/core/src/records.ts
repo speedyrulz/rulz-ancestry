@@ -15,6 +15,112 @@ export interface PersonQuery {
   deathYear: number | null;
 }
 
+/**
+ * What is asked of a source of texts: newspapers, books. Words are looked for
+ * in the text or its description; a year says when it was published, which is
+ * not when the person lived.
+ */
+export interface TextQuery {
+  /** The words to look for. */
+  words: string;
+  /** True when the words must stand together, in this order. */
+  phrase: boolean;
+  /** Published in this year or later; null when not asked. */
+  fromYear: number | null;
+  /** Published in this year or earlier; null when not asked. */
+  toYear: number | null;
+  /** A state of the United States a newspaper was published in, from `US_STATES`; empty when not asked. */
+  state: string;
+}
+
+/** The longest words a text query may hold, in characters. */
+export const TEXT_QUERY_MAX = 200;
+
+/** The widest span of years a text query may ask for. A wider one finds too much to page through. */
+export const TEXT_QUERY_YEAR_SPAN = 150;
+
+/** The states a search of newspapers can be kept to. */
+export const US_STATES: readonly string[] = [
+  'Alabama',
+  'Alaska',
+  'Arizona',
+  'Arkansas',
+  'California',
+  'Colorado',
+  'Connecticut',
+  'Delaware',
+  'District of Columbia',
+  'Florida',
+  'Georgia',
+  'Hawaii',
+  'Idaho',
+  'Illinois',
+  'Indiana',
+  'Iowa',
+  'Kansas',
+  'Kentucky',
+  'Louisiana',
+  'Maine',
+  'Maryland',
+  'Massachusetts',
+  'Michigan',
+  'Minnesota',
+  'Mississippi',
+  'Missouri',
+  'Montana',
+  'Nebraska',
+  'Nevada',
+  'New Hampshire',
+  'New Jersey',
+  'New Mexico',
+  'New York',
+  'North Carolina',
+  'North Dakota',
+  'Ohio',
+  'Oklahoma',
+  'Oregon',
+  'Pennsylvania',
+  'Puerto Rico',
+  'Rhode Island',
+  'South Carolina',
+  'South Dakota',
+  'Tennessee',
+  'Texas',
+  'Utah',
+  'Vermont',
+  'Virginia',
+  'Washington',
+  'West Virginia',
+  'Wisconsin',
+  'Wyoming',
+];
+
+/** The words of a text query as they are sent: trimmed, with one space between them. */
+export function textQueryWords(query: TextQuery): string {
+  return query.words.trim().replace(/\s+/g, ' ');
+}
+
+/** True when a text query asks nothing: a source is not asked then. */
+export function isEmptyTextQuery(query: TextQuery): boolean {
+  return textQueryWords(query) === '';
+}
+
+/**
+ * Why a text query cannot be sent, in words for the user; null when it can.
+ * An empty one is not a fault of this kind (see `isEmptyTextQuery`).
+ */
+export function textQueryProblem(query: TextQuery): string | null {
+  const { fromYear, toYear } = query;
+  if (fromYear !== null && toYear !== null) {
+    if (fromYear > toYear) return 'The first year is after the last.';
+    if (toYear - fromYear > TEXT_QUERY_YEAR_SPAN) {
+      return `Ask for at most ${TEXT_QUERY_YEAR_SPAN} years at a time.`;
+    }
+  }
+  if (query.state !== '' && !US_STATES.includes(query.state)) return 'This state is not known.';
+  return null;
+}
+
 /** How many years to either side of a year of a query a record may lie. */
 export const QUERY_YEAR_SPREAD = 2;
 
@@ -50,20 +156,39 @@ export interface ExternalFact {
   place: string;
 }
 
-/** One result of a search. All of its texts are plain text, never HTML. */
-export interface ExternalRecord {
+/** What every result of a search has. All of its texts are plain text, never HTML. */
+interface RecordBase {
   /** The source's id, as in its manifest. */
   connectorId: string;
   /** What the source calls the record. With the source's id it names the record for good. */
   key: string;
-  kind: 'person';
   /** The line the record is shown under: for a person, their name. */
   title: string;
   /** The record's page at the source, for the user's browser. Always HTTPS, on the source's own site. */
   url: string;
+}
+
+/** A person, as a source that keeps people knows them. */
+export interface PersonRecord extends RecordBase {
+  kind: 'person';
   sex: 'M' | 'F' | null;
   facts: ExternalFact[];
 }
+
+/**
+ * A text: a page of a newspaper, a book. It was found by its words; whether it
+ * is about the person is for the user to read.
+ */
+export interface TextRecord extends RecordBase {
+  kind: 'text';
+  /** When it was published, in the wording of a GEDCOM file; empty when not given. */
+  date: string;
+  /** Who wrote or published it, as the source says; empty when not given. */
+  by: string;
+}
+
+/** One result of a search. */
+export type ExternalRecord = PersonRecord | TextRecord;
 
 /** True when a query asks nothing: a source is not asked then. */
 export function isEmptyQuery(query: PersonQuery): boolean {
