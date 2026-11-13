@@ -311,6 +311,10 @@ docs/                 Plan and access checklist
   `%APPDATA%\RulZ Ancestry (dev)` and makes new trees in
   `Documents\RulZ Ancestry (dev)`, not in the installed app's folders. The
   end-to-end tests keep everything inside a temporary profile folder.
+- **A test that measures time runs apart.** A test file with a time limit is
+  listed under `TIMED` in `vitest.config.ts`. `pnpm test` runs those files
+  after all the others, one at a time, so that the limit measures the code and
+  not how busy the machine is with the other tests.
 
 ## Dependency updates
 
