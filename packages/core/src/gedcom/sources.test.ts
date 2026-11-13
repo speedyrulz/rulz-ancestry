@@ -5,11 +5,13 @@ import {
   citationKey,
   citedSource,
   cleanCitationFields,
+  cleanDay,
   cleanSourceFields,
   patchCitation,
   patchSource,
   readCitation,
   readSource,
+  webAddressProblem,
   type CitationFields,
   type SourceFields,
 } from './sources';
@@ -37,7 +39,14 @@ const NO_SOURCE: SourceFields = {
   text: '',
   note: '',
 };
-const NO_CITATION: CitationFields = { page: '', text: '', quality: null, note: '' };
+const NO_CITATION: CitationFields = {
+  page: '',
+  text: '',
+  quality: null,
+  note: '',
+  url: '',
+  accessedAt: '',
+};
 
 const ANCESTRY_SOURCE = [
   '0 @S1@ SOUR',
@@ -177,6 +186,8 @@ describe('readCitation', () => {
       text: 'John, son of Tom\nand Mary',
       quality: 3,
       note: 'Hard to read',
+      url: '',
+      accessedAt: '',
     });
   });
 
@@ -242,7 +253,11 @@ describe('patchCitation', () => {
 
   it('writes a new citation with only what is filled in', () => {
     expect(written(patchCitation(null, NO_CITATION, 'S9'), 1)).toEqual(['1 SOUR @S9@']);
-    const made = patchCitation(null, { page: 'p. 1', text: 'a\nb', quality: 0, note: 'n' }, 'S9');
+    const made = patchCitation(
+      null,
+      { ...NO_CITATION, page: 'p. 1', text: 'a\nb', quality: 0, note: 'n' },
+      'S9',
+    );
     expect(written(made, 2)).toEqual([
       '2 SOUR @S9@',
       '3 PAGE p. 1',
@@ -274,8 +289,204 @@ describe('patchCitation', () => {
       '3 SNOTE @N1@',
     ];
     const original = one(lines, '7.0');
-    expect(readCitation(original)).toEqual({ page: 'p. 4', text: 'words', quality: 2, note: '' });
+    expect(readCitation(original)).toEqual({
+      ...NO_CITATION,
+      page: 'p. 4',
+      text: 'words',
+      quality: 2,
+    });
     expect(written(patchCitation(original, readCitation(original), 'S1'), 2, '7.0')).toEqual(lines);
+  });
+});
+
+describe('the web address of a citation, and the day it was consulted', () => {
+  // The address is made up; the shape is what Ancestry writes.
+  const WITH_ADDRESS = [
+    '2 SOUR @S1@',
+    '3 PAGE Year: 1900; Roll: 12',
+    '3 DATA',
+    '4 WWW https://records.example/view?id=12&pid=7',
+    '3 _APID 1,7602::123',
+  ];
+
+  it('reads the address Ancestry writes under DATA', () => {
+    const read = readCitation(one(WITH_ADDRESS));
+    expect(read.url).toBe('https://records.example/view?id=12&pid=7');
+    expect(read.accessedAt).toBe('');
+  });
+
+  it('gives the lines of a file back when nothing has changed', () => {
+    const original = one(WITH_ADDRESS);
+    expect(written(patchCitation(original, readCitation(original), 'S1'), 2)).toEqual(WITH_ADDRESS);
+  });
+
+  it('keeps an address of a file as it is written, even one that is no address', () => {
+    const lines = ['2 SOUR @S1@', '3 DATA', '4 WWW www.example.org/a page'];
+    const original = one(lines);
+    expect(readCitation(original).url).toBe('www.example.org/a page');
+    expect(written(patchCitation(original, readCitation(original), 'S1'), 2)).toEqual(lines);
+  });
+
+  it('writes a new citation with its address and the day', () => {
+    const made = patchCitation(
+      null,
+      { ...NO_CITATION, page: 'p. 1', url: 'https://example.org/r/1', accessedAt: '2026-11-03' },
+      'S9',
+    );
+    expect(written(made, 2)).toEqual([
+      '2 SOUR @S9@',
+      '3 PAGE p. 1',
+      '3 DATA',
+      '4 WWW https://example.org/r/1',
+      '3 _RULZ_ACCESSED 3 NOV 2026',
+    ]);
+    expect(readCitation(made)).toEqual({
+      ...NO_CITATION,
+      page: 'p. 1',
+      url: 'https://example.org/r/1',
+      accessedAt: '2026-11-03',
+    });
+  });
+
+  it('writes the address under a tag of its own in GEDCOM 7.0, which has no WWW there', () => {
+    const fields = { ...NO_CITATION, text: 'words', url: 'https://example.org/r/1' };
+    const made = patchCitation(null, fields, 'S9', '7.0');
+    expect(written(made, 2, '7.0')).toEqual([
+      '2 SOUR @S9@',
+      '3 DATA',
+      '4 TEXT words',
+      '4 _WWW https://example.org/r/1',
+    ]);
+    expect(readCitation(made).url).toBe('https://example.org/r/1');
+    // A line that is there keeps its tag, whichever it is.
+    const changed = patchCitation(
+      one(WITH_ADDRESS, '7.0'),
+      { ...readCitation(one(WITH_ADDRESS, '7.0')), url: 'https://example.org/other' },
+      'S1',
+      '7.0',
+    );
+    expect(written(changed, 2, '7.0')).toContain('4 WWW https://example.org/other');
+  });
+
+  it('changes only the line of the address, and takes an emptied one away with its DATA line', () => {
+    const original = one(WITH_ADDRESS);
+    const changed = patchCitation(
+      original,
+      { ...readCitation(original), url: 'https://example.org/new' },
+      'S1',
+    );
+    expect(written(changed, 2)).toEqual([
+      WITH_ADDRESS[0],
+      WITH_ADDRESS[1],
+      '3 DATA',
+      '4 WWW https://example.org/new',
+      WITH_ADDRESS[4],
+    ]);
+    const emptied = patchCitation(original, { ...readCitation(original), url: '' }, 'S1');
+    expect(written(emptied, 2)).toEqual([WITH_ADDRESS[0], WITH_ADDRESS[1], WITH_ADDRESS[4]]);
+  });
+
+  it('takes every address line away when the address is emptied', () => {
+    const original = one([
+      '2 SOUR @S1@',
+      '3 DATA',
+      '4 DATE 1900',
+      '4 WWW https://example.org/one',
+      '4 WWW https://example.org/two',
+    ]);
+    // Changing the first leaves the second alone.
+    const changed = patchCitation(
+      original,
+      { ...readCitation(original), url: 'https://example.org/new' },
+      'S1',
+    );
+    expect(written(changed, 2)).toEqual([
+      '2 SOUR @S1@',
+      '3 DATA',
+      '4 DATE 1900',
+      '4 WWW https://example.org/new',
+      '4 WWW https://example.org/two',
+    ]);
+    const emptied = patchCitation(original, { ...readCitation(original), url: '' }, 'S1');
+    expect(written(emptied, 2)).toEqual(['2 SOUR @S1@', '3 DATA', '4 DATE 1900']);
+    expect(readCitation(emptied).url).toBe('');
+  });
+
+  it('adds, changes and removes the day', () => {
+    const original = one(WITH_ADDRESS);
+    const dated = patchCitation(
+      original,
+      { ...readCitation(original), accessedAt: '2026-01-31' },
+      'S1',
+    );
+    expect(written(dated, 2)).toContain('3 _RULZ_ACCESSED 31 JAN 2026');
+    expect(readCitation(dated).accessedAt).toBe('2026-01-31');
+    const cleared = patchCitation(dated, { ...readCitation(dated), accessedAt: '' }, 'S1');
+    expect(written(cleared, 2).join('\n')).not.toContain('_RULZ_ACCESSED');
+  });
+
+  it('reads a day only when it is one whole day', () => {
+    const day = (value: string) =>
+      readCitation(one(['2 SOUR @S1@', `3 _RULZ_ACCESSED ${value}`])).accessedAt;
+    expect(day('3 nov 2026')).toBe('2026-11-03');
+    expect(day('NOV 2026')).toBe('');
+    expect(day('ABT 3 NOV 2026')).toBe('');
+    expect(day('31 FEB 2026')).toBe('');
+  });
+
+  it('tells two citations apart that differ in their address only', () => {
+    const other = WITH_ADDRESS.map((line) => line.replace('id=12', 'id=13'));
+    expect(citationKey(one(WITH_ADDRESS))).not.toBe(citationKey(one(other)));
+  });
+});
+
+describe('cleanDay', () => {
+  it('takes a day that exists and nothing else', () => {
+    expect(cleanDay(' 2026-11-13 ')).toBe('2026-11-13');
+    expect(cleanDay('2024-02-29')).toBe('2024-02-29');
+    expect(cleanDay('2026-02-29')).toBe('');
+    expect(cleanDay('2026-13-01')).toBe('');
+    expect(cleanDay('0000-01-01')).toBe('');
+    expect(cleanDay('0050-01-01')).toBe('0050-01-01');
+    expect(cleanDay('13 NOV 2026')).toBe('');
+    expect(cleanDay('')).toBe('');
+  });
+});
+
+describe('webAddressProblem', () => {
+  it('takes an address of the web, and an empty field', () => {
+    for (const address of [
+      '',
+      '  ',
+      'https://example.org',
+      'http://example.org/a?b=c&utm_source=x#d',
+      ' https://example.org/caf%C3%A9 ',
+      'https://xn--bcher-kva.example/',
+    ]) {
+      expect(webAddressProblem(address), address).toBeNull();
+    }
+  });
+
+  it('says why anything else is not one', () => {
+    for (const address of [
+      'example.org',
+      'www.example.org/page',
+      'ftp://example.org/file',
+      'file:///C:/notes.txt',
+      'javascript:alert(1)',
+      'data:text/html,hello',
+      'https://',
+      'https://user:secret@example.org/',
+      'https://user@example.org/',
+      'https://example.org/a b',
+      'https://example.org/a\nb',
+      // Marks that are not seen: a zero-width space, and one that turns the reading order.
+      `https://example.org/a${String.fromCharCode(0x200b)}b`,
+      `https://example.org/${String.fromCharCode(0x202e)}moc.elpmaxe`,
+      `https://example.org/${'a'.repeat(2100)}`,
+    ]) {
+      expect(webAddressProblem(address), address).toEqual(expect.any(String));
+    }
   });
 });
 
@@ -321,5 +532,15 @@ describe('cleaning what a form sends', () => {
   it('treats a quality outside 0 to 3 as not stated', () => {
     expect(cleanCitationFields({ ...NO_CITATION, quality: 7 }).quality).toBeNull();
     expect(cleanCitationFields({ ...NO_CITATION, quality: 0 }).quality).toBe(0);
+  });
+
+  it('keeps an address on one line and a day only when it is one', () => {
+    const clean = cleanCitationFields({
+      ...NO_CITATION,
+      url: ' https://example.org/a\n ',
+      accessedAt: 'yesterday',
+    });
+    expect(clean.url).toBe('https://example.org/a');
+    expect(clean.accessedAt).toBe('');
   });
 });

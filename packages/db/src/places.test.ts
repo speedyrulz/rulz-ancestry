@@ -406,7 +406,7 @@ describe('the upgrade to schema version 8', () => {
     importGedcom(older, inputOf(FILE));
     expect(schemaVersion(older.db)).toBe(7);
     const before = snapshot(older);
-    migrate(older.db, treeMigrations);
+    migrate(older.db, treeMigrations.slice(0, 8));
     expect(schemaVersion(older.db)).toBe(8);
 
     const fresh = memoryTree();

@@ -7,6 +7,7 @@ export const wikitreeManifest = defineManifest({
   auth: 'none',
   access: 'open',
   baseUrl: 'https://api.wikitree.com/api.php',
+  siteUrl: 'https://www.wikitree.com',
   rateLimit: { requests: 200, perSeconds: 60, source: 'published' },
   cacheTtlHours: 24,
   mayStoreImages: false,

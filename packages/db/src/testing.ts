@@ -366,18 +366,29 @@ export function undoDepth(tree: Tree): number {
  * a migration use it to edit a tree as an older build did, before upgrading it.
  */
 export function withLaterColumns(tree: Tree, fn: () => void): void {
-  const tables = ['person', 'event', 'source'].filter(
-    (table) =>
+  const later: readonly (readonly [table: string, column: string, type: string])[] = [
+    ['person', 'note', "TEXT NOT NULL DEFAULT ''"],
+    ['event', 'note', "TEXT NOT NULL DEFAULT ''"],
+    ['source', 'note', "TEXT NOT NULL DEFAULT ''"],
+    ['source', 'connector_id', 'TEXT'],
+    ['citation', 'url', "TEXT NOT NULL DEFAULT ''"],
+    ['citation', 'accessed_at', "TEXT NOT NULL DEFAULT ''"],
+  ];
+  const added = later.filter(
+    ([table, column]) =>
       tree.db.prepare('SELECT 1 FROM sqlite_master WHERE name = ?').get(table) !== undefined &&
-      tree.db.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = 'note'`).get() ===
-        undefined,
+      tree.db
+        .prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = '${column}'`)
+        .get() === undefined,
   );
-  for (const table of tables) {
-    tree.db.exec(`ALTER TABLE ${table} ADD COLUMN note TEXT NOT NULL DEFAULT ''`);
+  for (const [table, column, type] of added) {
+    tree.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
   try {
     fn();
   } finally {
-    for (const table of tables) tree.db.exec(`ALTER TABLE ${table} DROP COLUMN note`);
+    for (const [table, column] of added) {
+      tree.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+    }
   }
 }

@@ -19,7 +19,10 @@ been tried and comes back out line for line. The app offers places while you
 type, and can link each place of a tree to where it lies on the map, from a
 list of the world's places that it downloads when you ask. A person's page
 tells their life as a timeline and marks its places on a map. Phase 2 is
-complete with that; there is no record search yet. See
+complete with that. Phase 3 has started: the app can search WikiTree for a
+person of your tree and attach a result to the person as a source with one
+click. It opens a search at Find a Grave or FamilySearch in your browser, and
+a page you find there becomes a source when you paste its address. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -72,8 +75,10 @@ Sources:
 - **Sources in a GEDCOM file** are read into these screens and written back.
   A tree imported by an earlier build is upgraded when it is opened, after a
   copy of it is put in its backups folder.
-- Where a source is kept (an archive, a website) and the web address of a
-  record have no fields of their own yet.
+- **A citation can carry the web address of the record** and the day you
+  looked at it. Both are read from and written to GEDCOM files; an address
+  Ancestry wrote for a record is shown and opens in your browser.
+- Where a source is kept (an archive, a website) has no field of its own yet.
 
 Pictures and documents:
 
@@ -129,8 +134,8 @@ Places:
   village, township and county of the United States, the Netherlands, the
   United Kingdom, Ireland, Australia and New Zealand, and the towns of 500
   people and more elsewhere. It can be removed again.
-- **This download is the only thing the app asks of the internet.** It sends
-  nothing about you or your tree.
+- **This download sends nothing about you or your tree.** Apart from it, the
+  app asks the internet only when you search for records (see below).
 - **Linking a place** says where it lies. "Places" lists every place of the
   tree, offers the entry of the place list that fits each best, and links it
   with one press; every event at that place then shares the link. A place
@@ -154,6 +159,34 @@ Timeline and map:
   [Natural Earth](https://www.naturalearthdata.com/) (public domain). It shows
   borders and coasts, no roads or towns, and asks nothing of the internet.
 - A place that is not linked is named under the map; "Places" links it.
+
+Searching for records:
+
+- **"Search records" on a person's page** looks for the person at
+  [WikiTree](https://www.wikitree.com/). The form starts with their name and
+  their years of birth and death; you can change or empty each before you
+  search.
+- **What is sent:** those four fields, to WikiTree, when you press "Search".
+  Nothing else of your tree, nothing while you type, nothing in the
+  background. The app says so before the first search and asks you to agree.
+- **Living people:** the app does not search for a person who may be living,
+  and shows no profiles of living people or private profiles.
+- **Results** show a name, the birth and the death, and a link that opens the
+  profile in your browser. They are not kept, and nothing is added to your
+  tree unless you attach one.
+- **"Attach as a source"** on a result cites it for the person: the source is
+  "WikiTree", and the citation holds the name and id of the profile, its birth
+  and death as WikiTree gives them, its address and today's date. It is one
+  step for Undo. A tree has one source per site, however many records of it
+  are cited.
+- **Other sites.** The app never asks Find a Grave or FamilySearch anything
+  itself; their terms do not allow it. A button opens a search for the same
+  four fields at the site, in your own browser. The fields are part of the
+  address that is opened, so the site and your browser's history hold them.
+  The app does this for no person who may be living.
+- **"Cite a page you found there"** makes a source of a page from your
+  browser: you paste its address, and the app keeps the address and the day.
+  It does not fetch the page.
 
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
@@ -187,6 +220,7 @@ Run these from the repository root.
 | `pnpm test:e2e`          | End-to-end tests against the production build                   |
 | `pnpm package`           | Build the installer into `apps/desktop/release`                 |
 | `pnpm test:e2e:packaged` | End-to-end tests against the packaged app (run `package` first) |
+| `pnpm test:contract`     | Asks each searchable source one question. Needs the internet    |
 
 ## Layout
 
@@ -254,8 +288,16 @@ docs/                 Plan and access checklist
   stores the entry's name and coordinates beside the text
   (`packages/db/src/places.ts`); it never rewrites the text, and it changes no
   line of an imported GEDCOM file.
-- **The app asks nothing of the internet unless the user says so.** The one
-  request it makes is the download of the place list, from fixed addresses on
+- **The app asks nothing of the internet unless the user says so.** It makes
+  two kinds of request: the download of the place list, and a search for
+  records. Sites whose terms bar automated access are never asked: the app
+  only builds a search address for them and hands it to the user's browser
+  (`packages/connectors/src/links.ts`, which has no way to fetch), under the
+  same notice and the same rule for living people. A search sends a name and two years, after the user has agreed to
+  a notice, never for a person who may be living, and only through the client
+  of the source (`apps/desktop/src/main/records.ts`,
+  `packages/connectors/src/http.ts`): its address only, within its limits,
+  without cookies. The download asks fixed addresses on
   one host (`apps/desktop/src/main/gazetteer.ts`). What arrives is not
   trusted: each file has a size limit, archives are checked, the new list is
   built beside the old one and swapped in only when complete.

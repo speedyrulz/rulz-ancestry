@@ -8,10 +8,12 @@ import {
   PLACE_TEXT_MAX,
   SOURCE_LIMITS,
   canOpenOutside,
+  cleanDay,
   formatGazetteerPlace,
   kinshipTerm,
   mediaKind,
   relationshipTerm,
+  webAddressProblem,
   type GazetteerPlace,
 } from '@rulz/core';
 import {
@@ -28,6 +30,7 @@ import {
   ZipError,
   addChildOf,
   addCitation,
+  attachRecord,
   addFamilyEvent,
   addMediaFiles,
   addName,
@@ -73,6 +76,7 @@ import {
   mediaFilePath,
   mergePersons,
   presumedLivingIds,
+  requireCitation,
   requireMedia,
   searchPersons,
   setChildPedigree,
@@ -95,6 +99,7 @@ import {
   type PersonDraft as TreePersonDraft,
   type PersonRef as TreePersonRef,
   type PlaceLink,
+  type SourceRef as TreeSourceRef,
   type Tree,
   type TreePlace,
 } from '@rulz/db';
@@ -111,10 +116,12 @@ import type {
   PersonRef,
   PersonSummary,
   RulzApi,
+  SourceRef,
   TreePlaceInfo,
   TreeState,
 } from '../shared/ipc';
 import type { GazetteerService } from './gazetteer';
+import type { RecordSearchService } from './records';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
 
 /**
@@ -143,6 +150,8 @@ export interface FilePickerOptions {
 
 export interface Platform {
   appInfo(): AppInfo;
+  /** Opens an HTTPS address in the user's browser. The app itself asks it nothing. */
+  openInBrowser(url: string): Promise<void>;
   /** Shows the system folder picker. Resolves to null when the user cancels. */
   chooseFolder(options: FolderPickerOptions): Promise<string | null>;
   /** Shows the system dialog for opening one file. Resolves to null when the user cancels. */
@@ -192,6 +201,17 @@ function define<K extends ApiMethod>(
 }
 
 const text = (max: number) => z.string().max(max);
+
+/**
+ * Refuses a web address typed for a citation that is none. One that has not
+ * changed passes as it is: a file can have brought an address the app would
+ * not take from a form, and editing the rest of that citation must still work.
+ */
+function checkAddress(typed: string | undefined, current: string): void {
+  if (typed === undefined || typed.trim() === current) return;
+  const problem = webAddressProblem(typed);
+  if (problem !== null) throw new SessionError(problem);
+}
 const id = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 const sex = z.enum(SEXES);
 const pedigree = z.enum(PEDIGREES);
@@ -258,7 +278,25 @@ const citationInput = z.strictObject({
     .nullable()
     .exactOptional(),
   note: text(CITATION_LIMITS.note).exactOptional(),
+  // Whether it is a web address is looked at where it is saved: an address
+  // that came with a file may be none, and must still pass when it is unchanged.
+  url: text(CITATION_LIMITS.url).exactOptional(),
+  accessedAt: z
+    .string()
+    .regex(/^(\d{4}-\d{2}-\d{2})?$/)
+    // A day that does not exist would be stored as no day at all.
+    .refine((day) => cleanDay(day) === day)
+    .exactOptional(),
 });
+
+const personQuery = z.strictObject({
+  given: text(100),
+  surname: text(100),
+  birthYear: z.number().int().min(1).max(9999).nullable(),
+  deathYear: z.number().int().min(1).max(9999).nullable(),
+});
+
+const siteId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
 const citationTarget = z.strictObject({
   type: z.enum(['person', 'family', 'event', 'name']),
@@ -268,6 +306,7 @@ const citationTarget = z.strictObject({
 const sourceRef = z.union([
   z.strictObject({ sourceId: id }),
   z.strictObject({ create: sourceInput }),
+  z.strictObject({ siteId }),
 ]);
 
 const mediaInput = z.strictObject({
@@ -349,6 +388,7 @@ export function createHandlers(
   session: TreeSession,
   platform: Platform,
   gazetteer: GazetteerService,
+  records: RecordSearchService,
 ): ApiHandlers {
   /**
    * The link for a gazetteer entry the page names by its number. The page
@@ -356,6 +396,9 @@ export function createHandlers(
    * entry that is not there (the gazetteer was removed meanwhile) gives no
    * link, and the place is saved as typed.
    */
+  // What was found for one tree is not kept for the next, however the tree is left.
+  session.whenTreeCloses(() => records.reset());
+
   const placeLinkOf = (id: number | undefined): PlaceLink | undefined => {
     const place = id === undefined ? null : gazetteer.get(id);
     return place === null
@@ -386,6 +429,13 @@ export function createHandlers(
   };
   const refOf = (ref: PersonRef): TreePersonRef =>
     'create' in ref ? { create: draftOf(ref.create) } : ref;
+  /** The source of a new citation, with a site the app knows turned into the tree's source for it. */
+  const sourceOf = (source: SourceRef): TreeSourceRef => {
+    if (!('siteId' in source)) return source;
+    const connector = records.site(source.siteId);
+    if (connector === undefined) throw new SessionError('this site is not known');
+    return { connector };
+  };
   /** Runs an edit and returns the tree's new state. */
   const edit = (run: (tree: Tree) => unknown): TreeState => {
     session.change(run);
@@ -572,6 +622,50 @@ export function createHandlers(
       getPersonLife(session.tree, personId),
     ),
 
+    getRecordSearch: define<'getRecordSearch'>(z.tuple([id]), (personId) =>
+      records.setup(session.tree, personId),
+    ),
+
+    agreeToRecordSearch: define<'agreeToRecordSearch'>(none, () => records.agree()),
+
+    searchRecords: define<'searchRecords'>(
+      z.tuple([
+        z.strictObject({
+          personId: id,
+          sourceId: siteId,
+          query: personQuery,
+          offset: z.number().int().min(0).max(1000),
+        }),
+      ]),
+      (request) => records.search(session.tree, request),
+    ),
+
+    cancelRecordSearch: define<'cancelRecordSearch'>(none, () => records.cancel()),
+
+    attachRecord: define<'attachRecord'>(
+      z.tuple([
+        z.strictObject({ personId: id, sourceId: siteId, key: z.string().min(1).max(200) }),
+      ]),
+      (request) => {
+        const found = records.attachment(session.tree, request);
+        if (!found.ok) return found;
+        const { citation, added } = session.change((tree) =>
+          attachRecord(tree, request.personId, found.connector, found.citation),
+        );
+        return { ok: true, tree: session.state(), citationId: citation.id, added };
+      },
+    ),
+
+    openRecordLink: define<'openRecordLink'>(
+      z.tuple([z.strictObject({ personId: id, linkId: siteId, query: personQuery })]),
+      async (request) => {
+        const link = records.link(session.tree, request);
+        if (!link.ok) return link;
+        await platform.openInBrowser(link.url);
+        return { ok: true };
+      },
+    ),
+
     getChart: define<'getChart'>(
       z.tuple([
         z.strictObject({
@@ -665,6 +759,8 @@ export function createHandlers(
             text: citation.text,
             quality: citation.quality,
             note: citation.note,
+            url: citation.url,
+            accessedAt: citation.accessedAt,
             uses: citation.uses.map((use) => ({
               type: use.type,
               id: use.id,
@@ -888,11 +984,17 @@ export function createHandlers(
 
     addCitation: define<'addCitation'>(
       z.tuple([citationTarget, sourceRef, citationInput]),
-      (target, source, input) => edit((tree) => addCitation(tree, target, source, input)),
+      (target, source, input) => {
+        checkAddress(input.url, '');
+        return edit((tree) => addCitation(tree, target, sourceOf(source), input));
+      },
     ),
 
     updateCitation: define<'updateCitation'>(z.tuple([id, citationInput]), (citationId, input) =>
-      edit((tree) => updateCitation(tree, citationId, input)),
+      edit((tree) => {
+        checkAddress(input.url, requireCitation(tree, citationId).url);
+        return updateCitation(tree, citationId, input);
+      }),
     ),
 
     linkCitation: define<'linkCitation'>(z.tuple([id, citationTarget]), (citationId, target) =>

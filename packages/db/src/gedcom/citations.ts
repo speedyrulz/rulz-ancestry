@@ -1,4 +1,5 @@
 import {
+  ACCESSED_TAG,
   citationKey,
   citedSource,
   newId,
@@ -44,6 +45,7 @@ export class CitationLoader {
   readonly #db: Db;
   readonly #sources: ReadonlyMap<string, string>;
   readonly #now: number;
+  readonly #addresses: boolean;
   /** The citation for each source and wording met so far. */
   readonly #byKey = new Map<string, string>();
   /** "owner id|citation id" for every link made. */
@@ -55,11 +57,17 @@ export class CitationLoader {
   /** How many links to people, families, events and names were made. */
   links = 0;
 
-  /** `sources` gives the id of each source by its cross-reference id in the file. */
-  constructor(db: Db, sources: ReadonlyMap<string, string>, now: number) {
+  /**
+   * `sources` gives the id of each source by its cross-reference id in the
+   * file. With `addresses`, a citation's web address and the day it was
+   * consulted are stored too: an import does that; the migration that first
+   * made citations runs on a table that has no columns for them yet.
+   */
+  constructor(db: Db, sources: ReadonlyMap<string, string>, now: number, addresses = false) {
     this.#db = db;
     this.#sources = sources;
     this.#now = now;
+    this.#addresses = addresses;
   }
 
   /**
@@ -95,6 +103,13 @@ export class CitationLoader {
         this.#now,
         this.#now,
       );
+      if (this.#addresses && (fields.url !== '' || fields.accessedAt !== '')) {
+        sql(this.#db, 'UPDATE citation SET url = ?, accessed_at = ? WHERE id = ?').run(
+          fields.url,
+          fields.accessedAt,
+          id,
+        );
+      }
       this.#byKey.set(key, id);
       this.citations += 1;
     }
@@ -250,5 +265,77 @@ export function extractSources(db: Db): void {
       }
     }
     if (changed) saveParts.run(JSON.stringify(parts), row.id);
+  }
+}
+
+/**
+ * Gives the citations of a tree that was imported before a citation had a web
+ * address the address its file gave it, as a fresh import of the same file
+ * would. Ancestry writes it as a WWW line under the citation's DATA line;
+ * until now that line was kept as written and shown nowhere.
+ *
+ * Citations were made one of lines that say the same in every word, the WWW
+ * line among them, so every line behind one citation gives the same address.
+ * The stored lines themselves are not changed.
+ */
+export function extractCitationAddresses(db: Db): void {
+  const versionText = db
+    .prepare('SELECT value FROM tree_meta WHERE key = ?')
+    .pluck()
+    .get(GEDCOM_META.version) as string | undefined;
+  if (versionText !== '5.5.1' && versionText !== '7.0') return;
+  const version: GedcomVersion = versionText;
+
+  const rows = db
+    .prepare("SELECT parts FROM gedcom_record WHERE kind IN ('person', 'family')")
+    .pluck()
+    .all() as (string | null)[];
+  const set = db.prepare(
+    "UPDATE citation SET url = ?, accessed_at = ? WHERE id = ? AND url = '' AND accessed_at = ''",
+  );
+  // A citation that was deleted or changed before this version is in the
+  // change log without its address. Undo would bring it back without one, and
+  // the export would then take the WWW line away. So the address is written
+  // into those entries too.
+  const logBefore = db.prepare(
+    `UPDATE change_log
+     SET before_json = json_set(before_json, '$.url', ?, '$.accessed_at', ?)
+     WHERE entity_type = 'citation' AND entity_id = ? AND before_json IS NOT NULL`,
+  );
+  const logAfter = db.prepare(
+    `UPDATE change_log
+     SET after_json = json_set(after_json, '$.url', ?, '$.accessed_at', ?)
+     WHERE entity_type = 'citation' AND entity_id = ? AND after_json IS NOT NULL`,
+  );
+  const done = new Set<string>();
+  const take = (node: GedcomNode | undefined, id: string | null | undefined): void => {
+    if (!node || id === null || id === undefined || done.has(id)) return;
+    done.add(id);
+    const { url, accessedAt } = readCitation(node);
+    if (url === '' && accessedAt === '') return;
+    set.run(url, accessedAt, id);
+    logBefore.run(url, accessedAt, id);
+    logAfter.run(url, accessedAt, id);
+  };
+
+  // Only records with such a line are worth reading. A file may write its
+  // tags in small letters; they are read as capitals.
+  const worth = (text: string): boolean => {
+    const capitals = text.toUpperCase();
+    return capitals.includes('WWW') || capitals.includes(ACCESSED_TAG);
+  };
+  for (const text of rows) {
+    if (text === null || !worth(text)) continue;
+    for (const part of JSON.parse(text) as StoredPart[]) {
+      if (!worth(part.t)) continue;
+      if (part.k === 'citation') {
+        take(parseFragment(part.t, version)[0], part.r);
+      } else if (part.c !== undefined) {
+        const lines = parseFragment(part.t, version)[0]?.children.filter(
+          (child) => child.tag === 'SOUR',
+        );
+        part.c.forEach((id, place) => take(lines?.[place], id));
+      }
+    }
   }
 }

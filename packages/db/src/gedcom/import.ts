@@ -279,6 +279,13 @@ export interface GedcomImportOptions {
    * get it by turning off `sources` or `media`.
    */
   notes?: boolean;
+  /**
+   * False leaves the web address of a citation as a line kept as written,
+   * which is what the app did before a citation had one (schema version 9).
+   * Only the tests of that migration ask for it, and the tests of earlier
+   * ones, which get it by turning off `sources`, `media` or `notes`.
+   */
+  addresses?: boolean;
 }
 
 interface PersonDraft {
@@ -430,6 +437,7 @@ export function importGedcom(
   const modelSources = options.sources !== false;
   const modelMedia = modelSources && options.media !== false;
   const modelNotes = modelMedia && options.notes !== false;
+  const modelAddresses = modelNotes && options.addresses !== false;
   const doc = input.document;
   const version = doc.version;
   const issues = new IssueList([], 0);
@@ -778,7 +786,7 @@ export function importGedcom(
     for (const [record, source] of sourceByNode) {
       media?.attachChildren(record, { source: source.id });
     }
-    const citations = new CitationLoader(db, sourceIds, now);
+    const citations = new CitationLoader(db, sourceIds, now, modelAddresses);
     /** Makes citations of the SOUR lines under a name or event that has just been stored. */
     const cite = (part: PartDraft, owner: { name: string } | { event: string }): void => {
       if (sourceIds.size === 0) return;

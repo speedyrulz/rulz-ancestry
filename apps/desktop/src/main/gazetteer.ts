@@ -24,9 +24,10 @@ import type { GazetteerStatus } from '../shared/ipc';
  * The gazetteer of the app: downloading GeoNames' lists when the user asks
  * for them, building the gazetteer file from them, and searching it.
  *
- * This is the only part of the app that asks anything of the internet, and
- * it does so only when the user presses "Download". It asks one host for a
- * fixed list of files and sends nothing about the user or their tree.
+ * It asks the internet only when the user presses "Download". It asks one
+ * host for a fixed list of files and sends nothing about the user or their
+ * tree. (The one other part of the app that asks the internet is the search
+ * for records, `records.ts`.)
  *
  * Nothing here uses Electron; the function that fetches is handed in, so the
  * unit tests run this as it is with a fetch of their own.

@@ -1,4 +1,4 @@
-import { CITATION_LIMITS, SOURCE_LIMITS } from '@rulz/core';
+import { CITATION_LIMITS, SOURCE_LIMITS, webAddressProblem } from '@rulz/core';
 import { useEffect, useId, useState } from 'react';
 import type {
   CitationInfo,
@@ -148,9 +148,44 @@ export interface CitationFieldsValue {
   text: string;
   quality: QualityChoice;
   note: string;
+  url: string;
+  /** `YYYY-MM-DD`, as a date field holds it; empty when not stated. */
+  accessedAt: string;
 }
 
-export const EMPTY_CITATION: CitationFieldsValue = { page: '', text: '', quality: '', note: '' };
+export const EMPTY_CITATION: CitationFieldsValue = {
+  page: '',
+  text: '',
+  quality: '',
+  note: '',
+  url: '',
+  accessedAt: '',
+};
+
+/** Today on this PC's clock, as a date field holds it. */
+export function today(): string {
+  const now = new Date();
+  const two = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+}
+
+/** A day of a date field in words, e.g. "13 November 2026". */
+function dayWords(day: string): string {
+  const [year, month, date] = day.split('-').map(Number);
+  if (year === undefined || month === undefined || date === undefined) return day;
+  const at = new Date(year, month - 1, date);
+  return Number.isNaN(at.getTime())
+    ? day
+    : at.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+/**
+ * Why the address in a form cannot be saved; null when it can. An address
+ * that came with an imported file and has not been changed is left as it is.
+ */
+function addressProblem(url: string, unchanged: string | undefined): string | null {
+  return unchanged !== undefined && url.trim() === unchanged ? null : webAddressProblem(url);
+}
 
 function fieldsOf(citation: CitationInfo): CitationFieldsValue {
   const quality = citation.quality === null ? '' : String(citation.quality);
@@ -159,6 +194,8 @@ function fieldsOf(citation: CitationInfo): CitationFieldsValue {
     text: citation.text,
     quality: QUALITY_OPTIONS.some(([value]) => value === quality) ? (quality as QualityChoice) : '',
     note: citation.note,
+    url: citation.url,
+    accessedAt: citation.accessedAt,
   };
 }
 
@@ -168,6 +205,8 @@ export function toCitationInput(value: CitationFieldsValue): CitationInput {
     text: value.text,
     quality: value.quality === '' ? null : Number(value.quality),
     note: value.note,
+    url: value.url.trim(),
+    accessedAt: value.accessedAt,
   };
 }
 
@@ -175,22 +214,75 @@ interface CitationFieldsProps {
   value: CitationFieldsValue;
   onChange: (value: CitationFieldsValue) => void;
   autoFocus?: boolean;
+  /** Put the web address first: the form is for a page of the web. */
+  addressFirst?: boolean;
+  /** The address the citation has now, which is not held against the rules for a new one. */
+  unchangedUrl?: string;
 }
 
-/** The fields of a citation: where in the source, what it says, how far to trust it, and a note. */
-export function CitationFields({ value, onChange, autoFocus = false }: CitationFieldsProps) {
+/**
+ * The fields of a citation: where in the source, what it says, how far to
+ * trust it, a note, and for a page of the web its address and the day it was
+ * looked at.
+ */
+export function CitationFields({
+  value,
+  onChange,
+  autoFocus = false,
+  addressFirst = false,
+  unchangedUrl,
+}: CitationFieldsProps) {
   const set = <K extends keyof CitationFieldsValue>(key: K, next: CitationFieldsValue[K]) =>
     onChange({ ...value, [key]: next });
+  const dayId = useId();
+  const problem = addressProblem(value.url, unchangedUrl);
+  const address = (
+    <>
+      <TextField
+        label={addressFirst ? 'Address of the page' : 'Web address, if it is a page on the web'}
+        value={value.url}
+        onChange={(next) => set('url', next)}
+        maxLength={CITATION_LIMITS.url}
+        placeholder="https://…"
+        testId="citation-url"
+        autoFocus={autoFocus && addressFirst}
+        hint={
+          problem !== null ? (
+            <p className="error" data-testid="citation-url-problem">
+              {problem}
+            </p>
+          ) : undefined
+        }
+      />
+      <div className="field">
+        <label htmlFor={dayId}>The day you looked at the page</label>
+        <input
+          id={dayId}
+          type="date"
+          value={value.accessedAt}
+          min="0001-01-01"
+          max="9999-12-31"
+          data-testid="citation-accessed"
+          onChange={(event) => set('accessedAt', event.target.value)}
+        />
+      </div>
+    </>
+  );
   return (
     <>
+      {addressFirst && address}
       <TextField
         label="Where in the source"
         value={value.page}
         onChange={(next) => set('page', next)}
         maxLength={CITATION_LIMITS.page}
-        placeholder="e.g. page 12, entry 4; or sheet 4B, line 31"
+        placeholder={
+          addressFirst
+            ? 'e.g. the title of the page, or the number of the record'
+            : 'e.g. page 12, entry 4; or sheet 4B, line 31'
+        }
         testId="citation-page"
-        autoFocus={autoFocus}
+        autoFocus={autoFocus && !addressFirst}
       />
       <TextAreaField
         label="What it says there"
@@ -214,6 +306,7 @@ export function CitationFields({ value, onChange, autoFocus = false }: CitationF
         rows={2}
         testId="citation-note"
       />
+      {!addressFirst && address}
     </>
   );
 }
@@ -264,7 +357,7 @@ export function CitationEditDialog({
           This citation supports more than one fact. A change here applies to all of them.
         </p>
       )}
-      <CitationFields value={value} onChange={setValue} autoFocus />
+      <CitationFields value={value} onChange={setValue} autoFocus unchangedUrl={citation.url} />
     </FormDialog>
   );
 }
@@ -284,6 +377,21 @@ export function CitationText({ citation }: CitationTextProps) {
       {citation.text !== '' && <span className="citation-quote">“{citation.text}”</span>}
       {quality !== null && <span className="badge">{quality}</span>}
       {citation.note !== '' && <span className="citation-note">Note: {citation.note}</span>}
+      {(citation.url !== '' || citation.accessedAt !== '') && (
+        <span className="citation-address" data-testid="citation-address">
+          {/* Only an https address is opened; anything else is shown as text to copy. */}
+          {/^https:\/\//i.test(citation.url) && webAddressProblem(citation.url) === null ? (
+            <a href={citation.url} target="_blank" rel="noreferrer">
+              {citation.url}
+            </a>
+          ) : (
+            citation.url
+          )}
+          {citation.accessedAt !== '' && (
+            <span className="muted"> Looked at on {dayWords(citation.accessedAt)}.</span>
+          )}
+        </span>
+      )}
     </>
   );
 }
@@ -297,18 +405,36 @@ interface AddCitationFormProps {
   onTree: (tree: TreeState) => void;
   /** Called when the citation was added, or the form was cancelled. */
   onDone: () => void;
+  /**
+   * Set when the form is for a page of the web: the address comes first and
+   * must be given. With a `site` the app knows, the tree's one source for
+   * that site is offered first.
+   */
+  clip?: { site: { id: string; name: string } | null };
 }
 
 /** Cites a source for a fact: an existing source or a new one, and where in it. */
-function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitationFormProps) {
-  const [mode, setMode] = useState<'existing' | 'new'>(anySource ? 'existing' : 'new');
+function AddCitationForm({
+  target,
+  anySource,
+  others,
+  onTree,
+  onDone,
+  clip,
+}: AddCitationFormProps) {
+  const site = clip?.site ?? null;
+  const [mode, setMode] = useState<'site' | 'existing' | 'new'>(
+    site !== null ? 'site' : anySource ? 'existing' : 'new',
+  );
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<{ query: string; sources: SourceSummary[] } | null>(null);
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [source, setSource] = useState(EMPTY_SOURCE);
   /** A citation of the chosen source to use again, or null for a new one. */
   const [reuseId, setReuseId] = useState<string | null>(null);
-  const [citation, setCitation] = useState(EMPTY_CITATION);
+  const [citation, setCitation] = useState<CitationFieldsValue>(() =>
+    clip === undefined ? EMPTY_CITATION : { ...EMPTY_CITATION, accessedAt: today() },
+  );
   const group = useId();
 
   useEffect(() => {
@@ -338,11 +464,20 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
       ? others.filter((other) => other.sourceId === sourceId)
       : [];
   const reuse = reusable.find((other) => other.id === reuseId) ?? null;
-  const ready = mode === 'new' ? source.title.trim() !== '' : sourceId !== null;
+  const sourceReady =
+    mode === 'site' ? true : mode === 'new' ? source.title.trim() !== '' : sourceId !== null;
+  // A citation that is used again brings its own address.
+  const addressReady =
+    reuse !== null ||
+    (webAddressProblem(citation.url) === null &&
+      (clip === undefined || citation.url.trim() !== ''));
+  const ready = sourceReady && addressReady;
 
   const { busy, error, submit } = useSubmit(async () => {
     if (reuse !== null) {
       onTree(await api.linkCitation(reuse.id, target));
+    } else if (mode === 'site' && site !== null) {
+      onTree(await api.addCitation(target, { siteId: site.id }, toCitationInput(citation)));
     } else if (mode === 'new') {
       onTree(
         await api.addCitation(target, { create: toSourceInput(source) }, toCitationInput(citation)),
@@ -365,6 +500,18 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
       }}
     >
       <div className="choice" role="radiogroup" aria-label="Which source">
+        {site !== null && (
+          <label>
+            <input
+              type="radio"
+              name={`${group}-mode`}
+              checked={mode === 'site'}
+              onChange={() => setMode('site')}
+              data-testid="citation-mode-site"
+            />
+            {site.name}
+          </label>
+        )}
         <label>
           <input
             type="radio"
@@ -388,8 +535,13 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
         </label>
       </div>
 
-      {mode === 'new' ? (
-        <SourceFields value={source} onChange={setSource} autoFocus />
+      {mode === 'site' ? (
+        <p className="hint">
+          Every page of {site?.name} you cite goes under one source in this tree, called{' '}
+          {site?.name}.
+        </p>
+      ) : mode === 'new' ? (
+        <SourceFields value={source} onChange={setSource} autoFocus={clip === undefined} />
       ) : (
         <>
           <TextField
@@ -401,7 +553,7 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
               setReuseId(null);
             }}
             testId="source-search"
-            autoFocus
+            autoFocus={clip === undefined}
           />
           <ul className="pick-list" data-testid="source-results">
             {shown === null && <li className="muted">Looking…</li>}
@@ -459,7 +611,14 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
         </fieldset>
       )}
 
-      {reuse === null && <CitationFields value={citation} onChange={setCitation} />}
+      {reuse === null && (
+        <CitationFields
+          value={citation}
+          onChange={setCitation}
+          addressFirst={clip !== undefined}
+          autoFocus={clip !== undefined}
+        />
+      )}
 
       {error !== null && (
         <p className="error" role="alert" data-testid="dialog-error">
@@ -480,6 +639,56 @@ function AddCitationForm({ target, anySource, others, onTree, onDone }: AddCitat
         </button>
       </div>
     </form>
+  );
+}
+
+interface ClipDialogProps {
+  personId: string;
+  /** The person's name, for the title. */
+  name: string;
+  /** The site the page is on, when it is one the app knows; null for any other. */
+  site: { id: string; name: string } | null;
+  /** Whether the tree has any source yet. */
+  anySource: boolean;
+  /** The citations on the person's page. */
+  citations: PersonCitationInfo[];
+  onTree: (tree: TreeState) => void;
+  onClose: () => void;
+}
+
+/**
+ * Makes a citation of a page the user found in their own browser: they paste
+ * its address and say what it shows. The app does not open or read the page.
+ * The citation is for the person as a whole; it can be used for single facts
+ * afterwards.
+ */
+export function ClipDialog({
+  personId,
+  name,
+  site,
+  anySource,
+  citations,
+  onTree,
+  onClose,
+}: ClipDialogProps) {
+  const target: CitationTarget = { type: 'person', id: personId };
+  return (
+    <Dialog title={`Cite a web page for ${name}`} onClose={onClose} testId="clip-dialog" wide>
+      <p className="hint">
+        Copy the address of the page from your browser and paste it here. The app does not open or
+        read the page: it keeps the address, the day, and what you write below.
+      </p>
+      <AddCitationForm
+        target={target}
+        anySource={anySource}
+        others={citations.filter(
+          (citation) => !citation.uses.some((use) => use.type === 'person' && use.id === personId),
+        )}
+        onTree={onTree}
+        onDone={onClose}
+        clip={{ site }}
+      />
+    </Dialog>
   );
 }
 

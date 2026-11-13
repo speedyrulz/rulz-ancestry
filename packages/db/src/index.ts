@@ -151,6 +151,9 @@ export {
 export { mergeObstacle, mergePersons, mergedInto, type MergeResult } from './merge';
 export {
   addCitation,
+  attachRecord,
+  citedUrls,
+  connectorSourceId,
   countSourceCitations,
   countSources,
   createSource,
@@ -170,6 +173,7 @@ export {
   updateCitation,
   updateSource,
   type Citation,
+  type ConnectorSource,
   type CitationInput,
   type CitationTarget,
   type CitationTargetType,

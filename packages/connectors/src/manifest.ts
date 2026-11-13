@@ -8,7 +8,7 @@ import { z } from 'zod';
  */
 export const connectorManifestSchema = z
   .object({
-    /** Stable identifier, also stored in the database (`external_record.connector_id`). */
+    /** Stable identifier, also stored in the database (`source.connector_id`). */
     id: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'lowercase words separated by hyphens'),
     name: z.string().min(1),
     /**
@@ -21,6 +21,17 @@ export const connectorManifestSchema = z
     /** What the user or project must obtain before the source can be used. */
     access: z.enum(['open', 'key-required', 'approval-required']),
     baseUrl: z.string().refine((value) => URL.canParse(value), 'must be a valid URL'),
+    /**
+     * The site the pages of its records are on, where that is another host
+     * than `baseUrl` (an API often is). The link of a record must lie on it.
+     */
+    siteUrl: z
+      .string()
+      .refine(
+        (value) => URL.canParse(value) && new URL(value).protocol === 'https:',
+        'must be an HTTPS URL',
+      )
+      .optional(),
     rateLimit: z
       .object({
         requests: z.number().int().positive(),
@@ -29,6 +40,11 @@ export const connectorManifestSchema = z
         source: z.enum(['published', 'self-imposed']),
       })
       .optional(),
+    /**
+     * How long the source is left alone after it answers "too many requests"
+     * without saying for how long, in seconds. The client's own pause when absent.
+     */
+    pauseSeconds: z.number().int().positive().optional(),
     /** A hard cap per key over a longer period, when the source states one. */
     quota: z
       .object({

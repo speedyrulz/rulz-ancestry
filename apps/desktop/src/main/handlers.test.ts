@@ -6,6 +6,7 @@ import { BACKUP_DIR_NAME, openAppDatabase, type Db } from '@rulz/db';
 import {
   API_METHODS,
   type AppInfo,
+  type AttachRecordResult,
   type ChartInfo,
   type DuplicateList,
   type GazetteerEntry,
@@ -25,6 +26,9 @@ import {
   type PersonPage,
   type PlaceListPage,
   type PlaceSuggestions,
+  type RecordLinkResult,
+  type RecordSearchResult,
+  type RecordSearchSetup,
   type RelationshipInfo,
   type SourceChange,
   type SourceDetails,
@@ -32,6 +36,7 @@ import {
   type TreeState,
 } from '../shared/ipc';
 import { GazetteerService } from './gazetteer';
+import { RecordSearchService } from './records';
 import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
 import { TreeSession } from './session';
@@ -42,7 +47,31 @@ let root: string;
 let appDb: Db;
 let session: TreeSession;
 let handlers: ApiHandlers;
+const QUERY = { given: 'Ada', surname: 'Test', birthYear: 1850, deathYear: null };
 let gazetteer: GazetteerService;
+let records: RecordSearchService;
+/** Every address the search for records asked for. */
+let askedOfSources: string[];
+/** What a source answers in these tests: one profile of someone made up. */
+const sourceAnswer = [
+  {
+    status: 0,
+    matches: [
+      {
+        Id: 1,
+        Name: 'Test-90001',
+        FirstName: 'Ada',
+        LastNameAtBirth: 'Test',
+        LastNameCurrent: 'Test',
+        BirthDate: '1850-03-00',
+        IsLiving: 0,
+        Privacy: 60,
+      },
+      { Id: 2 },
+    ],
+    total: 2,
+  },
+];
 /** What the fake folder picker answers next; null is a cancelled dialog. */
 let pickedFolder: string | null;
 /** What the fake dialogs for opening and saving a file answer next. */
@@ -51,6 +80,8 @@ let savePath: string | null;
 /** Where each fake file dialog was told to start. */
 let dialogDefaults: string[];
 let openedFolders: string[];
+/** The addresses handed to the browser. */
+let openedInBrowser: string[];
 /** What the fake dialog for adding pictures and documents answers next; none is a cancelled dialog. */
 let pickedFiles: string[];
 /** How often that dialog was shown. */
@@ -60,6 +91,10 @@ let openedFiles: string[];
 let shownFiles: string[];
 
 const platform: Platform = {
+  openInBrowser: (url) => {
+    openedInBrowser.push(url);
+    return Promise.resolve();
+  },
   appInfo: () => ({ appVersion: '1.2.3-test' }) as AppInfo,
   chooseFolder: () => Promise.resolve(pickedFolder),
   chooseFileToOpen: (options) => {
@@ -124,12 +159,22 @@ beforeEach(() => {
     countries: SAMPLE_COUNTRIES,
     minimums: {},
   });
-  handlers = createHandlers(session, platform, gazetteer);
+  askedOfSources = [];
+  records = new RecordSearchService({
+    appDb,
+    appVersion: '0.0.0',
+    fetch: (url) => {
+      askedOfSources.push(url);
+      return Promise.resolve(new Response(JSON.stringify(sourceAnswer)));
+    },
+  });
+  handlers = createHandlers(session, platform, gazetteer, records);
   pickedFolder = null;
   pickedFile = null;
   savePath = null;
   dialogDefaults = [];
   openedFolders = [];
+  openedInBrowser = [];
   pickedFiles = [];
   filesDialogs = 0;
   openedFiles = [];
@@ -164,6 +209,56 @@ describe('argument checks', () => {
       ['getPersonPage', { id: MISSING }],
       ['getPersonLife', 'not-an-id'],
       ['getPersonLife', MISSING, 'extra argument'],
+      ['getRecordSearch', 'not-an-id'],
+      ['agreeToRecordSearch', true],
+      ['cancelRecordSearch', 'now'],
+      ['attachRecord', { personId: MISSING, sourceId: 'wikitree' }],
+      ['attachRecord', { personId: MISSING, sourceId: 'wikitree', key: '' }],
+      [
+        'attachRecord',
+        { personId: MISSING, sourceId: 'wikitree', key: 'a', url: 'https://x.example' },
+      ],
+      ['openRecordLink', { personId: MISSING, linkId: 'find-a-grave' }],
+      ['openRecordLink', { personId: MISSING, linkId: 'Find A Grave', query: QUERY }],
+      [
+        'openRecordLink',
+        { personId: MISSING, linkId: 'find-a-grave', query: QUERY, url: 'https://x.example' },
+      ],
+      ['addCitation', { type: 'person', id: MISSING }, { siteId: '../x' }, {}],
+      [
+        'addCitation',
+        { type: 'person', id: MISSING },
+        { sourceId: MISSING },
+        { accessedAt: 'today' },
+      ],
+      // A day that does not exist.
+      ['updateCitation', MISSING, { accessedAt: '2026-02-30' }],
+      ['updateCitation', MISSING, { url: 'x'.repeat(2049) }],
+      ['searchRecords', { personId: MISSING, sourceId: 'wikitree', query: QUERY }],
+      ['searchRecords', { personId: MISSING, sourceId: 'wikitree', query: QUERY, offset: 1001 }],
+      ['searchRecords', { personId: MISSING, sourceId: '../x', query: QUERY, offset: 0 }],
+      [
+        'searchRecords',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          query: { ...QUERY, birthYear: 1850.5 },
+          offset: 0,
+        },
+      ],
+      [
+        'searchRecords',
+        { personId: MISSING, sourceId: 'wikitree', query: { ...QUERY, place: 'x' }, offset: 0 },
+      ],
+      [
+        'searchRecords',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          query: { ...QUERY, given: 'x'.repeat(101) },
+          offset: 0,
+        },
+      ],
       ['deletePerson', "x' OR 1=1 --"],
       ['listPersons', { query: '', offset: 0, limit: 100_000 }],
       ['listPersons', { query: '', offset: -1, limit: 10 }],
@@ -1468,5 +1563,348 @@ describe('places and the gazetteer', () => {
     await call<GazetteerStatus>('downloadGazetteer');
     expect(await errorOf('removeGazetteer')).toMatchObject({ code: 'rule' });
     await gazetteer.idle();
+  });
+});
+
+describe('the search for records', () => {
+  const search = (personId: string, query: object = QUERY, sourceId = 'wikitree') =>
+    call<RecordSearchResult>('searchRecords', { personId, sourceId, query, offset: 0 });
+
+  it('starts with the name and the years of someone who has died', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', {
+      birthDate: '12 MAR 1850',
+      deathDate: 'BET 1910 AND 1920',
+    });
+    const setup = await call<RecordSearchSetup>('getRecordSearch', ada);
+    expect(setup.allowed).toBe(true);
+    expect(setup.agreed).toBe(false);
+    expect(setup.query).toEqual({
+      given: 'Ada',
+      surname: 'Test',
+      birthYear: 1850,
+      deathYear: 1915,
+    });
+    expect(setup.sources.map((source) => source.id)).toEqual(['wikitree']);
+    expect(setup.sources[0]?.pausedUntil).toBeNull();
+    expect(await call('getRecordSearch', MISSING)).toBeNull();
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('sends nothing before the user has agreed to the notice', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const refused = await search(ada);
+    expect(refused).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    expect(askedOfSources).toEqual([]);
+
+    await call('agreeToRecordSearch');
+    expect((await call<RecordSearchSetup>('getRecordSearch', ada)).agreed).toBe(true);
+    const found = await search(ada);
+    expect(found).toMatchObject({
+      ok: true,
+      sourceId: 'wikitree',
+      total: 2,
+      hidden: 1,
+      cached: false,
+    });
+    if (!found.ok) throw new Error('the search failed');
+    expect(found.items).toEqual([
+      {
+        connectorId: 'wikitree',
+        key: 'Test-90001',
+        kind: 'person',
+        title: 'Ada Test',
+        url: 'https://www.wikitree.com/wiki/Test-90001',
+        sex: null,
+        facts: [{ type: 'birth', date: 'MAR 1850', place: '' }],
+      },
+    ]);
+    expect(askedOfSources).toHaveLength(1);
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe('https://api.wikitree.com/api.php');
+    // The name and the years, and nothing else of the tree.
+    expect(Object.fromEntries(asked.searchParams)).toEqual({
+      action: 'searchPerson',
+      appId: 'RulZAncestry',
+      FirstName: 'Ada',
+      LastName: 'Test',
+      BirthDate: '1850',
+      dateSpread: '2',
+      limit: '20',
+      start: '0',
+      fields: asked.searchParams.get('fields'),
+    });
+
+    // The same search again is answered from memory.
+    expect(await search(ada)).toMatchObject({ ok: true, cached: true });
+    expect(askedOfSources).toHaveLength(1);
+  });
+
+  it('sends nothing about a person who may be living, whatever the page asks', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const recent = await addPerson('Rita', { birthDate: '1990' });
+    const undated = await addPerson('Una');
+    const marked = await addPerson('Liv', { birthDate: '1700', living: true });
+    for (const person of [recent, undated, marked]) {
+      const setup = await call<RecordSearchSetup>('getRecordSearch', person);
+      expect(setup.allowed).toBe(false);
+      // Nothing of the person is handed to the form.
+      expect(setup.query).toEqual({ given: '', surname: '', birthYear: null, deathYear: null });
+      expect(await search(person)).toMatchObject({ ok: false, problem: { kind: 'living' } });
+    }
+    expect(askedOfSources).toEqual([]);
+
+    // Once something shows that the person has died, they can be searched for.
+    await call('addPersonEvent', undated, { type: 'death' });
+    expect((await call<RecordSearchSetup>('getRecordSearch', undated)).allowed).toBe(true);
+    expect(await search(undated)).toMatchObject({ ok: true });
+  });
+
+  it('refuses a search that names nobody, a person who is gone and a source it does not know', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const empty = { given: ' ', surname: '', birthYear: 1850, deathYear: null };
+    expect(await search(ada, empty)).toMatchObject({ ok: false, problem: { kind: 'empty' } });
+    expect(await search(ada, QUERY, 'find-a-grave')).toMatchObject({
+      ok: false,
+      problem: { kind: 'source' },
+    });
+    expect(await search(MISSING)).toMatchObject({ ok: false, problem: { kind: 'gone' } });
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('says which results the page of the person cites already', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    expect(await search(ada)).toMatchObject({ ok: true, attached: [] });
+    await call('attachRecord', { personId: ada, sourceId: 'wikitree', key: 'Test-90001' });
+    expect(await search(ada)).toMatchObject({ ok: true, attached: ['Test-90001'] });
+  });
+
+  it('forgets what was found when another tree is opened', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    // Without closing the first tree by hand.
+    await call('createTree', { name: 'Second', parentDir: join(root, 'Trees') });
+    const again = await addPerson('Ada', { birthDate: '1850' });
+    expect(await search(again)).toMatchObject({ ok: true, cached: false });
+    expect(askedOfSources).toHaveLength(2);
+  });
+});
+
+describe('attaching a result of the search', () => {
+  const search = (personId: string) =>
+    call<RecordSearchResult>('searchRecords', {
+      personId,
+      sourceId: 'wikitree',
+      query: QUERY,
+      offset: 0,
+    });
+  const attach = (personId: string, key = 'Test-90001', sourceId = 'wikitree') =>
+    call<AttachRecordResult>('attachRecord', { personId, sourceId, key });
+
+  it('cites the record for the person in one step, and sends nothing', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    const asked = askedOfSources.length;
+
+    const result = await attach(ada);
+    if (!result.ok) throw new Error(result.problem.message);
+    expect(result.added).toBe(true);
+    expect(result.tree.sources).toBe(1);
+    const page = await call<PersonPage>('getPersonPage', ada);
+    expect(page.citations).toMatchObject([
+      {
+        id: result.citationId,
+        sourceTitle: 'WikiTree',
+        page: 'Ada Test (Test-90001)',
+        text: 'Born March 1850',
+        quality: null,
+        note: '',
+        url: 'https://www.wikitree.com/wiki/Test-90001',
+        accessedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        uses: [{ type: 'person', id: ada }],
+      },
+    ]);
+    expect(askedOfSources).toHaveLength(asked);
+
+    // A second click adds nothing.
+    expect(await attach(ada)).toMatchObject({
+      ok: true,
+      added: false,
+      citationId: result.citationId,
+    });
+    expect((await call<PersonPage>('getPersonPage', ada)).citations).toHaveLength(1);
+
+    // One Undo takes the citation and the source back.
+    const undone = await call<TreeState>('undo');
+    expect(undone.sources).toBe(0);
+    expect((await call<PersonPage>('getPersonPage', ada)).citations).toEqual([]);
+  });
+
+  it('takes nothing from the page but the key of a result it was shown for that person', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const other = await addPerson('Bea', { birthDate: '1850' });
+    // Nothing was searched for yet.
+    expect(await attach(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    await search(ada);
+    expect(await attach(ada, 'Test-1')).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await attach(ada, 'Test-90001', 'find-a-grave')).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    // Shown for Ada, not for Bea.
+    expect(await attach(other)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await attach(MISSING)).toMatchObject({ ok: false, problem: { kind: 'gone' } });
+    expect(
+      (await call<SourceListPage>('listSources', { query: '', offset: 0, limit: 10 })).total,
+    ).toBe(0);
+  });
+
+  it('forgets the results when the tree closes', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    await call('createTree', { name: 'Second', parentDir: join(root, 'Trees') });
+    const again = await addPerson('Ada', { birthDate: '1850' });
+    expect(await attach(again)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await attach(ada)).toMatchObject({ ok: false, problem: { kind: 'gone' } });
+  });
+});
+
+describe('a search opened in the browser', () => {
+  const open = (personId: string, linkId = 'find-a-grave', query: object = QUERY) =>
+    call<RecordLinkResult>('openRecordLink', { personId, linkId, query });
+
+  it('names the sites, and hands the browser an address on the site', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const setup = await call<RecordSearchSetup>('getRecordSearch', ada);
+    expect(setup.links.map((link) => link.id)).toEqual(['familysearch-records', 'find-a-grave']);
+
+    expect(await open(ada)).toEqual({ ok: true });
+    expect(await open(ada, 'familysearch-records')).toEqual({ ok: true });
+    expect(openedInBrowser.map((url) => new URL(url).origin)).toEqual([
+      'https://www.findagrave.com',
+      'https://www.familysearch.org',
+    ]);
+    expect(new URL(openedInBrowser[0] ?? '').searchParams.get('lastname')).toBe(QUERY.surname);
+    // The app itself asked nobody.
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('opens nothing before the notice, for a person who may be living, or for nobody', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const rita = await addPerson('Rita', { birthDate: '1990' });
+    expect(await open(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    await call('agreeToRecordSearch');
+    expect(await open(rita)).toMatchObject({ ok: false, problem: { kind: 'living' } });
+    expect(await open(MISSING)).toMatchObject({ ok: false, problem: { kind: 'gone' } });
+    expect(await open(ada, 'wikitree')).toMatchObject({ ok: false, problem: { kind: 'source' } });
+    expect(
+      await open(ada, 'find-a-grave', {
+        given: '',
+        surname: ' ',
+        birthYear: 1850,
+        deathYear: null,
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'empty' } });
+    expect(openedInBrowser).toEqual([]);
+  });
+});
+
+describe('a web page cited by its address', () => {
+  it('keeps the address and the day, and one source for each site the app knows', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const target = { type: 'person', id: ada };
+    await call(
+      'addCitation',
+      target,
+      { siteId: 'find-a-grave' },
+      {
+        page: 'Memorial 1',
+        url: 'https://www.findagrave.com/memorial/1',
+        accessedAt: '2026-11-13',
+      },
+    );
+    const state = await call<TreeState>(
+      'addCitation',
+      target,
+      { siteId: 'find-a-grave' },
+      {
+        page: 'Memorial 2',
+        url: 'http://old.example/page?id=2',
+      },
+    );
+    expect(state.sources).toBe(1);
+    const page = await call<PersonPage>('getPersonPage', ada);
+    expect(page.citations).toMatchObject([
+      {
+        sourceTitle: 'Find a Grave',
+        url: 'https://www.findagrave.com/memorial/1',
+        accessedAt: '2026-11-13',
+      },
+      { sourceTitle: 'Find a Grave', url: 'http://old.example/page?id=2', accessedAt: '' },
+    ]);
+    // Nothing was asked of anyone.
+    expect(askedOfSources).toEqual([]);
+    expect(openedInBrowser).toEqual([]);
+
+    expect(
+      (await errorOf('addCitation', target, { siteId: 'no-such-site' }, {})).message,
+    ).toContain('not known');
+  });
+
+  it('refuses what is no web address, in words', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const target = { type: 'person', id: ada };
+    for (const url of [
+      'example.org/page',
+      'javascript:alert(1)',
+      'file:///C:/x.txt',
+      'https://user:secret@example.org/',
+    ]) {
+      const error = await errorOf('addCitation', target, { create: { title: 'A site' } }, { url });
+      expect(error.message, url).toMatch(/web address/);
+    }
+    expect(
+      (await call<SourceListPage>('listSources', { query: '', offset: 0, limit: 10 })).total,
+    ).toBe(0);
+
+    await call(
+      'addCitation',
+      target,
+      { create: { title: 'A site' } },
+      {
+        url: 'https://example.org/a',
+      },
+    );
+    const [citation] = (await call<PersonPage>('getPersonPage', ada)).citations;
+    const id = citation?.id ?? '';
+    expect((await errorOf('updateCitation', id, { url: 'nonsense' })).message).toMatch(
+      /web address/,
+    );
+    // The rest of a citation can be changed while its address stays as it is.
+    await call('updateCitation', id, { page: 'p. 2', url: 'https://example.org/a' });
+    await call('updateCitation', id, { url: '' });
+    expect((await call<PersonPage>('getPersonPage', ada)).citations[0]).toMatchObject({
+      page: 'p. 2',
+      url: '',
+    });
   });
 });

@@ -87,16 +87,18 @@ interface SourceRow extends SourceFields {
   updated_at: number;
 }
 
-interface CitationRow extends CitationFields {
+interface CitationRow extends Omit<CitationFields, 'accessedAt'> {
   id: string;
   source_id: string;
+  accessed_at: string;
   created_at: number;
   updated_at: number;
 }
 
 const SOURCE_COLUMNS =
   'id, title, author, publication, abbreviation, text, note, created_at, updated_at';
-const CITATION_COLUMNS = 'id, source_id, page, text, quality, note, created_at, updated_at';
+const CITATION_COLUMNS =
+  'id, source_id, page, text, quality, note, url, accessed_at, created_at, updated_at';
 
 const LINK_COLUMN = {
   person: 'person_id',
@@ -134,6 +136,8 @@ function toCitation(row: CitationRow): Citation {
     text: row.text,
     quality: row.quality,
     note: row.note,
+    url: row.url,
+    accessedAt: row.accessed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -158,7 +162,7 @@ function assertNamed(fields: SourceFields): void {
   }
 }
 
-function insertSource(tree: Tree, input: SourceInput): Source {
+function insertSource(tree: Tree, input: SourceInput, connectorId: string | null = null): Source {
   const fields = cleanSourceFields({
     title: input.title ?? '',
     author: input.author ?? '',
@@ -170,7 +174,10 @@ function insertSource(tree: Tree, input: SourceInput): Source {
   assertNamed(fields);
   const id = newId();
   const now = Date.now();
-  sql(tree.db, `INSERT INTO source (${SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  sql(
+    tree.db,
+    `INSERT INTO source (${SOURCE_COLUMNS}, connector_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
     id,
     fields.title,
     fields.author,
@@ -180,6 +187,7 @@ function insertSource(tree: Tree, input: SourceInput): Source {
     fields.note,
     now,
     now,
+    connectorId,
   );
   return requireSource(tree, id);
 }
@@ -332,8 +340,101 @@ function insertLink(tree: Tree, citationId: string, target: CitationTarget): voi
   ).run(newId(), citationId, target.id, (last ?? -1) + 1);
 }
 
-/** The source a new citation is of: one that exists, or one to make with it. */
-export type SourceRef = { sourceId: string } | { create: SourceInput };
+/** A site the app knows, and the source to make for it when the tree has none. */
+export interface ConnectorSource {
+  /** The site's id, as in its manifest. */
+  id: string;
+  create: SourceInput;
+}
+
+/**
+ * The source a new citation is of: one that exists, one to make with it, or
+ * the tree's one source for a site the app knows (`connector`).
+ */
+export type SourceRef =
+  { sourceId: string } | { create: SourceInput } | { connector: ConnectorSource };
+
+/**
+ * The tree's source for a site the app knows; null when it has none yet. It
+ * is the source marked with the site's id, whatever its title has been
+ * changed to. A tree that came from a GEDCOM file has no marks, so there it
+ * is the source with the site's title, the most cited one when there are
+ * several.
+ */
+export function connectorSourceId(tree: Tree, connector: ConnectorSource): string | null {
+  const marked = sql(tree.db, 'SELECT id FROM source WHERE connector_id = ?')
+    .pluck()
+    .get(connector.id) as string | undefined;
+  if (marked !== undefined) return marked;
+  // Not marked: the source this app made for the site, after it went through
+  // a GEDCOM file, which keeps no mark. Title and publication must both be
+  // the site's, so that a source of the user that only shares the title, and
+  // may be about something else, is left alone.
+  const { title, publication } = cleanSourceFields({
+    title: connector.create.title ?? '',
+    author: '',
+    publication: connector.create.publication ?? '',
+    abbreviation: '',
+    text: '',
+    note: '',
+  });
+  if (title === '' || publication === '') return null;
+  const named = sql(
+    tree.db,
+    `SELECT id FROM source
+     WHERE title = ? COLLATE NOCASE AND publication = ? COLLATE NOCASE AND connector_id IS NULL
+     ORDER BY (SELECT count(*) FROM citation WHERE citation.source_id = source.id) DESC, id
+     LIMIT 1`,
+  )
+    .pluck()
+    .get(title, publication) as string | undefined;
+  return named ?? null;
+}
+
+/** The id of the source a new citation is of. Call inside a change transaction. */
+function resolveSource(tree: Tree, source: SourceRef): string {
+  if ('sourceId' in source) return requireSource(tree, source.sourceId).id;
+  if ('create' in source) return insertSource(tree, source.create).id;
+  const marked = sql(tree.db, 'SELECT 1 FROM source WHERE connector_id = ?').get(
+    source.connector.id,
+  );
+  const found = connectorSourceId(tree, source.connector);
+  if (found === null) return insertSource(tree, source.connector.create, source.connector.id).id;
+  // A source found by its title and publication is marked, so that it is still found after it is renamed.
+  if (marked === undefined) {
+    sql(tree.db, 'UPDATE source SET connector_id = ? WHERE id = ?').run(source.connector.id, found);
+  }
+  return found;
+}
+
+function insertCitation(tree: Tree, sourceId: string, input: CitationInput): string {
+  const fields = cleanCitationFields({
+    page: input.page ?? '',
+    text: input.text ?? '',
+    quality: input.quality ?? null,
+    note: input.note ?? '',
+    url: input.url ?? '',
+    accessedAt: input.accessedAt ?? '',
+  });
+  const id = newId();
+  const now = Date.now();
+  sql(
+    tree.db,
+    `INSERT INTO citation (${CITATION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    id,
+    sourceId,
+    fields.page,
+    fields.text,
+    fields.quality,
+    fields.note,
+    fields.url,
+    fields.accessedAt,
+    now,
+    now,
+  );
+  return id;
+}
 
 /**
  * Cites a source for a fact: makes a citation and links it to `target`. With
@@ -347,30 +448,58 @@ export function addCitation(
 ): Citation {
   return tree.transact('Add citation', () => {
     requireTarget(tree, target);
-    const sourceId =
-      'create' in source
-        ? insertSource(tree, source.create).id
-        : requireSource(tree, source.sourceId).id;
-    const fields = cleanCitationFields({
-      page: input.page ?? '',
-      text: input.text ?? '',
-      quality: input.quality ?? null,
-      note: input.note ?? '',
-    });
-    const id = newId();
-    const now = Date.now();
-    sql(tree.db, `INSERT INTO citation (${CITATION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      id,
-      sourceId,
-      fields.page,
-      fields.text,
-      fields.quality,
-      fields.note,
-      now,
-      now,
-    );
+    const id = insertCitation(tree, resolveSource(tree, source), input);
     insertLink(tree, id, target);
     return requireCitation(tree, id);
+  });
+}
+
+/** The address as a citation holds it. */
+function storedUrl(url: string): string {
+  return cleanCitationFields({
+    page: '',
+    text: '',
+    quality: null,
+    note: '',
+    url,
+    accessedAt: '',
+  }).url;
+}
+
+/**
+ * The web addresses cited on a person's page: of the person as a whole, their
+ * names and events, and their families. A record with one of these addresses
+ * is attached already.
+ */
+export function citedUrls(tree: Tree, personId: string): Set<string> {
+  return new Set(
+    listPersonCitations(tree, personId)
+      .map((citation) => citation.url)
+      .filter((url) => url !== ''),
+  );
+}
+
+/**
+ * Cites a record of a site the app knows for a person as a whole: one step,
+ * and one Undo. The record is known by its web address. When the person's
+ * page already has a citation with that address, nothing is added and that
+ * citation is returned, so a second click does no harm.
+ */
+export function attachRecord(
+  tree: Tree,
+  personId: string,
+  connector: ConnectorSource,
+  input: CitationInput & { url: string },
+): { citation: Citation; added: boolean } {
+  return tree.transact('Attach record', () => {
+    requireTarget(tree, { type: 'person', id: personId });
+    const url = storedUrl(input.url);
+    if (url === '') throw new TreeRuleError('a record needs a web address to be attached');
+    const existing = listPersonCitations(tree, personId).find((citation) => citation.url === url);
+    if (existing) return { citation: existing, added: false };
+    const id = insertCitation(tree, resolveSource(tree, { connector }), input);
+    insertLink(tree, id, { type: 'person', id: personId });
+    return { citation: requireCitation(tree, id), added: true };
   });
 }
 
@@ -383,17 +512,32 @@ export function updateCitation(tree: Tree, id: string, patch: CitationInput): Ci
       text: patch.text ?? current.text,
       quality: patch.quality === undefined ? current.quality : patch.quality,
       note: patch.note ?? current.note,
+      url: patch.url ?? current.url,
+      accessedAt: patch.accessedAt ?? current.accessedAt,
     });
     const unchanged =
       fields.page === current.page &&
       fields.text === current.text &&
       fields.quality === current.quality &&
-      fields.note === current.note;
+      fields.note === current.note &&
+      fields.url === current.url &&
+      fields.accessedAt === current.accessedAt;
     if (unchanged) return current;
     sql(
       tree.db,
-      'UPDATE citation SET page = ?, text = ?, quality = ?, note = ?, updated_at = ? WHERE id = ?',
-    ).run(fields.page, fields.text, fields.quality, fields.note, Date.now(), id);
+      `UPDATE citation SET page = ?, text = ?, quality = ?, note = ?, url = ?, accessed_at = ?,
+         updated_at = ?
+       WHERE id = ?`,
+    ).run(
+      fields.page,
+      fields.text,
+      fields.quality,
+      fields.note,
+      fields.url,
+      fields.accessedAt,
+      Date.now(),
+      id,
+    );
     return requireCitation(tree, id);
   });
 }
@@ -430,8 +574,8 @@ export function unlinkCitation(tree: Tree, citationId: string, target: CitationT
   });
 }
 
-const CITED_COLUMNS = `c.id, c.source_id, c.page, c.text, c.quality, c.note, c.created_at,
-  c.updated_at, (CASE WHEN s.title = '' THEN s.abbreviation ELSE s.title END) AS source_title`;
+const CITED_COLUMNS = `c.id, c.source_id, c.page, c.text, c.quality, c.note, c.url,
+  c.accessed_at, c.created_at, c.updated_at, (CASE WHEN s.title = '' THEN s.abbreviation ELSE s.title END) AS source_title`;
 
 type CitedRow = CitationRow & { source_title: string };
 

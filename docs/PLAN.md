@@ -135,7 +135,7 @@ The owner's tree was exported from Ancestry (export version 2025.08: 162 people,
 - **There is not one note on a person, an event or a family.** The only notes are in source records (85 of 90), most of them long. Part 2d should start from the note of a source.
 - **Ancestry writes a marriage or divorce under a person** (`1 MARR` under `INDI`, 7 times; `1 DIV`, 3 times) as well as under the family. These ten are not events; they are kept as written and show as GEDCOM text on the person's page.
 - **Places are plain text of one to five parts** separated by commas (of 787 place values, 277 have three parts, 260 four and 93 one), as the gazetteer work assumed. One has eight.
-- **Sources carry `_APID` everywhere,** `PUBL` with a date and a place under it, and one repository for all 90. Citations have `PAGE`, and sometimes `DATA` with a `WWW` line, which is the address of the record: 111 of them. This is the web address the citation form has no field for yet.
+- **Sources carry `_APID` everywhere,** `PUBL` with a date and a place under it, and one repository for all 90. Citations have `PAGE`, and sometimes `DATA` with a `WWW` line, which is the address of the record: 111 of them. Since part 3b a citation has a field for this address.
 - **The file ends its lines with a line feed alone, and 16 values have a carriage return in them.** The export writes those 16 lines without it. It is one more case in which an export is not identical; the others are listed under "Phase 1c outcome".
 - Not covered by one file: a large tree, a tree with living people marked private, and what Ancestry writes for notes, since this tree has none.
 
@@ -208,9 +208,13 @@ packages/db/src/gedcom     Loading a parsed file into a tree, and writing a tree
 
 Every source has a manifest (`packages/connectors/src/manifest.ts`) holding its
 tier, auth method, rate limit, quota, cache lifetime, attribution and terms URL.
-From Phase 3 a shared HTTP client enforces those values with a per-host token
-bucket, honours `Retry-After`, caches with ETags, and sends a descriptive app
-User-Agent. Connectors implement:
+Since part 3a a shared HTTP client (`packages/connectors/src/http.ts`) enforces
+those values: it counts the requests to each host, honours `Retry-After`, keeps
+answers in memory for the manifest's lifetime, and sends a User-Agent that names
+the app. A connector gets a client bound to its manifest, never `fetch`. The
+plan first named ETags; no source built so far sends them for a search. The
+interface below is the plan; part 3a built `searchPersons`
+(`packages/connectors/src/connector.ts`). Connectors implement:
 
 ```ts
 export interface SourceConnector {
@@ -258,6 +262,10 @@ these sites.
 Find a Grave (governed by Ancestry's terms, which bar automated collection),
 FamilySearch record search, FreeBMD/FreeCEN/FreeREG, Ellis Island, JewishGen,
 IrishGenealogy.ie, Library and Archives Canada, ScotlandsPeople index.
+
+Built in part 3b for the first two (`packages/connectors/src/links.ts`); the
+others are planned. The form of each site's search address was taken from what
+is publicly written about it and has not been tried against the site.
 
 ## 5. Data model
 
@@ -370,6 +378,13 @@ place(id, text UNIQUE, geonames_id, name, lat, lon, created_at, updated_at)
   -- text: a place as typed in events, compared without regard to case
   -- name, lat, lon: a copy of the gazetteer entry the text is linked to
 index on event(place_text)                                   -- for the list of a tree's places
+```
+
+Changed in schema version 9 (`packages/db/src/schema/009-citation-addresses.ts`):
+
+```sql
+citation gains: url, accessed_at   -- the address of the record; the day it was consulted, YYYY-MM-DD
+source gains: connector_id         -- the site a source stands for; at most one source per site
 ```
 
 The gazetteer is not part of a tree. It is one SQLite file of its own in the
@@ -717,6 +732,118 @@ Not done, and why:
 - **The charts were checked by eye in light colours only,** and at one window size. Dragging was not tried on a touch screen.
 - **The unexplained crash of part 1c happened again, once.** In one of about twelve full runs of the unit tests in this part, the worker running the 10,000-person GEDCOM test stopped before reporting its three tests. Eight further full runs in a row passed. It is the same test file as before, which this part did not change. The cause is still unknown; the next step is to capture a crash dump. Until then a run of the unit tests, locally or in CI, can fail for this reason and pass when repeated.
 
+### Phase 3 breakdown
+
+| Part | Scope                                                                                                                                                       | Status              |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 3a   | The HTTP client, the connector interface, the search for a person at WikiTree, the search window, and a check against WikiTree itself                       | **Done 2026-11-13** |
+| 3b   | Attaching a result as a citation (a web address and the date consulted on a citation), the clip form, and the links to sites the app never fetches (Tier C) | **Done 2026-11-13** |
+| 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | Planned             |
+| 3d   | Open Archives and Wikidata                                                                                                                                  | Planned             |
+| 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | Planned             |
+
+Attaching comes second, so that the phase's test ("a search returns grouped
+results and one click attaches a record as a citation") is met with one source
+before more are added. Sources that need a key come last. Three views were asked
+for on the split and on part 3a (the primary, an Opus helper and a Codex helper);
+they agreed on this order, except that Codex put the Tier C links last.
+
+### Phase 3b outcome: attaching a result, the clip form and links to other sites (2026-11-13)
+
+With this part the phase's test is met for one source: a search returns results
+grouped by source, and one click attaches a record as a citation.
+
+Delivered:
+
+- **A citation has a web address and the day it was consulted** (schema version 9). The citation form has a field for each, and a citation shows them; an https address opens in the browser, any other is shown as text.
+- **Both in GEDCOM files.** The address is the first `WWW` line under a citation's `DATA` line, which is where Ancestry writes the address of a record. A new address is written the same way in a 5.5.1 file and as `_WWW` in a 7.0 file. The day is a line `_RULZ_ACCESSED` under the citation. An untouched import still exports line for line.
+- **Trees imported earlier are upgraded:** their addresses are read from the lines the tree kept, and the result is the same as a fresh import of the same file. The upgrade is not an edit, and undoing a deletion made before it brings the citation back with its address.
+- **"Attach as a source" on a result.** One click cites the record for the person as a whole: the source is the site, and the citation holds the title and key of the record, its birth and death as the site gives them, its address and today's date. It is one undo step. A result whose address the person's page already cites says "Attached as a source", also at the next search.
+- **One source per site.** A source the app makes for a site is marked with the site (`source.connector_id`) and used for every record of it, also after the user renames it.
+- **Links to sites the app never fetches:** Find a Grave and the record search of FamilySearch. A button opens a search for the four fields of the form in the user's browser.
+- **The clip form.** "Cite a page you found there" is the citation form with the site as its source and today as the day; the user pastes the address. "Cite a page of another site" does the same for any source. The app never asks for the page.
+
+Decided while building:
+
+- **The page only names a result.** To attach, the page sends the person, the source and the key of the result. The main process cites what it read from the source itself, and only a result it showed for that person since the tree was opened, whose address is https and on the site of the source.
+- **A link opened in the browser counts as sending.** The address holds the name and the years, so it needs the notice to have been agreed and is refused for a person who may be living, like a search. The notice now names these sites and says that the site and the browser's history hold what was searched.
+- **The file that builds the links cannot fetch.** It does not import the HTTP client, a test checks that, and the client refuses a link-only source.
+- **A pasted address is checked, not changed.** It must be an http or https address of at most 2,048 characters, without a user name, spaces or characters that cannot be seen. It is stored as typed. An address that came with an imported file is kept whatever it is, as long as it is not edited.
+- **The day is a day, in the user's own time zone,** and is stored as `YYYY-MM-DD`.
+- **A source of the tree stands in for a site only when both its title and its publication are the site's.** A GEDCOM file keeps no mark, so this is how the app's own source is found again after a round trip through one. A source of the user that only shares the title is left alone, and the app makes its own beside it.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code.
+
+- **The upgrade missed a tag written in small letters** (Codex), which a fresh import reads. Fixed, with a test.
+- **Emptying an address brought a second one forward** (Codex) when a citation had two `WWW` lines. Emptying now removes them all; changing the first leaves the second as written.
+- **A source that only shared a site's title was taken for the site** (both). First left as the design views had it, then changed when the second review named the same risk: title and publication must both match.
+- **A search that answered after its tree had closed was still remembered** (Opus). Its answer is dropped now. No test reaches this: the search is also cancelled when the tree closes.
+- **A day that does not exist emptied the stored day without a word** (Opus), when a page sent one. It is refused now.
+- **Characters that cannot be seen were allowed in an address** (Opus), and can make it read as another. Refused now. An address written `HTTPS://` was shown as text; it is a link now.
+- **`WWW` under `DATA` is not in the GEDCOM 5.5.1 standard** (Opus). Left: it is what Ancestry writes, so it is what other programs are most likely to read. A program that drops lines it does not know loses the address.
+- **Not verified:** whether the browser engine inside the app opens a connection to a site when a link to it is pressed, before the link is handed to the user's browser (Opus, unsure). No request is sent either way.
+
+Turned down from the design views: removing tracking parts from a pasted address (it can break the address), tables for the records themselves (the citation holds what it cites), a new version of the notice (part 3a was never released), and blocking the two sites in the search's network session (it could not be tested without asking them).
+
+Tests: unit tests went from 911 to 960, end-to-end tests from 36 to 37.
+
+Not done:
+
+- **The other link-only sites** of the list in section 4.
+- **The search addresses were not tried against Find a Grave and FamilySearch.** The app must not ask them, and neither did the build. If a site changes its search page, the link opens the page without the fields filled in.
+- **Attaching to one event.** A result is cited for the person as a whole; the citation can be linked to more facts afterwards, as any citation.
+- **Taking facts over from a result** into the tree. The citation records them as text.
+- **Merging two sources.** A source of the user with a site's title and the app's own stay two.
+- **A note in a GEDCOM 7.0 file's header that declares `_WWW` and `_RULZ_ACCESSED`,** and a rule for them when a file is converted between versions.
+
+### Phase 3a outcome: the search for records, and WikiTree (2026-11-13)
+
+Delivered:
+
+- **"Search records" on a person's page.** The window starts with the person's given name, last name and years of birth and death, each of which can be changed or emptied. "Search" sends them to WikiTree. Results come twenty at a time, under the source's name and credit, each with its name, sex, birth and death, and a link that opens the profile at WikiTree in the browser. "More results" asks for the next twenty.
+- **A notice before the first search.** It says what is sent, to whom, when, and what is kept. Nothing is sent before the user has agreed; the agreement is kept in the app's settings.
+- **No search for a person who may be living.** The rule is the one of the exports (`presumedLivingIds`). The window says so and offers no form, and the main process refuses whatever a page asks.
+- **The HTTP client.** It asks only the address of a source's manifest, over HTTPS, without cookies, without a cache on disk and without following an answer that points elsewhere. It never sends more requests to a host than the manifest allows within any span of the manifest's length. When a source answers "too many requests" it is left alone for as long as it asks, or the manifest's own pause (`pauseSeconds`, an hour for the Library of Congress), and at most a day. A request has 20 seconds, and an answer 2 MB.
+- **The WikiTree connector** (`searchPerson`, read from WikiTree's documentation and tried against the service). It asks for sixteen fields and reads each with care: only a profile that WikiTree calls public or open and not living is shown, and the rest is counted as "not shown".
+- **A check against WikiTree itself,** `pnpm test:contract`, run every Monday by `.github/workflows/contract.yml` and not as part of CI. It sends one search for a writer who died in 1910 and looks at the shape of the answer.
+
+Decided while building:
+
+- **Nothing is sent without a press.** Not while typing, not in the background. The form shows what will be sent.
+- **A year, not a date.** The search sends the years of birth and death and lets a record lie two years to either side. A date of the tree that spans several years gives the year in their middle; one that is open to one side gives none.
+- **The gate looks at the person, not at the words.** What the user types into the form is theirs to send, as in a browser. The form is never filled in for a person who may be living. A search without a person of the tree is not offered in this part.
+- **Results are not kept.** They live in the memory of the main process until the tree closes, by the lifetime of the manifest at most. There is no table for them; the citation of part 3b will hold what it cites.
+- **A session of its own.** The search asks through an Electron session that lives in memory only, so that no cookie and no answer reaches the disk.
+- **Everything a source sends is untrusted.** Texts are shown as text, cut to 200 characters and cleared of control characters. The link of a result is made by the app from the profile's id and always lies on wikitree.com.
+- **Where the code lives.** The shapes (`PersonQuery`, `Page`, `ExternalRecord`) are in `packages/core/src/records.ts`; the client and the connector in `packages/connectors`; the rules (notice, living people, one search per source at a time) in `apps/desktop/src/main/records.ts`.
+
+Found by the reviews, and what was done. Two helpers reviewed the change without seeing each other's findings: OpenAI Codex and a Claude Opus subagent. Each finding was checked against the code.
+
+- **A private profile was hidden only because it comes without fields** (both). WikiTree's own privacy level is now asked for, and only public and open profiles are shown.
+- **Cookies and answers could reach the disk** (Opus). Electron's own network session keeps both. The search now has a session in memory, sends no cookie and asks for no caching.
+- **A path could leave the address of a source** (Codex): "%2e%2e" is ".." to a server, and "/api.php-other" passed for a path below "/api.php". Both are refused now.
+- **A search could be sent after the person became possibly living** (Codex), while it waited for its turn. The rule is looked at again just before the request goes out.
+- **Opening another tree kept what was found for the first** (Opus). Only closing a tree by hand cleared it. Every way of leaving a tree now does.
+- **A shorter pause could replace a longer one** (Codex), and a source could ask for a pause of nothing (Opus). The longest pause stands, and a pause lasts the span of the limit at least.
+- **A search that was given up still waited in the queue** (both), and one given up could still be kept as an answer (both). Fixed.
+- **Closing the window did not stop a search** (Opus). It does now.
+- **A profile that came twice was shown twice** (Opus). Once now.
+- **A pause longer than a day is cut to a day** (Codex wanted it honoured in full). Left: a source that is mistaken or hostile must not shut the search for good.
+- **Any HTTPS link of a result would open** (Opus): the rule that links stay on the source's site is kept by the connector alone. Left; the window's link handler is the app's general one.
+- **Who may be living is worked out for the whole tree at each search** (Opus). Left; it takes milliseconds on the trees tried.
+- **Not tested:** that Electron itself refuses a redirect and sends the User-Agent the client gives. The unit tests check that both are asked for.
+
+Tests: unit tests went from 856 to 911, end-to-end tests from 34 to 36. The end-to-end tests answer in WikiTree's place and fail on any other request.
+
+Not done:
+
+- **Attaching a result to the tree.** Done in part 3b.
+- **Any source but WikiTree.**
+- **A search without a person,** and a search by place.
+- **A pause that outlasts the app.** A source's pause is forgotten when the app closes. It matters for the Library of Congress, in part 3c.
+- **Signing in to WikiTree,** which would show private profiles the user is trusted with.
+- **Relatives of a result,** and the reading of one record in full.
+
 ### Phase 2 breakdown
 
 | Part | Scope                                                                                                                                      | Status              |
@@ -917,7 +1044,7 @@ Not done:
 - **A family has no note field.** A note under a family record stays as a line kept as written, and is shown nowhere, as before.
 - **A name has no note field,** nor does a media record beyond its description.
 - **Notes are not in the search.**
-- **The findings of the first real export are otherwise open:** matching Ancestry's pictures to files, showing its picture descriptions, the main picture of a person, marriages written under a person, and the web address of a record on a citation.
+- **The findings of the first real export are otherwise open:** matching Ancestry's pictures to files, showing its picture descriptions, the main picture of a person, and marriages written under a person. The web address of a record on a citation came with part 3b.
 - **The upgrade from version 6 was tested on trees built by the tests,** not on a file saved by the earlier build.
 - **The new fields were looked at in light colours only,** in screenshots of one window.
 
@@ -944,7 +1071,7 @@ Changed from earlier parts:
 Not done, and why:
 
 - **No repositories.** Where a source is held (an archive, a library, a website) is a record of its own in GEDCOM. That record is kept as written and exported, and shown nowhere; the source's page shows only the line that points at it, as GEDCOM text. A source added in the app has the "published or kept" field for it.
-- **No web address or date consulted on a citation.** Both arrive with the clip form of Phase 3, which turns a result's address into a citation. Until then an address goes in the note or in "where in the source".
+- **No web address or date consulted on a citation.** Both arrived with part 3b.
 - **A citation cannot be moved to another source, and two sources cannot be merged.** A file that names one census under two source records keeps two sources.
 - **A citation is only used again from the same person's page.** The form offers the citations already on the page; a citation of another person (the same household entry for a brother) has to be typed again, and then is a second citation.
 - **Some source lines of a file are not citations:** a source described in place without a record, a line pointing at no record of the file, the second of two equal citations of one fact, and citations under notes, associations and other structures. They stay kept as written; those directly under a person show as GEDCOM text, the others are not shown.

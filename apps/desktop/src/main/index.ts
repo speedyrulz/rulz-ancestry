@@ -19,6 +19,7 @@ import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from 
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
+import { RecordSearchService } from './records';
 import { findMediaFile } from './mediafiles';
 import { TreeSession } from './session';
 
@@ -126,6 +127,11 @@ function createMainWindow(): BrowserWindow {
 }
 
 const platform: Platform = {
+  async openInBrowser(url) {
+    if (!isSafeExternalUrl(url)) throw new Error('only an https address is opened in the browser');
+    await shell.openExternal(url);
+  },
+
   appInfo() {
     if (!appDb) throw new Error('application database is not open');
     return {
@@ -272,8 +278,15 @@ async function serveMedia(request: Request): Promise<Response> {
   });
 }
 
-function registerIpc(session: TreeSession, places: GazetteerService): void {
-  const handlers = createHandlers(session, platform, places);
+/** The network session of the search for records. Without "persist:" it is kept in memory only. */
+const RECORDS_PARTITION = 'records';
+
+function registerIpc(
+  session: TreeSession,
+  places: GazetteerService,
+  records: RecordSearchService,
+): void {
+  const handlers = createHandlers(session, platform, places, records);
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -354,14 +367,26 @@ if (!app.requestSingleInstanceLock()) {
     treeSession.start();
 
     // The list of the world's places, downloaded from GeoNames when the user
-    // asks for it. This is the only request the app makes of the internet.
-    // `net.fetch` is looked up at each call, and uses the system's proxy.
+    // asks for it. `net.fetch` is looked up at each call, and uses the
+    // system's proxy.
     gazetteer = new GazetteerService({
       dir: join(app.getPath('userData'), 'gazetteer'),
       fetch: (url, init) => net.fetch(url, init),
     });
 
-    registerIpc(treeSession, gazetteer);
+    // The search for records outside the tree: the other request the app
+    // makes of the internet, and the only one that sends something of a tree.
+    // See `records.ts` for what it sends and when.
+    // It asks through a session of its own that lives in memory only, so
+    // that no cookie and no answer of a source is ever written to disk, and
+    // a source cannot tell by a cookie that two searches came from one PC.
+    const records = new RecordSearchService({
+      appDb,
+      fetch: (url, init) => electronSession.fromPartition(RECORDS_PARTITION).fetch(url, init),
+      appVersion: app.getVersion(),
+    });
+
+    registerIpc(treeSession, gazetteer, records);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     mainWindow.on('closed', () => {

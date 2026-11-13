@@ -11,9 +11,11 @@ import type {
   DateCalendar,
   DateQualifier,
   DescendantNode,
+  ExternalRecord,
   GedcomVersion,
   NameType,
   Pedigree,
+  PersonQuery,
   Sex,
 } from '@rulz/core';
 
@@ -258,6 +260,10 @@ export interface CitationInput {
   quality?: number | null;
   /** The user's own remark. */
   note?: string;
+  /** The web address of the page or record; http or https, or empty. */
+  url?: string;
+  /** The day the page was consulted, as `YYYY-MM-DD`, or empty. */
+  accessedAt?: string;
 }
 
 /** One place in a source, with what it says there. */
@@ -270,6 +276,10 @@ export interface CitationInfo {
   text: string;
   quality: number | null;
   note: string;
+  /** The web address of the page or record; empty when there is none. An imported one may be no address. */
+  url: string;
+  /** The day the page was consulted, as `YYYY-MM-DD`; empty when not stated. */
+  accessedAt: string;
 }
 
 /** A citation on a person's page, with the facts of that page it supports. */
@@ -310,8 +320,11 @@ export interface SourceChange {
   sourceId: string;
 }
 
-/** The source a new citation is of: one that exists, or one to make in the same step. */
-export type SourceRef = { sourceId: string } | { create: SourceInput };
+/**
+ * The source a new citation is of: one that exists, one to make in the same
+ * step, or the tree's one source for a site the app knows, by the site's id.
+ */
+export type SourceRef = { sourceId: string } | { create: SourceInput } | { siteId: string };
 
 /** What a picture or document is attached to. */
 export type MediaTargetType = 'person' | 'family' | 'event' | 'citation' | 'source';
@@ -530,6 +543,119 @@ export interface LifeEntryInfo {
 export interface PersonLifeInfo {
   entries: LifeEntryInfo[];
 }
+
+/** A source that can be searched for records. */
+export interface RecordSourceInfo {
+  /** The source's id, as in its manifest. */
+  id: string;
+  name: string;
+  /** The credit shown with every result of the source. */
+  attribution: string;
+  /** The page with the source's terms. */
+  termsUrl: string;
+  /** Until when the source must be left alone, in Unix milliseconds; null when it may be asked. */
+  pausedUntil: number | null;
+}
+
+/** A site the app never asks itself: it opens a search there in the user's browser. */
+export interface RecordLinkInfo {
+  /** The site's id, as in its manifest. */
+  id: string;
+  name: string;
+  /** The page with the site's terms. */
+  termsUrl: string;
+}
+
+/** What the search form for a person starts with. */
+export interface RecordSearchSetup {
+  /** False when the person may be living: nothing is sent about them. */
+  allowed: boolean;
+  /** Whether the user has agreed to the notice that says what a search sends. */
+  agreed: boolean;
+  /** The person's name and years. Empty when `allowed` is false. */
+  query: PersonQuery;
+  sources: RecordSourceInfo[];
+  /** The sites a search can be opened at in the browser. */
+  links: RecordLinkInfo[];
+}
+
+export interface RecordSearchRequest {
+  /** The person the search is for. Nothing is sent when they may be living. */
+  personId: string;
+  sourceId: string;
+  /** What is sent to the source: this, and nothing else of the tree. */
+  query: PersonQuery;
+  /** How many results come before the first that is asked for. */
+  offset: number;
+}
+
+export interface RecordSearchProblem {
+  kind:
+    | 'notice' /* the user has not agreed to the notice */
+    | 'living' /* the person may be living */
+    | 'gone' /* the person is no longer in the tree */
+    | 'empty' /* the query names nobody */
+    | 'source' /* the source is not known */
+    | 'record' /* the record is not one the search showed for this person */
+    | 'paused' /* the source must be left alone until `retryAt` */
+    | 'offline' /* the source could not be reached */
+    | 'timeout'
+    | 'cancelled' /* a newer search took this one's place */
+    | 'failed';
+  /** In words, for the user. */
+  message: string;
+  /** When the source may be asked again, in Unix milliseconds, where that is known. */
+  retryAt: number | null;
+}
+
+export type RecordSearchResult =
+  | {
+      ok: true;
+      sourceId: string;
+      items: ExternalRecord[];
+      /** How many results the source has in all; null when it does not say. */
+      total: number | null;
+      /** The offset to ask for to get more; null when there are no more. */
+      nextOffset: number | null;
+      /** How many results were left out: private profiles and living people. */
+      hidden: number;
+      /** The keys of the results that the person's page already cites. */
+      attached: string[];
+      /** When the source gave this answer, in Unix milliseconds. */
+      fetchedAt: number;
+      /** True when the answer was kept from an earlier search and nothing was sent. */
+      cached: boolean;
+    }
+  | { ok: false; sourceId: string; problem: RecordSearchProblem };
+
+/** Which result of a search to attach to the person it was found for. */
+export interface AttachRecordRequest {
+  personId: string;
+  sourceId: string;
+  /** The key of a result the search showed for this person. Nothing else of it is passed. */
+  key: string;
+}
+
+export type AttachRecordResult =
+  | {
+      ok: true;
+      tree: TreeState;
+      citationId: string;
+      /** False when the person's page cited the record already, and nothing was added. */
+      added: boolean;
+    }
+  | { ok: false; problem: RecordSearchProblem };
+
+/** A search to open in the browser, at a site the app does not ask itself. */
+export interface RecordLinkRequest {
+  /** The person the search is for. Nothing is opened when they may be living. */
+  personId: string;
+  linkId: string;
+  /** What the address of the search holds: this, and nothing else of the tree. */
+  query: PersonQuery;
+}
+
+export type RecordLinkResult = { ok: true } | { ok: false; problem: RecordSearchProblem };
 
 /** One place of the open tree: a text that events give as their place. */
 export interface TreePlaceInfo {
@@ -799,6 +925,35 @@ export interface RulzApi {
    * when its place is linked. Null when the person is gone.
    */
   getPersonLife(personId: string): Promise<PersonLifeInfo | null>;
+  // Records outside the tree.
+  /**
+   * What the search form for a person starts with: whether they may be
+   * searched for, their name and years, and the sources. Sends nothing. Null
+   * when the person is gone.
+   */
+  getRecordSearch(personId: string): Promise<RecordSearchSetup | null>;
+  /** Notes that the user has agreed to what a search sends. */
+  agreeToRecordSearch(): Promise<void>;
+  /**
+   * Asks one source for records of a person. This sends the query to the
+   * source, and only after the user has agreed to the notice and when the
+   * person is not one who may be living.
+   */
+  searchRecords(request: RecordSearchRequest): Promise<RecordSearchResult>;
+  /** Gives up the searches that are under way. For when the search window closes. */
+  cancelRecordSearch(): Promise<void>;
+  /**
+   * Cites a result of the search for the person it was found for: the source
+   * for the site is made when the tree has none, and one Undo takes it back.
+   * Nothing is sent.
+   */
+  attachRecord(request: AttachRecordRequest): Promise<AttachRecordResult>;
+  /**
+   * Opens a search for a person at a site in the user's browser. The app
+   * itself asks the site nothing. Refused for a person who may be living, and
+   * before the notice is agreed to.
+   */
+  openRecordLink(request: RecordLinkRequest): Promise<RecordLinkResult>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -957,6 +1112,12 @@ export const API_METHODS = [
   'listPersons',
   'getPersonPage',
   'getPersonLife',
+  'getRecordSearch',
+  'agreeToRecordSearch',
+  'searchRecords',
+  'cancelRecordSearch',
+  'attachRecord',
+  'openRecordLink',
   'getChart',
   'getRelationship',
   'findDuplicates',

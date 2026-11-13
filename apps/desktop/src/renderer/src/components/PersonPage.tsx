@@ -25,6 +25,7 @@ import {
 } from '../format';
 import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
 import { LifeSection } from './life';
+import { RecordSearchDialog } from './records';
 import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
@@ -54,6 +55,7 @@ type Open =
   | { kind: 'partner'; familyId?: string }
   | { kind: 'child'; familyId?: string; surname: string }
   | { kind: 'relationship' }
+  | { kind: 'records' }
   | { kind: 'merge' }
   | { kind: 'delete' }
   | { kind: 'note' }
@@ -373,6 +375,14 @@ export function PersonPageView({
             data-testid="open-relationship"
           >
             Relationship
+          </button>
+          <button
+            type="button"
+            title="Look for this person in records outside your tree"
+            onClick={() => setOpen({ kind: 'records' })}
+            data-testid="open-records"
+          >
+            Search records
           </button>
           <button
             type="button"
@@ -917,6 +927,16 @@ export function PersonPageView({
       )}
       {open?.kind === 'relationship' && (
         <RelationshipDialog person={summary} onClose={() => setOpen(null)} onSelect={onSelect} />
+      )}
+      {open?.kind === 'records' && (
+        <RecordSearchDialog
+          personId={person.id}
+          name={name}
+          tree={tree}
+          citations={page.citations}
+          onTree={onTree}
+          onClose={() => setOpen(null)}
+        />
       )}
       {open?.kind === 'merge' && (
         <MergeDialog

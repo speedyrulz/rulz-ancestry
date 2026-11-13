@@ -8,6 +8,7 @@ export const locManifest = defineManifest({
   access: 'open',
   baseUrl: 'https://www.loc.gov',
   rateLimit: { requests: 20, perSeconds: 60, source: 'published' },
+  pauseSeconds: 3600,
   cacheTtlHours: 720,
   mayStoreImages: true,
   attribution: 'Library of Congress, Chronicling America: Historic American Newspapers',

@@ -103,6 +103,7 @@ export class TreeSession {
   #revision = 0;
   #lastBackupAt: number | null = null;
   #reopenError: string | null = null;
+  readonly #closeListeners: (() => void)[] = [];
 
   constructor(options: SessionOptions) {
     this.#appDb = options.appDb;
@@ -415,9 +416,25 @@ export class TreeSession {
     }
   }
 
+  /**
+   * Has `listener` called whenever the open tree is closed: by the user, by
+   * opening another tree, or when the app quits. It is called before the
+   * tree's file is closed.
+   */
+  whenTreeCloses(listener: () => void): void {
+    this.#closeListeners.push(listener);
+  }
+
   #closeCurrent(): { backupError: string | null } {
     const tree = this.#tree;
     if (!tree) return { backupError: null };
+    for (const listener of this.#closeListeners) {
+      try {
+        listener();
+      } catch {
+        // A listener that fails must not keep the tree from closing.
+      }
+    }
     let backupError: string | null = null;
     try {
       if (tree.dir !== null) backupTree(tree, { now: this.#now() });

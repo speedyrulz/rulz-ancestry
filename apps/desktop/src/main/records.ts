@@ -1,0 +1,438 @@
+import {
+  ConnectorError,
+  HttpClient,
+  HttpError,
+  citationSourceOf,
+  cleanText,
+  deepLinkSources,
+  wikitreeConnector,
+  wikitreeManifest,
+  type ConnectorManifest,
+  type DeepLinkSource,
+  type HttpFetch,
+  type SourceConnector,
+} from '@rulz/connectors';
+import {
+  CITATION_LIMITS,
+  describeDate,
+  isEmptyQuery,
+  parseDate,
+  queryYear,
+  type ExternalRecord,
+  type PersonQuery,
+} from '@rulz/core';
+import {
+  citedUrls,
+  getPerson,
+  getSetting,
+  listNames,
+  listPersonEvents,
+  presumedLivingIds,
+  setSetting,
+  type CitationInput,
+  type ConnectorSource,
+  type Db,
+  type Tree,
+} from '@rulz/db';
+import type {
+  AttachRecordRequest,
+  RecordLinkInfo,
+  RecordLinkRequest,
+  RecordSearchProblem,
+  RecordSearchRequest,
+  RecordSearchResult,
+  RecordSearchSetup,
+  RecordSourceInfo,
+} from '../shared/ipc';
+
+/**
+ * The search for records outside the tree. This is the one place where
+ * something of a tree leaves the PC: a name and two years, typed or confirmed
+ * by the user, go to a source the user sees named, when they press "Search".
+ *
+ * Three rules are kept here, in the main process, so that no page and no later
+ * part of the app can go around them:
+ *
+ * - nothing is sent before the user has agreed to the notice that says what a
+ *   search sends, and to whom;
+ * - nothing is sent for a person who may be living;
+ * - a source is reached through its own client only (`@rulz/connectors`),
+ *   which keeps to its address and its limits.
+ *
+ * Results are kept in memory by that client for a while and are never written
+ * to disk. Nothing here uses Electron; the function that fetches is handed in.
+ *
+ * What the user types into the form is theirs to send: the second rule looks
+ * at the person the search was opened for, not at the words. The form is
+ * never filled in for a person who may be living.
+ *
+ * Some sites the app must never ask itself (`deepLinkSources`). For those it
+ * only makes the address of a search, which the user's browser opens. The
+ * name and the years go to the site all the same, so the first two rules hold
+ * for a link as they do for a search.
+ *
+ * A result can be attached to the person it was found for. The page names it
+ * by its key only; what is written into the tree is what this service itself
+ * read from the source, and nothing is sent.
+ */
+
+/** The setting that holds the day the user agreed to the notice. */
+export const RECORD_SEARCH_NOTICE_SETTING = 'recordSearch.noticeAgreedAt';
+
+/** How many results are asked for at a time. */
+export const RECORD_SEARCH_PAGE = 20;
+
+/** How many results are remembered for attaching. The oldest go first. */
+const SHOWN_LIMIT = 2000;
+
+/** What is needed to cite a result; see `RecordSearchService.attachment`. */
+export type RecordAttachment =
+  | { ok: true; connector: ConnectorSource; citation: CitationInput & { url: string } }
+  | { ok: false; problem: RecordSearchProblem };
+
+export interface RecordSearchOptions {
+  appDb: Db;
+  fetch: HttpFetch;
+  /** The app's version, for the name it gives itself to a source. */
+  appVersion: string;
+  /** The clock, replaceable in tests. */
+  now?: () => number;
+}
+
+/** What the app calls itself to a source: its name, its version and where its code is. */
+export function userAgentOf(appVersion: string): string {
+  return `RulZAncestry/${appVersion} (+https://github.com/speedyrulz/rulz-ancestry)`;
+}
+
+const EMPTY_QUERY: PersonQuery = { given: '', surname: '', birthYear: null, deathYear: null };
+
+export class RecordSearchService {
+  readonly #appDb: Db;
+  readonly #http: HttpClient;
+  readonly #connectors: SourceConnector[];
+  readonly #now: () => number;
+  /** The search that is under way at each source. A new one gives the old one up. */
+  readonly #underWay = new Map<string, AbortController>();
+  readonly #links: readonly DeepLinkSource[] = deepLinkSources;
+  /** The results shown since the tree was opened, each with the person it was found for. */
+  readonly #shown = new Map<string, { personId: string; record: ExternalRecord }>();
+  /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
+  #closed = 0;
+
+  constructor(options: RecordSearchOptions) {
+    this.#appDb = options.appDb;
+    this.#now = options.now ?? Date.now;
+    this.#http = new HttpClient({
+      fetch: options.fetch,
+      userAgent: userAgentOf(options.appVersion),
+      now: this.#now,
+    });
+    this.#connectors = [wikitreeConnector(this.#http.for(wikitreeManifest))];
+  }
+
+  /** True once the user has agreed to the notice. */
+  get agreed(): boolean {
+    return getSetting(this.#appDb, RECORD_SEARCH_NOTICE_SETTING) !== null;
+  }
+
+  agree(): void {
+    if (!this.agreed) {
+      setSetting(this.#appDb, RECORD_SEARCH_NOTICE_SETTING, new Date(this.#now()).toISOString());
+    }
+  }
+
+  sources(): RecordSourceInfo[] {
+    return this.#connectors.map(({ manifest }) => ({
+      id: manifest.id,
+      name: manifest.name,
+      attribution: manifest.attribution,
+      termsUrl: manifest.termsUrl,
+      pausedUntil: this.#http.pausedUntil(manifest),
+    }));
+  }
+
+  /**
+   * What the search form starts with for a person: whether they may be
+   * searched for, and their name and years. Null when the person is gone.
+   * Of a person who may be living nothing is filled in.
+   */
+  setup(tree: Tree, personId: string): RecordSearchSetup | null {
+    if (getPerson(tree, personId) === null) return null;
+    const allowed = !presumedLivingIds(tree, this.#now()).has(personId);
+    return {
+      allowed,
+      agreed: this.agreed,
+      query: allowed ? queryOf(tree, personId) : EMPTY_QUERY,
+      sources: this.sources(),
+      links: this.links(),
+    };
+  }
+
+  /** The sites a search can be opened at in the user's browser. */
+  links(): RecordLinkInfo[] {
+    return this.#links.map(({ manifest }) => ({
+      id: manifest.id,
+      name: manifest.name,
+      termsUrl: manifest.termsUrl,
+    }));
+  }
+
+  /** The site the tree keeps a source for under this id; undefined when the app knows none. */
+  site(id: string): ConnectorSource | undefined {
+    const manifest = [...this.#connectors, ...this.#links].find(
+      (entry) => entry.manifest.id === id,
+    )?.manifest;
+    return manifest === undefined ? undefined : { id, create: citationSourceOf(manifest) };
+  }
+
+  /**
+   * The address of a search for a person at a site the app does not ask
+   * itself, for the user's browser. Nothing is sent here; the browser sends
+   * the name and the years when it opens the address, so the rules of a
+   * search apply.
+   */
+  link(
+    tree: Tree,
+    request: RecordLinkRequest,
+  ): { ok: true; url: string } | { ok: false; problem: RecordSearchProblem } {
+    const fail = (problem: RecordSearchProblem) => ({ ok: false as const, problem });
+    const source = this.#links.find(({ manifest }) => manifest.id === request.linkId);
+    if (source === undefined) {
+      return fail({ kind: 'source', message: 'This site is not known.', retryAt: null });
+    }
+    if (!this.agreed) {
+      return fail({
+        kind: 'notice',
+        message: 'Nothing is sent before you have agreed to what a search sends.',
+        retryAt: null,
+      });
+    }
+    const refusal = this.#refusal(tree, request.personId);
+    if (refusal !== null) return fail(refusal);
+    const url = source.buildSearchUrl(request.query);
+    if (url === null) {
+      return fail({ kind: 'empty', message: 'Give a name to search for.', retryAt: null });
+    }
+    return { ok: true, url };
+  }
+
+  /**
+   * What citing a result of a search writes into the tree. The result must be
+   * one this service showed for this person since the tree was opened: the
+   * page passes its key, never its contents.
+   */
+  attachment(tree: Tree, request: AttachRecordRequest): RecordAttachment {
+    const fail = (problem: RecordSearchProblem): RecordAttachment => ({ ok: false, problem });
+    if (getPerson(tree, request.personId) === null) {
+      return fail({
+        kind: 'gone',
+        message: 'This person is no longer in the tree.',
+        retryAt: null,
+      });
+    }
+    const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
+    const shown = this.#shown.get(shownKey(request.sourceId, request.key));
+    if (connector === undefined || shown === undefined || shown.personId !== request.personId) {
+      return fail({
+        kind: 'record',
+        message: 'This result is no longer at hand. Search again, then attach it.',
+        retryAt: null,
+      });
+    }
+    const { record } = shown;
+    if (!isOnSite(record.url, connector.manifest)) {
+      return fail({
+        kind: 'record',
+        message: 'This result does not lead to the site of its source, so it is not attached.',
+        retryAt: null,
+      });
+    }
+    return {
+      ok: true,
+      connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
+      citation: {
+        page: cleanText(`${record.title} (${record.key})`, CITATION_LIMITS.page),
+        text: factsText(record),
+        url: record.url,
+        accessedAt: localDay(this.#now()),
+      },
+    };
+  }
+
+  async search(tree: Tree, request: RecordSearchRequest): Promise<RecordSearchResult> {
+    const { sourceId } = request;
+    const fail = (problem: RecordSearchProblem): RecordSearchResult => ({
+      ok: false,
+      sourceId,
+      problem,
+    });
+    const connector = this.#connectors.find(({ manifest }) => manifest.id === sourceId);
+    if (connector === undefined) {
+      return fail({ kind: 'source', message: 'This source is not known.', retryAt: null });
+    }
+    if (!this.agreed) {
+      return fail({
+        kind: 'notice',
+        message: 'Nothing is sent before you have agreed to what a search sends.',
+        retryAt: null,
+      });
+    }
+    // Looked at again at each search: the person may have been edited since the form opened.
+    const refusal = this.#refusal(tree, request.personId);
+    if (refusal !== null) return fail(refusal);
+    if (isEmptyQuery(request.query)) {
+      return fail({ kind: 'empty', message: 'Give a name to search for.', retryAt: null });
+    }
+
+    this.#underWay.get(sourceId)?.abort();
+    const abort = new AbortController();
+    this.#underWay.set(sourceId, abort);
+    const closed = this.#closed;
+    try {
+      const answer = await connector.searchPersons(
+        request.query,
+        { offset: request.offset, limit: RECORD_SEARCH_PAGE },
+        {
+          signal: abort.signal,
+          // And once more when the request's turn has come: it can have waited
+          // for that, and the tree can have been edited or closed meanwhile.
+          beforeSend: () => {
+            if (abort.signal.aborted || this.#refusal(tree, request.personId) !== null) {
+              throw new HttpError('cancelled', 'The search was given up.');
+            }
+          },
+        },
+      );
+      // The tree closed while the answer was on its way: it is for nobody now.
+      if (closed !== this.#closed) throw new HttpError('cancelled', 'The search was given up.');
+      // Remembered for attaching, with the person they were found for.
+      for (const record of answer.page.items) {
+        const key = shownKey(sourceId, record.key);
+        this.#shown.delete(key);
+        this.#shown.set(key, { personId: request.personId, record });
+      }
+      for (const key of this.#shown.keys()) {
+        if (this.#shown.size <= SHOWN_LIMIT) break;
+        this.#shown.delete(key);
+      }
+      const cited = citedUrls(tree, request.personId);
+      return {
+        ok: true,
+        sourceId,
+        attached: answer.page.items
+          .filter((record) => cited.has(record.url))
+          .map((record) => record.key),
+        items: answer.page.items,
+        total: answer.page.total,
+        nextOffset: answer.page.next?.offset ?? null,
+        hidden: answer.page.hidden,
+        fetchedAt: answer.fetchedAt,
+        cached: answer.cached,
+      };
+    } catch (error) {
+      return fail(problemOf(error));
+    } finally {
+      if (this.#underWay.get(sourceId) === abort) this.#underWay.delete(sourceId);
+    }
+  }
+
+  /** Why nothing may be sent for a person; null when a search may be made. */
+  #refusal(tree: Tree, personId: string): RecordSearchProblem | null {
+    if (getPerson(tree, personId) === null) {
+      return { kind: 'gone', message: 'This person is no longer in the tree.', retryAt: null };
+    }
+    if (presumedLivingIds(tree, this.#now()).has(personId)) {
+      return {
+        kind: 'living',
+        message: 'This person may be living. Nothing about living people is sent.',
+        retryAt: null,
+      };
+    }
+    return null;
+  }
+
+  /** Gives up every search that is under way. For when the search window closes. */
+  cancel(): void {
+    for (const abort of this.#underWay.values()) abort.abort();
+    this.#underWay.clear();
+  }
+
+  /** Gives up every search that is under way and forgets what was found. For when a tree closes. */
+  reset(): void {
+    this.cancel();
+    this.#closed += 1;
+    this.#http.clearCache();
+    this.#shown.clear();
+  }
+}
+
+function shownKey(sourceId: string, key: string): string {
+  return `${sourceId}\n${key}`;
+}
+
+/** True when an address is HTTPS and on the site of a source, where its records' pages are. */
+function isOnSite(address: string, manifest: ConnectorManifest): boolean {
+  try {
+    const url = new URL(address);
+    const site = new URL(manifest.siteUrl ?? manifest.baseUrl);
+    return url.protocol === 'https:' && url.origin === site.origin;
+  } catch {
+    return false;
+  }
+}
+
+/** What a result says of a person, as the citation keeps it: one line for the birth, one for the death. */
+function factsText(record: ExternalRecord): string {
+  return record.facts
+    .map((fact) => {
+      const parsed = fact.date === '' ? null : parseDate(fact.date);
+      const date = (parsed === null ? null : describeDate(parsed)) ?? fact.date;
+      const said = [date, fact.place].filter((part) => part !== '').join(', ');
+      return said === '' ? '' : `${fact.type === 'birth' ? 'Born' : 'Died'} ${said}`;
+    })
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/** The day of a moment on this PC's clock, as `YYYY-MM-DD`. */
+export function localDay(at: number): string {
+  const date = new Date(at);
+  const two = (value: number) => String(value).padStart(2, '0');
+  return `${String(date.getFullYear()).padStart(4, '0')}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+}
+
+/** The name and years of a person of the tree, as a search starts with them. */
+function queryOf(tree: Tree, personId: string): PersonQuery {
+  const names = listNames(tree, personId);
+  const name = names.find((entry) => entry.isPrimary) ?? names[0];
+  const events = listPersonEvents(tree, personId);
+  const yearOf = (type: string): number | null => {
+    const event = events.find((entry) => entry.type === type);
+    return event === undefined
+      ? null
+      : queryYear({ minJdn: event.dateMinJdn, maxJdn: event.dateMaxJdn });
+  };
+  return {
+    given: name?.given ?? '',
+    surname: name?.surname ?? '',
+    birthYear: yearOf('birth'),
+    deathYear: yearOf('death'),
+  };
+}
+
+/** A failure in words for the user. Nothing of the error itself is passed on unless it is the app's own. */
+function problemOf(error: unknown): RecordSearchProblem {
+  if (error instanceof HttpError) {
+    const kind =
+      error.kind === 'paused' || error.kind === 'cancelled' || error.kind === 'timeout'
+        ? error.kind
+        : error.kind === 'network'
+          ? 'offline'
+          : 'failed';
+    return { kind, message: error.message, retryAt: error.retryAt };
+  }
+  if (error instanceof ConnectorError) {
+    return { kind: 'failed', message: error.message, retryAt: null };
+  }
+  return { kind: 'failed', message: 'The search failed.', retryAt: null };
+}

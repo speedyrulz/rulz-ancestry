@@ -411,7 +411,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     (
       sql(
         db,
-        'SELECT id, source_id, page, text, quality, note FROM citation',
+        'SELECT id, source_id, page, text, quality, note, url, accessed_at AS accessedAt FROM citation',
       ).all() as CitationRow[]
     ).map((citation) => [citation.id, citation]),
   );
@@ -730,7 +730,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
         touchAll(base);
       }
     }
-    const line = patchCitation(base, citation, sourceXref);
+    const line = patchCitation(base, citation, sourceXref, target);
     // The scans of the page a citation names stand under it.
     syncMedia(line, citationId);
     return line;

@@ -1,4 +1,5 @@
 import type { ConnectorManifest, ConnectorTier } from './manifest';
+import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
 import { familySearchManifest } from './sources/familysearch/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
 import { locManifest } from './sources/loc/manifest';
@@ -18,6 +19,7 @@ export const manifests: readonly ConnectorManifest[] = [
   nara1950CensusManifest,
   nara1940CensusManifest,
   findAGraveManifest,
+  familySearchRecordsManifest,
 ];
 
 const byId = new Map<string, ConnectorManifest>();

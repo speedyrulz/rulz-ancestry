@@ -64,7 +64,10 @@ describe('registry', () => {
   });
 
   it('groups sources by tier', () => {
-    expect(manifestsByTier('deeplink').map((manifest) => manifest.id)).toEqual(['find-a-grave']);
+    expect(manifestsByTier('deeplink').map((manifest) => manifest.id)).toEqual([
+      'find-a-grave',
+      'familysearch-records',
+    ]);
     expect(manifestsByTier('bulk').length).toBe(2);
   });
 

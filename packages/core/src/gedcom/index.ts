@@ -18,17 +18,20 @@ export {
   type GedcomVersion,
 } from './node';
 export {
+  ACCESSED_TAG,
   CITATION_LIMITS,
   CITATION_QUALITIES,
   SOURCE_LIMITS,
   citationKey,
   citedSource,
   cleanCitationFields,
+  cleanDay,
   cleanSourceFields,
   patchCitation,
   patchSource,
   readCitation,
   readSource,
+  webAddressProblem,
   type CitationFields,
   type SourceFields,
 } from './sources';

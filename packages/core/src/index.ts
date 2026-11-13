@@ -64,6 +64,18 @@ export {
 } from './map';
 export { ageRange, formatAge, type AgeRange, type DaySpan } from './life';
 export {
+  QUERY_FIRST_YEAR,
+  QUERY_YEAR_SPREAD,
+  externalDate,
+  isEmptyQuery,
+  queryYear,
+  type ExternalFact,
+  type ExternalRecord,
+  type Page,
+  type PageRequest,
+  type PersonQuery,
+} from './records';
+export {
   PLACE_QUERY_MIN,
   PLACE_TEXT_MAX,
   REGION_PRIORITY,

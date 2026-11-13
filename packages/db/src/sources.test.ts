@@ -6,6 +6,9 @@ import { getPersonPage } from './personpage';
 import { deleteName, deletePerson, listNames } from './persons';
 import {
   addCitation,
+  attachRecord,
+  citedUrls,
+  connectorSourceId,
   countSourceCitations,
   countSources,
   createSource,
@@ -368,5 +371,149 @@ describe('citations', () => {
     // A scan of every link would take far longer than this.
     expect(each).toBeLessThan(5);
     expect(listPersonCitations(tree, last)).toHaveLength(1);
+  });
+});
+
+describe('a web address on a citation', () => {
+  it('is kept with the day it was consulted, and can be changed and emptied', () => {
+    const { tree, birth, sourceId } = start();
+    const citation = addCitation(
+      tree,
+      birth,
+      { sourceId },
+      { page: 'p. 4', url: ' https://example.org/r/1 ', accessedAt: '2026-11-13' },
+    );
+    expect(citation).toMatchObject({ url: 'https://example.org/r/1', accessedAt: '2026-11-13' });
+    expect(listCitations(tree, birth)[0]).toMatchObject({
+      url: 'https://example.org/r/1',
+      accessedAt: '2026-11-13',
+    });
+
+    // A field that is left out is not changed.
+    expect(updateCitation(tree, citation.id, { page: 'p. 5' })).toMatchObject({
+      url: 'https://example.org/r/1',
+      accessedAt: '2026-11-13',
+    });
+    const depth = undoDepth(tree);
+    updateCitation(tree, citation.id, { url: 'https://example.org/r/1' });
+    expect(undoDepth(tree)).toBe(depth);
+
+    expect(updateCitation(tree, citation.id, { url: '', accessedAt: 'no day' })).toMatchObject({
+      url: '',
+      accessedAt: '',
+    });
+    tree.undo();
+    expect(listCitations(tree, birth)[0]).toMatchObject({
+      url: 'https://example.org/r/1',
+      accessedAt: '2026-11-13',
+    });
+  });
+});
+
+describe('attaching a record of a site the app knows', () => {
+  const SITE = {
+    id: 'example-site',
+    create: { title: 'Example Site', publication: 'example.org' },
+  };
+  const record = (n: number) => ({
+    page: `Profile ${n}`,
+    url: `https://example.org/p/${n}`,
+    accessedAt: '2026-11-13',
+  });
+
+  it('makes the source and the citation in one step, for the person as a whole', () => {
+    const { tree, personId } = start();
+    const depth = undoDepth(tree);
+    const { citation, added } = attachRecord(tree, personId, SITE, record(1));
+    expect(added).toBe(true);
+    expect(citation).toMatchObject(record(1));
+    expect(getSource(tree, citation.sourceId)).toMatchObject(SITE.create);
+    expect(listPersonCitations(tree, personId)).toMatchObject([
+      { id: citation.id, uses: [{ type: 'person', id: personId }] },
+    ]);
+    expect([...citedUrls(tree, personId)]).toEqual(['https://example.org/p/1']);
+    expect(undoDepth(tree)).toBe(depth + 1);
+
+    tree.undo();
+    expect(count(tree, 'citation')).toBe(0);
+    expect(count(tree, 'source')).toBe(1);
+    expect(connectorSourceId(tree, SITE)).toBeNull();
+    tree.redo();
+    expect(count(tree, 'source')).toBe(2);
+    expect(connectorSourceId(tree, SITE)).toBe(citation.sourceId);
+  });
+
+  it('does nothing the second time, and leaves no step to undo', () => {
+    const { tree, personId } = start();
+    const first = attachRecord(tree, personId, SITE, record(1));
+    const depth = undoDepth(tree);
+    const second = attachRecord(tree, personId, SITE, { ...record(1), page: 'Other words' });
+    expect(second).toMatchObject({ added: false, citation: { id: first.citation.id } });
+    expect(count(tree, 'citation')).toBe(1);
+    expect(undoDepth(tree)).toBe(depth);
+  });
+
+  it('counts a record as attached when any fact of the page cites its address', () => {
+    const { tree, personId, birth, sourceId } = start();
+    addCitation(tree, birth, { sourceId }, { url: 'https://example.org/p/1' });
+    expect(attachRecord(tree, personId, SITE, record(1)).added).toBe(false);
+    // And no source was made for nothing.
+    expect(count(tree, 'source')).toBe(1);
+  });
+
+  it('uses one source for every record of a site, also after it was renamed', () => {
+    const { tree, personId } = start();
+    const other = addPersonFromDraft(tree, { given: 'Mary', surname: 'Hale' }).id;
+    const first = attachRecord(tree, personId, SITE, record(1));
+    updateSource(tree, first.citation.sourceId, { title: 'My name for it' });
+    const second = attachRecord(tree, personId, SITE, record(2));
+    const third = attachRecord(tree, other, SITE, record(1));
+    expect(second.citation.sourceId).toBe(first.citation.sourceId);
+    expect(third).toMatchObject({ added: true, citation: { sourceId: first.citation.sourceId } });
+    expect(count(tree, 'source')).toBe(2);
+  });
+
+  it('takes the source with the title and publication of the site when none is marked, as after a GEDCOM file', () => {
+    const { tree, personId } = start();
+    const less = createSource(tree, { title: 'example site', publication: 'Example.org' }).id;
+    const more = createSource(tree, { title: 'EXAMPLE SITE', publication: 'example.org' }).id;
+    addCitation(tree, { type: 'person', id: personId }, { sourceId: more }, { page: 'x' });
+    expect(connectorSourceId(tree, SITE)).toBe(more);
+    const { citation } = attachRecord(tree, personId, SITE, record(1));
+    expect(citation.sourceId).toBe(more);
+    expect(count(tree, 'source')).toBe(3);
+    // It is marked now, and found under another title.
+    updateSource(tree, more, { title: 'Renamed' });
+    expect(connectorSourceId(tree, SITE)).toBe(more);
+    expect(less).not.toBe(more);
+  });
+
+  it('leaves a source alone that only shares the title of the site', () => {
+    const { tree, personId } = start();
+    // Sources of the user: they may be about something else.
+    const bare = createSource(tree, { title: 'Example Site' }).id;
+    const other = createSource(tree, { title: 'Example Site', publication: 'A book, 1901' }).id;
+    expect(connectorSourceId(tree, SITE)).toBeNull();
+    const { citation } = attachRecord(tree, personId, SITE, record(1));
+    expect([bare, other]).not.toContain(citation.sourceId);
+    expect(getSource(tree, citation.sourceId)).toMatchObject(SITE.create);
+    expect(count(tree, 'source')).toBe(4);
+  });
+
+  it('cites the site through addCitation too', () => {
+    const { tree, birth } = start();
+    const first = addCitation(tree, birth, { connector: SITE }, record(1));
+    const second = addCitation(tree, birth, { connector: SITE }, record(2));
+    expect(second.sourceId).toBe(first.sourceId);
+    expect(count(tree, 'source')).toBe(2);
+  });
+
+  it('refuses a person who is gone and a record without an address', () => {
+    const { tree, personId } = start();
+    expect(() => attachRecord(tree, MISSING, SITE, record(1))).toThrow(NotFoundError);
+    expect(() => attachRecord(tree, personId, SITE, { ...record(1), url: ' ' })).toThrow(
+      TreeRuleError,
+    );
+    expect(count(tree, 'source')).toBe(1);
   });
 });
