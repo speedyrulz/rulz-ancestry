@@ -739,7 +739,7 @@ Not done, and why:
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 3a   | The HTTP client, the connector interface, the search for a person at WikiTree, the search window, and a check against WikiTree itself                       | **Done 2026-11-13** |
 | 3b   | Attaching a result as a citation (a web address and the date consulted on a citation), the clip form, and the links to sites the app never fetches (Tier C) | **Done 2026-11-13** |
-| 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | **Done 2026-11-14** |
+| 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | **Done 2026-11-13** |
 | 3d   | Open Archives and Wikidata                                                                                                                                  | Planned             |
 | 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | Planned             |
 
@@ -749,7 +749,7 @@ before more are added. Sources that need a key come last. Three views were asked
 for on the split and on part 3a (the primary, an Opus helper and a Codex helper);
 they agreed on this order, except that Codex put the Tier C links last.
 
-### Phase 3c outcome: newspapers and books, searched for words (2026-11-14)
+### Phase 3c outcome: newspapers and books, searched for words (2026-11-13)
 
 Delivered:
 
