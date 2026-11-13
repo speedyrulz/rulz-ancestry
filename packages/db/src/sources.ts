@@ -94,7 +94,8 @@ interface CitationRow extends CitationFields {
   updated_at: number;
 }
 
-const SOURCE_COLUMNS = 'id, title, author, publication, abbreviation, text, created_at, updated_at';
+const SOURCE_COLUMNS =
+  'id, title, author, publication, abbreviation, text, note, created_at, updated_at';
 const CITATION_COLUMNS = 'id, source_id, page, text, quality, note, created_at, updated_at';
 
 const LINK_COLUMN = {
@@ -119,6 +120,7 @@ function toSource(row: SourceRow): Source {
     publication: row.publication,
     abbreviation: row.abbreviation,
     text: row.text,
+    note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -163,17 +165,19 @@ function insertSource(tree: Tree, input: SourceInput): Source {
     publication: input.publication ?? '',
     abbreviation: input.abbreviation ?? '',
     text: input.text ?? '',
+    note: input.note ?? '',
   });
   assertNamed(fields);
   const id = newId();
   const now = Date.now();
-  sql(tree.db, `INSERT INTO source (${SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  sql(tree.db, `INSERT INTO source (${SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id,
     fields.title,
     fields.author,
     fields.publication,
     fields.abbreviation,
     fields.text,
+    fields.note,
     now,
     now,
   );
@@ -194,6 +198,7 @@ export function updateSource(tree: Tree, id: string, patch: SourceInput): Source
       publication: patch.publication ?? current.publication,
       abbreviation: patch.abbreviation ?? current.abbreviation,
       text: patch.text ?? current.text,
+      note: patch.note ?? current.note,
     });
     assertNamed(fields);
     const unchanged = (Object.keys(fields) as (keyof SourceFields)[]).every(
@@ -203,7 +208,7 @@ export function updateSource(tree: Tree, id: string, patch: SourceInput): Source
     sql(
       tree.db,
       `UPDATE source SET title = ?, author = ?, publication = ?, abbreviation = ?, text = ?,
-         updated_at = ?
+         note = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       fields.title,
@@ -211,6 +216,7 @@ export function updateSource(tree: Tree, id: string, patch: SourceInput): Source
       fields.publication,
       fields.abbreviation,
       fields.text,
+      fields.note,
       Date.now(),
       id,
     );

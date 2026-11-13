@@ -19,6 +19,7 @@ function event(type: string, day: number | null, id: string): TreeEvent {
     dateMaxJdn: day,
     placeText: '',
     description: '',
+    note: '',
     createdAt: 0,
     updatedAt: 0,
   };

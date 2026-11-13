@@ -11,7 +11,7 @@ import {
   type GedcomNode,
   type GedcomVersion,
 } from './node';
-import { ownNote } from './sources';
+import { ownNote } from './notes';
 
 /**
  * Pictures and documents in a GEDCOM file: reading one from its structure,

@@ -354,6 +354,15 @@ gedcom_media(media_id, key)
 `gedcom_media` is not in the change log, like `gedcom_record`: an import
 writes it and no edit changes it.
 
+Changed in schema version 7 (`packages/db/src/schema/007-notes.ts`):
+
+```sql
+person gains: note   -- the user's own remark, of any number of lines
+event gains: note
+source gains: note
+gedcom_record.parts  -- a person's NOTE line carries the mark 'note'
+```
+
 Planned, each added by a migration in the phase that first uses it:
 
 ```sql
@@ -692,13 +701,13 @@ Not done, and why:
 
 ### Phase 2 breakdown
 
-| Part | Scope                                                                                                                                      | Status              |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
-| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12** |
-| 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12** |
-| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12** |
-| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Next                |
-| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned             |
+| Part | Scope                                                                                                                                      | Status                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| 2a   | Sources and citations: tables, the screens to add, cite, edit and remove them, GEDCOM both ways, and the upgrade of trees imported earlier | **Done 2026-11-12**                    |
+| 2b   | Media: a store inside the tree folder, attaching a file to a person, a family, an event, a citation or a source, and a viewer with zoom    | **Done 2026-11-12**                    |
+| 2c   | Media in GEDCOM files: reading media records and the lines that point at them, writing both, the upgrade of trees imported earlier, GEDZip | **Done 2026-11-12**                    |
+| 2d   | Notes and places: notes as fields, a place table, the gazetteer and place suggestions while typing                                         | Notes **done 2026-11-13**; places next |
+| 2e   | Map of a person's events, and the life timeline                                                                                            | Planned                                |
 
 The phase's test ("a scanned record can be attached, cited and viewed at full
 zoom") is met by parts 2a and 2b for a scan added in the app. Part 2b was first
@@ -712,6 +721,49 @@ things decide how 2d and 2e are built and need the owner. The first was
 decided on 2026-11-13: the GeoNames gazetteer is downloaded by the user on
 first use, not shipped with the app. The second is open: where map tiles come
 from, since free tile servers limit how an app may use them.
+
+### Phase 2d outcome: notes (2026-11-13)
+
+Part 2d was built in two halves. Notes came first, because the first real
+export showed where its notes are (on 85 of 90 sources and nowhere else), and
+because places wait on a download that has to be designed. Places are still
+to do.
+
+Delivered:
+
+- **A note on a person, an event and a source.** A person's page has a "Note" section with the note's lines as typed and a form to add or change it. The event form and the source form each have a "Note" box; an event's note shows under its details. A citation and a picture already had a note.
+- **GEDCOM.** The first NOTE line that holds its own text, under a person record, an event or a source record, is read as that note and written back. An untouched import still exports line for line; an edited note changes its own lines only; a cleared note takes its line away, with what stood under it. A note of a tree made in the app is written as a NOTE line and read back.
+- **Trees imported earlier are upgraded** (schema version 7): their notes are filled in from the lines the tree kept, and the result is the same as a fresh import of the same file.
+- **A merge keeps both notes.** The person who is left keeps their own note, or takes the other's when they have none, with the lines that stood under it. A second note that stands unchanged in the file the other person was imported from stays as a line kept as written, shown under "Other details from the imported file". Any other second note is joined to the first, with an empty line between.
+- **An independent review of the change found three ways a note could be lost,** all in trees with merged people or with deletions made before the upgrade. Each is fixed and has a test: the lines under the note of a merged record, the note of an event or source brought back by Undo after the upgrade (the upgrade now writes the note into the change log too), and the notes of the events of a record that was merged before the upgrade.
+- **Tried on the owner's real export from Ancestry:** 85 source notes became fields, the longest of 846 characters, and the file still exports with no line changed.
+- **Tests.** Unit tests went from 681 to 709 and end-to-end tests from 32 to 33.
+
+Decided while building:
+
+- **One note per thing.** A second NOTE line stays as a line kept as written, and so does a pointer to a note record that several things share (`NOTE @N1@`, in 7.0 `SNOTE`). Showing those needs a list of notes and note records as rows; neither real file seen so far has them.
+- **A note longer than 50,000 characters is cut in the tree and left whole in the file,** as long as it is not edited: the export writes the original lines back when the note is unchanged.
+- **The NOTE line of a person carries a mark; the note of an event or a source does not.** The export reads those from the event's or the source's own lines, as it does a citation's note.
+- **A person merged into another before the upgrade keeps their NOTE line as a kept line** of the person who is left. It is not joined into that person's note after the fact.
+
+Changed from before:
+
+- **The tree schema is at version 7.** An earlier build cannot open a tree once this build has opened it; a copy is put in the backups folder first.
+- **A note no longer shows under "Other details from the imported file".** It shows in the "Note" section, and can be edited.
+- **In GEDCOM 7.0 a description typed on an event such as a birth** is still written as a note under the event. Importing that file now shows it as the event's note, where before it showed with the kept lines.
+- **Two events that differ only in their note are not repeats** when two people are merged.
+
+Not done:
+
+- **Places:** the place table, the download of the GeoNames place list, and suggestions while typing.
+- **A note whose whole text looks like a pointer** (`@X1@`) is written without the doubling of `@` that would mark it as text, and reads back as a pointer. This was already so for the note of a citation.
+- **A person who was deleted before the upgrade and is brought back by Undo after it** has their note as a kept line, not as the note.
+- **A family has no note field.** A note under a family record stays as a line kept as written, and is shown nowhere, as before.
+- **A name has no note field,** nor does a media record beyond its description.
+- **Notes are not in the search.**
+- **The findings of the first real export are otherwise open:** matching Ancestry's pictures to files, showing its picture descriptions, the main picture of a person, marriages written under a person, and the web address of a record on a citation.
+- **The upgrade from version 6 was tested on trees built by the tests,** not on a file saved by the earlier build.
+- **The new fields were looked at in light colours only,** in screenshots of one window.
 
 ### Phase 2a outcome
 

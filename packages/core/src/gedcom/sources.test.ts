@@ -35,6 +35,7 @@ const NO_SOURCE: SourceFields = {
   publication: '',
   abbreviation: '',
   text: '',
+  note: '',
 };
 const NO_CITATION: CitationFields = { page: '', text: '', quality: null, note: '' };
 
@@ -56,6 +57,7 @@ describe('readSource', () => {
       publication: 'Ancestry.com Operations Inc\nProvo, UT, USA',
       abbreviation: '',
       text: '',
+      note: '',
     });
   });
 
@@ -304,6 +306,7 @@ describe('cleaning what a form sends', () => {
         publication: ' London\r\n1850 ',
         abbreviation: '',
         text: '\n words \n',
+        note: ' a remark\r\nof two lines ',
       }),
     ).toEqual({
       title: 'Parish register',
@@ -311,6 +314,7 @@ describe('cleaning what a form sends', () => {
       publication: 'London\n1850',
       abbreviation: '',
       text: 'words',
+      note: 'a remark\nof two lines',
     });
   });
 

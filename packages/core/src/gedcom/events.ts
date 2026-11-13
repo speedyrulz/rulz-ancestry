@@ -10,6 +10,7 @@ import {
   type GedcomNode,
   type GedcomVersion,
 } from './node';
+import { readOwnNote, setOwnNote } from './notes';
 
 /**
  * Events and attributes: reading one from a GEDCOM structure such as BIRT or
@@ -27,6 +28,8 @@ export interface EventFields {
   date: string;
   place: string;
   description: string;
+  /** The user's own remark on the event. May have several lines. */
+  note: string;
 }
 
 interface TagDef {
@@ -195,6 +198,7 @@ export function readEvent(node: GedcomNode, owner: EventOwner): EventFields | nu
     date,
     place: oneLine(childValue(node, 'PLAC'), PLACE_MAX),
     description: flagOnly ? '' : value,
+    note: readOwnNote(node),
   };
 }
 
@@ -240,7 +244,7 @@ export function conformEvent(node: GedcomNode, owner: EventOwner, version: Gedco
  * The structure for an event. With no `original` it is written afresh. With
  * the structure the event was imported from, only the lines whose part of the
  * event has changed since are rewritten; the rest, and everything the app does
- * not model (sources, notes, age, cause and so on), stay as they were.
+ * not model (sources, further notes, age, cause and so on), stay as they were.
  */
 export function patchEvent(
   original: GedcomNode | null,
@@ -292,6 +296,10 @@ export function patchEvent(
   if (was === null || was.place !== fields.place) {
     changed = true;
     setChildValue(node, 'PLAC', fields.place, EVENT_ORDER);
+  }
+  if (was === null || was.note !== fields.note) {
+    changed = true;
+    setOwnNote(node, fields.note);
   }
 
   if (changed) conformEvent(node, owner, version);

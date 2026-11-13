@@ -4,6 +4,7 @@ import {
   NAME_TYPES,
   PEDIGREES,
   SEXES,
+  NOTE_MAX,
   SOURCE_LIMITS,
   canOpenOutside,
   kinshipTerm,
@@ -203,6 +204,7 @@ const eventInput = z.strictObject({
   date: text(200).exactOptional(),
   place: text(500).exactOptional(),
   description: text(5000).exactOptional(),
+  note: text(NOTE_MAX).exactOptional(),
 });
 
 const sourceInput = z.strictObject({
@@ -211,6 +213,7 @@ const sourceInput = z.strictObject({
   publication: text(SOURCE_LIMITS.publication).exactOptional(),
   abbreviation: text(SOURCE_LIMITS.abbreviation).exactOptional(),
   text: text(SOURCE_LIMITS.text).exactOptional(),
+  note: text(SOURCE_LIMITS.note).exactOptional(),
 });
 
 const citationInput = z.strictObject({
@@ -559,6 +562,7 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
             publication: source.publication,
             abbreviation: source.abbreviation,
             text: source.text,
+            note: source.note,
           },
           citationCount: countSourceCitations(tree, sourceId),
           citations: listSourceCitations(tree, sourceId, page).map((citation) => ({
@@ -633,7 +637,14 @@ export function createHandlers(session: TreeSession, platform: Platform): ApiHan
     ),
 
     updatePerson: define<'updatePerson'>(
-      z.tuple([id, z.strictObject({ sex: sex.exactOptional(), living: living.exactOptional() })]),
+      z.tuple([
+        id,
+        z.strictObject({
+          sex: sex.exactOptional(),
+          living: living.exactOptional(),
+          note: text(NOTE_MAX).exactOptional(),
+        }),
+      ]),
       (personId, patch) => edit((tree) => updatePerson(tree, personId, patch)),
     ),
 

@@ -1,4 +1,4 @@
-import { newId, parseDate, type DateCalendar, type DateQualifier } from '@rulz/core';
+import { cleanNote, newId, parseDate, type DateCalendar, type DateQualifier } from '@rulz/core';
 import { sql } from './connection';
 import { requireFamily } from './families';
 import { requirePerson } from './persons';
@@ -19,6 +19,8 @@ export interface TreeEvent {
   placeText: string;
   /** Detail that is not a date or place, e.g. the occupation or the cause of death. */
   description: string;
+  /** The user's own remark on the event. May have several lines. */
+  note: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -28,6 +30,7 @@ export interface EventInput {
   date?: string;
   place?: string;
   description?: string;
+  note?: string;
 }
 
 interface EventRow {
@@ -40,12 +43,13 @@ interface EventRow {
   date_max_jdn: number | null;
   place_text: string;
   description: string;
+  note: string;
   created_at: number;
   updated_at: number;
 }
 
 const EVENT_COLUMNS = `e.id, e.type, e.date_text, e.date_qualifier, e.date_calendar, e.date_min_jdn,
-  e.date_max_jdn, e.place_text, e.description, e.created_at, e.updated_at`;
+  e.date_max_jdn, e.place_text, e.description, e.note, e.created_at, e.updated_at`;
 
 function toEvent(row: EventRow): TreeEvent {
   return {
@@ -58,6 +62,7 @@ function toEvent(row: EventRow): TreeEvent {
     dateMaxJdn: row.date_max_jdn,
     placeText: row.place_text,
     description: row.description,
+    note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -101,14 +106,15 @@ function insertEvent(
   sql(
     tree.db,
     `INSERT INTO event (id, type, date_text, date_qualifier, date_calendar, date_min_jdn,
-       date_max_jdn, place_text, description, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       date_max_jdn, place_text, description, note, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     type,
     ...dateColumns(input.date ?? ''),
     (input.place ?? '').trim(),
     (input.description ?? '').trim(),
+    cleanNote(input.note ?? ''),
     now,
     now,
   );
@@ -158,19 +164,21 @@ export function updateEvent(tree: Tree, id: string, patch: Partial<EventInput>):
     const place = patch.place === undefined ? current.placeText : patch.place.trim();
     const description =
       patch.description === undefined ? current.description : patch.description.trim();
+    const note = patch.note === undefined ? current.note : cleanNote(patch.note);
     const unchanged =
       type === current.type &&
       date[0] === current.dateText &&
       place === current.placeText &&
-      description === current.description;
+      description === current.description &&
+      note === current.note;
     if (unchanged) return current;
     sql(
       tree.db,
       `UPDATE event
        SET type = ?, date_text = ?, date_qualifier = ?, date_calendar = ?, date_min_jdn = ?,
-           date_max_jdn = ?, place_text = ?, description = ?, updated_at = ?
+           date_max_jdn = ?, place_text = ?, description = ?, note = ?, updated_at = ?
        WHERE id = ?`,
-    ).run(type, ...date, place, description, Date.now(), id);
+    ).run(type, ...date, place, description, note, Date.now(), id);
     return requireEvent(tree, id);
   });
 }

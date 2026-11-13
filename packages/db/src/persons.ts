@@ -1,4 +1,4 @@
-import { NAME_TYPES, SEXES, newId, type NameType, type Sex } from '@rulz/core';
+import { NAME_TYPES, SEXES, cleanNote, newId, type NameType, type Sex } from '@rulz/core';
 import { sql } from './connection';
 import { pruneFamilies } from './families';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
@@ -8,6 +8,8 @@ export interface Person {
   sex: Sex;
   /** True living, false deceased, null not stated. */
   living: boolean | null;
+  /** The user's own remark on the person. May have several lines. */
+  note: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -48,6 +50,7 @@ interface PersonRow {
   id: string;
   sex: Sex;
   living: 0 | 1 | null;
+  note: string;
   created_at: number;
   updated_at: number;
 }
@@ -73,6 +76,7 @@ function toPerson(row: PersonRow): Person {
     id: row.id,
     sex: row.sex,
     living: row.living === null ? null : row.living === 1,
+    note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -115,7 +119,7 @@ function clean(part: string | undefined): string {
 export function getPerson(tree: Tree, id: string): Person | null {
   const row = sql(
     tree.db,
-    'SELECT id, sex, living, created_at, updated_at FROM person WHERE id = ?',
+    'SELECT id, sex, living, note, created_at, updated_at FROM person WHERE id = ?',
   ).get(id) as PersonRow | undefined;
   return row ? toPerson(row) : null;
 }
@@ -149,20 +153,19 @@ export function createPerson(tree: Tree, input: NewPerson = {}): Person {
 export function updatePerson(
   tree: Tree,
   id: string,
-  patch: { sex?: Sex; living?: boolean | null },
+  patch: { sex?: Sex; living?: boolean | null; note?: string },
 ): Person {
   if (patch.sex !== undefined) assertSex(patch.sex);
   return tree.transact('Edit person', () => {
     const current = requirePerson(tree, id);
     const sex = patch.sex ?? current.sex;
     const living = patch.living === undefined ? current.living : patch.living;
-    if (sex === current.sex && living === current.living) return current;
-    sql(tree.db, 'UPDATE person SET sex = ?, living = ?, updated_at = ? WHERE id = ?').run(
-      sex,
-      livingFlag(living),
-      Date.now(),
-      id,
-    );
+    const note = patch.note === undefined ? current.note : cleanNote(patch.note);
+    if (sex === current.sex && living === current.living && note === current.note) return current;
+    sql(
+      tree.db,
+      'UPDATE person SET sex = ?, living = ?, note = ?, updated_at = ? WHERE id = ?',
+    ).run(sex, livingFlag(living), note, Date.now(), id);
     return requirePerson(tree, id);
   });
 }

@@ -200,11 +200,13 @@ describe('importing sources and citations', () => {
       sources: 2,
       citations: 3,
       keptRecords: { SUBM: 1, REPO: 1 },
-      // The note of the first person; the citations under people and families are not kept lines.
-      keptLines: 1,
+      // The citations under people and families are not kept lines, nor is the note of the first person.
+      keptLines: 0,
     });
     const john = listStoredRecords(tree).find((record) => record.xref === 'I1');
-    expect(keptLinesOf(tree, john?.id ?? '')).toEqual(['1 NOTE A note\n2 SOUR @S2@']);
+    expect(keptLinesOf(tree, john?.id ?? '')).toEqual([]);
+    // The source under the note stays with it.
+    expect(john?.parts?.find((part) => part.k === 'note')?.t).toBe('1 NOTE A note\n2 SOUR @S2@');
     // A source described in place and a pointer to no record of the file stay under their event.
     const residence = john?.parts?.find((part) => part.t.startsWith('1 RESI'));
     expect(residence?.c).toBeUndefined();

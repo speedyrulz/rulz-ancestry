@@ -7,6 +7,7 @@ const event = (fields: Partial<EventFields>): EventFields => ({
   date: '',
   place: '',
   description: '',
+  note: '',
   ...fields,
 });
 

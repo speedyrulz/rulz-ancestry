@@ -73,4 +73,13 @@ export {
   readPedigree,
   readSex,
 } from './fields';
+export {
+  NOTE_MAX,
+  cleanNote,
+  isOwnNote,
+  ownNote,
+  patchNoteLine,
+  readOwnNote,
+  setOwnNote,
+} from './notes';
 export { convertVersion, type ConvertResult } from './convert';

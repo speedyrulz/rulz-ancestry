@@ -13,9 +13,10 @@ merge people who were entered twice. You can record the sources a tree rests
 on and say which names and events each one supports. You can attach pictures
 and documents to people, events, families, citations and sources, and look at
 a picture at full size. The pictures and documents a GEDCOM file names are read
-and written, and a GEDZip file takes the files themselves along. The open check
-is to try the import on a real export from Ancestry. Notes and places (part 2d)
-are next; there is no record search yet. See
+and written, and a GEDZip file takes the files themselves along. A person, an
+event and a source can each carry a note. One real export from Ancestry has
+been tried and comes back out line for line. Places (the second half of part
+2d) are next; there is no record search yet. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -30,15 +31,17 @@ GEDCOM is the file format family tree programs use to pass a tree to one
 another. The app reads versions 5.5.1 and 7.0 and writes both.
 
 - **Import** always makes a new tree; the file itself is not changed. Details
-  the app has no screens for yet (notes, other programs' own tags) are kept
+  the app has no screens for yet (a second note on one thing, other programs'
+  own tags) are kept
   exactly as written and go back into an export.
 - **Export** in the version the file came in gives the same file again, line
   for line, apart from its header. After edits, only the edited lines differ.
 - **Living people are left out of an export** unless you choose to include
   everyone.
 - The import has been tested on files written the way Ancestry writes its
-  exports, including one with 10,000 people, which takes about 3 seconds. It
-  has not yet been tried on a real export from Ancestry or any other program.
+  exports, including one with 10,000 people, which takes about 3 seconds. One
+  real export from Ancestry, of 162 people, has been tried; no export from
+  another program has.
 
 Charts, relationships and duplicates:
 

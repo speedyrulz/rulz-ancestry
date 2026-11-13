@@ -24,7 +24,7 @@ import {
   type PersonFieldsValue,
 } from '../format';
 import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
-import { EventDialog, NameDialog, RelativeDialog } from './dialogs';
+import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
 import { RelationshipDialog } from './relationship';
@@ -55,6 +55,7 @@ type Open =
   | { kind: 'relationship' }
   | { kind: 'merge' }
   | { kind: 'delete' }
+  | { kind: 'note' }
   | { kind: 'sources'; target: CitationTarget; title: string }
   | { kind: 'media'; target: MediaTarget; title: string }
   | { kind: 'citation'; citationId: string };
@@ -161,7 +162,14 @@ function EventRows({
               )}
             </td>
             <td>{event.placeText}</td>
-            <td>{event.description}</td>
+            <td>
+              {event.description}
+              {event.note !== '' && (
+                <div className="event-note" data-testid="event-note-text">
+                  {event.note}
+                </div>
+              )}
+            </td>
             <td className="row-actions">
               <SourcesButton
                 count={sourceCount(event.id)}
@@ -781,6 +789,22 @@ export function PersonPageView({
         onSelect={onSelect}
       />
 
+      <section data-testid="note-section">
+        <h3>Note</h3>
+        {person.note === '' ? (
+          <p className="muted">No note.</p>
+        ) : (
+          <p className="note-text" data-testid="person-note">
+            {person.note}
+          </p>
+        )}
+        <div className="actions">
+          <button type="button" onClick={() => setOpen({ kind: 'note' })} data-testid="edit-note">
+            {person.note === '' ? 'Add a note' : 'Edit note'}
+          </button>
+        </div>
+      </section>
+
       {page.keptLines.length > 0 && (
         <section data-testid="kept-section">
           <h3>Other details from the imported file</h3>
@@ -789,9 +813,9 @@ export function PersonPageView({
               {countOf(page.keptLines.length, 'item', 'items')} that the app has no fields for yet
             </summary>
             <p className="hint">
-              These are notes and other details from the file this person was imported from. The app
-              keeps them exactly as they were written and puts them back when the tree is exported.
-              They cannot be edited here yet.
+              These are details from the file this person was imported from. The app keeps them
+              exactly as they were written and puts them back when the tree is exported. They cannot
+              be edited here yet.
             </p>
             {page.keptLines.map((lines, index) => (
               <pre key={index} className="kept-lines" data-testid="kept-lines">
@@ -800,6 +824,15 @@ export function PersonPageView({
             ))}
           </details>
         </section>
+      )}
+
+      {open?.kind === 'note' && (
+        <NoteDialog
+          title={`Note on ${name}`}
+          note={person.note}
+          onClose={() => setOpen(null)}
+          onSubmit={(note) => apply(api.updatePerson(person.id, { note }))}
+        />
       )}
 
       {open?.kind === 'name' && (

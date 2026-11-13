@@ -4,8 +4,10 @@ import {
   LIVING_TAG,
   MAX_ISSUES,
   VOID_POINTER,
+  cleanNote,
   decodeGedcom,
   isEventTag,
+  isOwnNote,
   localRelativePath,
   newId,
   parseGedcom,
@@ -270,6 +272,13 @@ export interface GedcomImportOptions {
    * tests of that migration ask for it.
    */
   media?: boolean;
+  /**
+   * False keeps the notes of people, events and sources as written, which is
+   * what the app did before notes were fields (schema version 7). Only the
+   * tests of that migration ask for it, and the tests of earlier ones, which
+   * get it by turning off `sources` or `media`.
+   */
+  notes?: boolean;
 }
 
 interface PersonDraft {
@@ -278,6 +287,7 @@ interface PersonDraft {
   record: GedcomNode;
   sex: Sex;
   living: boolean | null;
+  note: string;
   parts: PartDraft[];
   /** The person's FAMC line for each family, by the family's id. */
   childOf: Map<string, PartDraft>;
@@ -419,6 +429,7 @@ export function importGedcom(
   const started = Date.now();
   const modelSources = options.sources !== false;
   const modelMedia = modelSources && options.media !== false;
+  const modelNotes = modelMedia && options.notes !== false;
   const doc = input.document;
   const version = doc.version;
   const issues = new IssueList([], 0);
@@ -469,6 +480,7 @@ export function importGedcom(
         record,
         sex: sexLine ? readSex(sexLine) : 'U',
         living: livingLine ? readLiving(livingLine) : null,
+        note: '',
         parts: [],
         childOf: new Map(),
       };
@@ -588,6 +600,15 @@ export function importGedcom(
       } else if (node.tag === LIVING_TAG && !livingSeen && readLiving(node) !== null) {
         livingSeen = true;
         part.kind = 'living';
+      } else if (
+        modelNotes &&
+        isOwnNote(node) &&
+        person.note === '' &&
+        cleanNote(node.value) !== ''
+      ) {
+        // The first note is the person's note; a second one is kept as written.
+        person.note = cleanNote(node.value);
+        part.kind = 'note';
       } else if (node.tag === 'FAMC' || node.tag === 'FAMS') {
         const target = pointerTarget(node.value);
         const family = target === null ? undefined : families.get(target);
@@ -674,7 +695,9 @@ export function importGedcom(
     const now = Date.now();
     const insertPerson = sql(
       db,
-      'INSERT INTO person (id, sex, living, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+      modelNotes
+        ? 'INSERT INTO person (id, sex, living, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        : 'INSERT INTO person (id, sex, living, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
     );
     const insertName = sql(
       db,
@@ -685,8 +708,8 @@ export function importGedcom(
     const insertEvent = sql(
       db,
       `INSERT INTO event (id, type, date_text, date_qualifier, date_calendar, date_min_jdn,
-         date_max_jdn, place_text, description, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         date_max_jdn, place_text, description, created_at, updated_at${modelNotes ? ', note' : ''})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${modelNotes ? ', ?' : ''})`,
     );
     const insertParticipant = sql(
       db,
@@ -721,6 +744,7 @@ export function importGedcom(
         event.description,
         now,
         now,
+        ...(modelNotes ? [event.note] : []),
       );
       insertParticipant.run(newId(), id, personId, familyId, order);
       report.events += 1;
@@ -736,8 +760,9 @@ export function importGedcom(
       const fields = source.fields;
       sql(
         db,
-        `INSERT INTO source (id, title, author, publication, abbreviation, text, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO source (id, title, author, publication, abbreviation, text, created_at,
+           updated_at${modelNotes ? ', note' : ''})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?${modelNotes ? ', ?' : ''})`,
       ).run(
         source.id,
         fields.title,
@@ -747,6 +772,7 @@ export function importGedcom(
         fields.text,
         now,
         now,
+        ...(modelNotes ? [fields.note] : []),
       );
     }
     for (const [record, source] of sourceByNode) {
@@ -787,6 +813,7 @@ export function importGedcom(
         person.id,
         person.sex,
         person.living === null ? null : person.living ? 1 : 0,
+        ...(modelNotes ? [person.note] : []),
         now,
         now,
       );

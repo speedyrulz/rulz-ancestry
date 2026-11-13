@@ -1462,3 +1462,19 @@ ul.media-grid,
   padding: 12px 0 2px;
   background: var(--bg);
 }
+
+/* A note, with its lines as typed. */
+.note-text {
+  margin: 0 0 8px;
+  max-width: 80ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.event-note {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

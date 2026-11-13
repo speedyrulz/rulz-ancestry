@@ -1,6 +1,7 @@
+import { cleanNote } from '@rulz/core';
 import { sql } from './connection';
 import { isSelfOrAncestor, pruneFamilies } from './families';
-import { getStoredRecord } from './gedcom/store';
+import { getStoredRecord, importedNoteOf } from './gedcom/store';
 import { requirePerson } from './persons';
 import { TreeRuleError, type Tree } from './tree';
 
@@ -28,6 +29,7 @@ interface EventKey {
   date_text: string;
   place_text: string;
   description: string;
+  note: string;
 }
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -37,7 +39,8 @@ function sameEvent(a: EventKey, b: EventKey): boolean {
     a.type === b.type &&
     same(a.date_text, b.date_text) &&
     same(a.place_text, b.place_text) &&
-    same(a.description, b.description)
+    same(a.description, b.description) &&
+    same(a.note, b.note)
   );
 }
 
@@ -130,7 +133,7 @@ function moveLinks(tree: Tree, owner: Owner, fromId: string, toId: string): void
 function eventsOf(tree: Tree, owner: Owner, id: string): (EventKey & { link: string })[] {
   return sql(
     tree.db,
-    `SELECT e.id, e.type, e.date_text, e.place_text, e.description, ep.id AS link
+    `SELECT e.id, e.type, e.date_text, e.place_text, e.description, e.note, ep.id AS link
      FROM event_participant ep JOIN event e ON e.id = ep.event_id
      WHERE ep.${owner} = ? ORDER BY ep.sort_order, e.id`,
   ).all(id) as (EventKey & { link: string })[];
@@ -322,6 +325,8 @@ export function mergeObstacle(tree: Tree, keepId: string, mergeId: string): stri
 /**
  * Merges `mergeId` into `keepId`. The person kept takes their own sex and
  * living status where those are stated and the other's where they are not.
+ * Both notes are kept: as one note, or, for a person who came from a GEDCOM
+ * file, with the second as a line kept as written.
  * Families in which both had the same partner become one family.
  */
 export function mergePersons(tree: Tree, keepId: string, mergeId: string): MergeResult {
@@ -336,9 +341,22 @@ export function mergePersons(tree: Tree, keepId: string, mergeId: string): Merge
     // Deceased on either record wins: a death is recorded on purpose.
     const living =
       keep.living === false || gone.living === false ? false : (keep.living ?? gone.living);
-    sql(db, 'UPDATE person SET sex = ?, living = ?, updated_at = ? WHERE id = ?').run(
+    // A note is not joined to another: the two may be long, and an imported
+    // one may have lines under it. The person kept takes the other's note only
+    // when they have none. A note that stands in the record the other person
+    // was imported from, unchanged, stays as a line kept as written (see
+    // `keptLinesOf`). Any other note has no such line, so the two are joined.
+    const imported = importedNoteOf(tree, mergeId) === gone.note;
+    const note =
+      keep.note === '' || keep.note === gone.note
+        ? gone.note
+        : gone.note === '' || imported
+          ? keep.note
+          : cleanNote(`${keep.note}\n\n${gone.note}`);
+    sql(db, 'UPDATE person SET sex = ?, living = ?, note = ?, updated_at = ? WHERE id = ?').run(
       sex,
       living === null ? null : living ? 1 : 0,
+      note,
       Date.now(),
       keepId,
     );

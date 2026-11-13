@@ -1,4 +1,4 @@
-import type { GedcomVersion } from '@rulz/core';
+import { cleanNote, parseFragment, type GedcomVersion } from '@rulz/core';
 import { sql } from '../connection';
 import type { Tree } from '../tree';
 
@@ -10,8 +10,9 @@ import type { Tree } from '../tree';
 /**
  * What a line directly under a person or family record became:
  *
- * - person records: `name`, `sex`, `living`, `event`, `child-of` (FAMC, with
- *   the family's id) and `partner-in` (FAMS, with the family's id);
+ * - person records: `name`, `sex`, `living`, `note` (the first NOTE line that
+ *   holds its own text), `event`, `child-of` (FAMC, with the family's id) and
+ *   `partner-in` (FAMS, with the family's id);
  * - family records: `partner` (HUSB or WIFE, with the person's id), `child`
  *   (CHIL, with the person's id) and `event`;
  * - both: `citation` (a SOUR line that cites a source record for the person
@@ -28,6 +29,7 @@ export type PartKind =
   | 'name'
   | 'sex'
   | 'living'
+  | 'note'
   | 'event'
   | 'child-of'
   | 'partner-in'
@@ -109,10 +111,23 @@ export function listMergedRecords(tree: Tree): { id: string; intoId: string }[] 
 }
 
 /**
+ * The note a person's record had in the file it was imported from, as the
+ * app stores a note; null when the record had none or the person was added in
+ * the app.
+ */
+export function importedNoteOf(tree: Tree, id: string): string | null {
+  const part = getStoredRecord(tree, id)?.parts?.find((entry) => entry.k === 'note');
+  if (!part) return null;
+  const version = tree.getMeta(GEDCOM_META.version) === '7.0' ? '7.0' : '5.5.1';
+  return cleanNote(parseFragment(part.t, version)[0]?.value ?? '');
+}
+
+/**
  * The lines of a person's or family's imported record that the app has no
  * fields for, each with what is under it, as written in the file. The lines
- * of records that were merged into this one follow its own. Empty for a
- * person or family that was added in the app.
+ * of records that were merged into this one follow its own, with the note of
+ * such a record when it did not become the note of the person who is left.
+ * Empty for a person or family that was added in the app.
  */
 export function keptLinesOf(tree: Tree, id: string): string[] {
   const merged = sql(
@@ -121,11 +136,32 @@ export function keptLinesOf(tree: Tree, id: string): string[] {
   )
     .pluck()
     .all(id) as string[];
-  return [id, ...merged].flatMap((recordId) =>
-    (getStoredRecord(tree, recordId)?.parts ?? [])
+  if (merged.length === 0) {
+    return (getStoredRecord(tree, id)?.parts ?? [])
       .filter((part) => part.k === undefined)
-      .map((part) => part.t),
-  );
+      .map((part) => part.t);
+  }
+  const version = tree.getMeta(GEDCOM_META.version) === '7.0' ? '7.0' : '5.5.1';
+  const note =
+    (sql(tree.db, 'SELECT note FROM person WHERE id = ?').pluck().get(id) as string | undefined) ??
+    '';
+  const noteOf = (part: StoredPart): string =>
+    cleanNote(parseFragment(part.t, version)[0]?.value ?? '');
+  const ownParts = getStoredRecord(tree, id)?.parts ?? [];
+  const ownIsNote = ownParts.some((part) => part.k === 'note' && noteOf(part) === note);
+  const hasOwn = ownParts.some((part) => part.k === 'note');
+  // The same choice as the export makes: see `buildPerson`.
+  const lines = ownParts.filter((part) => part.k === undefined).map((part) => part.t);
+  const others = merged.flatMap((recordId) => getStoredRecord(tree, recordId)?.parts ?? []);
+  const absorbedNotes = others.filter((part) => part.k === 'note');
+  const match = ownIsNote
+    ? undefined
+    : (absorbedNotes.find((part) => noteOf(part) === note) ??
+      (hasOwn ? undefined : absorbedNotes[0]));
+  for (const part of others) {
+    if (part.k === undefined || (part.k === 'note' && part !== match)) lines.push(part.t);
+  }
+  return lines;
 }
 
 /**

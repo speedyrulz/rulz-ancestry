@@ -54,6 +54,7 @@ export interface SourceFieldsValue {
   publication: string;
   abbreviation: string;
   text: string;
+  note: string;
 }
 
 export const EMPTY_SOURCE: SourceFieldsValue = {
@@ -62,6 +63,7 @@ export const EMPTY_SOURCE: SourceFieldsValue = {
   publication: '',
   abbreviation: '',
   text: '',
+  note: '',
 };
 
 export function toSourceInput(value: SourceFieldsValue): SourceInput {
@@ -71,7 +73,7 @@ export function toSourceInput(value: SourceFieldsValue): SourceInput {
 interface SourceFieldsProps {
   value: SourceFieldsValue;
   onChange: (value: SourceFieldsValue) => void;
-  /** Also show the short title and the text of the source; a new source rarely needs them. */
+  /** Also show the short title, the text of the source and the note; a new source rarely needs them. */
   full?: boolean;
   autoFocus?: boolean;
 }
@@ -126,6 +128,14 @@ export function SourceFields({
             maxLength={SOURCE_LIMITS.text}
             rows={4}
             testId="source-text"
+          />
+          <TextAreaField
+            label="Note"
+            value={value.note}
+            onChange={(next) => set('note', next)}
+            maxLength={SOURCE_LIMITS.note}
+            rows={3}
+            testId="source-note"
           />
         </>
       )}

@@ -1,4 +1,4 @@
-import { NAME_TYPES, SEXES, type NameType } from '@rulz/core';
+import { NAME_TYPES, NOTE_MAX, SEXES, type NameType } from '@rulz/core';
 import { useEffect, useId, useState } from 'react';
 import type {
   BackupInfo,
@@ -27,7 +27,7 @@ import {
   toDraft,
   type PersonFieldsValue,
 } from '../format';
-import { DateField, Dialog, FormDialog, SelectField, TextField } from './ui';
+import { DateField, Dialog, FormDialog, SelectField, TextAreaField, TextField } from './ui';
 
 const SEX_OPTIONS = SEXES.map((sex) => [sex, SEX_LABELS[sex]] as const);
 const NAME_TYPE_OPTIONS = NAME_TYPES.map((type) => [type, NAME_TYPE_LABELS[type]] as const);
@@ -349,6 +349,7 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
   const [date, setDate] = useState(event?.dateText ?? '');
   const [place, setPlace] = useState(event?.placeText ?? '');
   const [description, setDescription] = useState(event?.description ?? '');
+  const [note, setNote] = useState(event?.note ?? '');
   const descriptionId = useId();
   const adding = event === undefined;
 
@@ -360,7 +361,7 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
   const submit = () => {
     const type = choice === OTHER_TYPE ? custom.trim() : choice;
     if (type === '') return Promise.reject(new Error('Say what kind of event this is'));
-    return onSubmit({ type, date, place, description });
+    return onSubmit({ type, date, place, description, note });
   };
 
   return (
@@ -411,6 +412,45 @@ export function EventDialog({ kind, event, onSubmit, onClose }: EventDialogProps
           onChange={(change) => setDescription(change.target.value)}
         />
       </div>
+      <TextAreaField
+        label="Note"
+        value={note}
+        onChange={setNote}
+        maxLength={NOTE_MAX}
+        testId="event-note"
+      />
+    </FormDialog>
+  );
+}
+
+interface NoteDialogProps {
+  /** For example "Note on Ann Lee". */
+  title: string;
+  note: string;
+  onSubmit: (note: string) => Promise<void>;
+  onClose: () => void;
+}
+
+/** Edits a note of any number of lines. */
+export function NoteDialog({ title, note, onSubmit, onClose }: NoteDialogProps) {
+  const [value, setValue] = useState(note);
+  return (
+    <FormDialog
+      title={title}
+      submitLabel="Save note"
+      onSubmit={() => onSubmit(value)}
+      onClose={onClose}
+      testId="note-dialog"
+      wide
+    >
+      <TextAreaField
+        label="Note"
+        value={value}
+        onChange={setValue}
+        rows={12}
+        maxLength={NOTE_MAX}
+        testId="note-text"
+      />
     </FormDialog>
   );
 }

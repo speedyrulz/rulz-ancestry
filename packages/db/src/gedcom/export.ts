@@ -15,6 +15,8 @@ import {
   patchCitation,
   patchEvent,
   patchLiving,
+  cleanNote,
+  patchNoteLine,
   patchMediaRecord,
   patchName,
   patchSex,
@@ -129,6 +131,7 @@ interface PersonRow {
   id: string;
   sex: Sex;
   living: 0 | 1 | null;
+  note: string;
 }
 
 interface NameRow extends NameFields {
@@ -143,6 +146,7 @@ interface EventRow {
   date_text: string;
   place_text: string;
   description: string;
+  note: string;
 }
 
 interface FamilyRow {
@@ -279,6 +283,7 @@ const PERSON_SECTIONS: readonly PartKind[] = [
   'name',
   'sex',
   'living',
+  'note',
   'event',
   'child-of',
   'partner-in',
@@ -347,7 +352,10 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   const sameVersion = sourceVersion === target;
 
   // What the tree holds now.
-  const persons = sql(db, 'SELECT id, sex, living FROM person ORDER BY id').all() as PersonRow[];
+  const persons = sql(
+    db,
+    'SELECT id, sex, living, note FROM person ORDER BY id',
+  ).all() as PersonRow[];
   const families = sql(
     db,
     'SELECT id, partner1_id, partner2_id FROM family ORDER BY id',
@@ -364,7 +372,8 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     groupBy(
       sql(
         db,
-        `SELECT e.id, ep.${owner} AS owner_id, e.type, e.date_text, e.place_text, e.description
+        `SELECT e.id, ep.${owner} AS owner_id, e.type, e.date_text, e.place_text, e.description,
+           e.note
          FROM event_participant ep JOIN event e ON e.id = ep.event_id
          WHERE ep.${owner} IS NOT NULL
          ORDER BY ep.${owner}, ep.sort_order, e.id`,
@@ -395,7 +404,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
   }
   const sources = sql(
     db,
-    'SELECT id, title, author, publication, abbreviation, text FROM source ORDER BY id',
+    'SELECT id, title, author, publication, abbreviation, text, note FROM source ORDER BY id',
   ).all() as SourceRow[];
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const citationById = new Map(
@@ -825,6 +834,7 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     date: row.date_text,
     place: row.place_text,
     description: row.description,
+    note: row.note,
   });
   const placeEvents = (
     layout: Layout,
@@ -979,6 +989,31 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     single('living', (original) =>
       patchLiving(original, person.living === null ? null : person.living === 1),
     );
+    // The note. A record merged into this one may have had a note too. The
+    // person took it over if they had none; otherwise it is written after the
+    // other lines as it was, with what stands under it.
+    const absorbedNotes = absorbed.flatMap((other) =>
+      (other.stored.parts ?? []).flatMap((part, index) => {
+        const node = other.nodes[index];
+        return part.k === 'note' && node ? [node] : [];
+      }),
+    );
+    const ownIndex = parsed?.stored.parts?.findIndex((part) => part.k === 'note') ?? -1;
+    const own = ownIndex === -1 ? null : (parsed?.nodes[ownIndex] ?? null);
+    const ownIsNote = own !== null && cleanNote(own.value) === person.note;
+    const taken = ownIsNote
+      ? undefined
+      : (absorbedNotes.find((node) => cleanNote(node.value) === person.note) ??
+        (own === null ? absorbedNotes[0] : undefined));
+    if (taken !== undefined) {
+      const line = patchNoteLine(taken, person.note);
+      if (line) layout.add('note', line);
+    } else {
+      const line = patchNoteLine(own, person.note);
+      if (line && own) layout.at(ownIndex, line);
+      else if (line) layout.add('note', line);
+    }
+    for (const node of absorbedNotes) if (node !== taken) layout.end(node);
 
     const link = (
       kind: 'child-of' | 'partner-in',

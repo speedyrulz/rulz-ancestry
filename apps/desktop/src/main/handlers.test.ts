@@ -549,7 +549,10 @@ describe('sources and citations', () => {
     const found = await call<SourceListPage>('listSources', { query: 'par', offset: 0, limit: 10 });
     expect(found.total).toBe(1);
 
-    const state = await call<TreeState>('updateSource', made.sourceId, { publication: 'York' });
+    const state = await call<TreeState>('updateSource', made.sourceId, {
+      publication: 'York',
+      note: ' Seen on film.\r\nHard to read. ',
+    });
     expect(state.undo).toBe('Edit source');
     const details = await call<SourceDetails>('getSource', made.sourceId, { offset: 0, limit: 50 });
     expect(details).toEqual({
@@ -560,6 +563,7 @@ describe('sources and citations', () => {
         publication: 'York',
         abbreviation: '',
         text: '',
+        note: 'Seen on film.\nHard to read.',
       },
       citationCount: 0,
       citations: [],
@@ -1046,7 +1050,7 @@ describe('GEDCOM files', () => {
     '1 BIRT',
     '2 DATE 1850',
     '1 _UID ABC123',
-    '1 NOTE Kept as written.',
+    '1 NOTE A note of the person.',
     '1 FAMS @F1@',
     '0 @I2@ INDI',
     '1 NAME Young /Smith/',
@@ -1093,8 +1097,8 @@ describe('GEDCOM files', () => {
       media: 0,
       mediaHeld: 0,
       keptRecords: 0,
-      // The two lines of the first person, and the link to a family that is not in the file.
-      keptLines: 3,
+      // One line of the first person, and the link to a family that is not in the file.
+      keptLines: 2,
       issues: [
         {
           line: 15,
@@ -1142,7 +1146,8 @@ describe('GEDCOM files', () => {
     await call('importGedcom', { name: 'Mine', parentDir: join(root, 'Trees') });
     const list = await call<PersonListPage>('listPersons', { query: 'old', offset: 0, limit: 10 });
     const page = await call<PersonPage>('getPersonPage', list.persons[0]?.id ?? '');
-    expect(page.keptLines).toEqual(['1 _UID ABC123', '1 NOTE Kept as written.']);
+    expect(page.keptLines).toEqual(['1 _UID ABC123']);
+    expect(page.person.note).toBe('A note of the person.');
 
     // Someone added in the app has none.
     const added = await addPerson('New');

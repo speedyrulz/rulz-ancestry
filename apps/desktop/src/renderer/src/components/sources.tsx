@@ -298,6 +298,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
         publication: details.source.publication,
         abbreviation: details.source.abbreviation,
         text: details.source.text,
+        note: details.source.note,
       }
     : null;
   const value = edits?.value ?? stored ?? EMPTY_SOURCE;

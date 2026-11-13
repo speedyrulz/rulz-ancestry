@@ -13,7 +13,15 @@ import {
 import { keptLinesOf } from './gedcom/store';
 import { exportLines, file, importText, recordOf } from './gedcom/testing';
 import { mergeObstacle, mergePersons, mergedInto } from './merge';
-import { addName, createPerson, deletePerson, getPerson, listNames, updatePerson } from './persons';
+import {
+  addName,
+  createPerson,
+  deletePerson,
+  getPerson,
+  listNames,
+  requirePerson,
+  updatePerson,
+} from './persons';
 import { searchPersons } from './search';
 import { listPersonCitations } from './sources';
 import { cleanUpAfterEach, memoryTree, snapshot } from './testing';
@@ -298,6 +306,7 @@ describe('merging people who came from a GEDCOM file', () => {
     '1 BIRT',
     '2 DATE 1850',
     '1 NOTE First record of Ann',
+    '1 _UID ONE',
     '1 FAMS @F1@',
     '0 @I2@ INDI',
     '1 NAME Ann /Lee/',
@@ -311,6 +320,7 @@ describe('merging people who came from a GEDCOM file', () => {
     '2 DATE 1910',
     '2 SOUR @S1@',
     '1 NOTE Second record of Ann',
+    '1 _UID TWO',
     '1 SOUR @S1@',
     '1 FAMC @F2@',
     '0 @I3@ INDI',
@@ -363,11 +373,14 @@ describe('merging people who came from a GEDCOM file', () => {
       '1 DEAT',
       '2 DATE 1910',
       '2 SOUR @S1@',
-      '1 FAMC @F2@',
       '1 NOTE First record of Ann',
+      '1 FAMC @F2@',
+      '1 _UID ONE',
       '1 FAMS @F1@',
-      '1 NOTE Second record of Ann',
+      '1 _UID TWO',
       '1 SOUR @S1@',
+      // The note of the second record, as it was written.
+      '1 NOTE Second record of Ann',
     ]);
     // The line of Sam that pointed at the merged record points at the one that is left.
     expect(recordOf(lines, '0 @I4@ INDI')).toEqual([
@@ -385,12 +398,70 @@ describe('merging people who came from a GEDCOM file', () => {
 
   it('shows the kept lines of both records on the person who is left', () => {
     const { tree, id } = imported();
-    expect(keptLinesOf(tree, id('I1'))).toEqual(['1 NOTE First record of Ann']);
+    expect(keptLinesOf(tree, id('I1'))).toEqual(['1 _UID ONE']);
     mergePersons(tree, id('I1'), id('I2'));
+    // The person keeps their own note; the other record's note is a kept line.
     expect(keptLinesOf(tree, id('I1'))).toEqual([
-      '1 NOTE First record of Ann',
+      '1 _UID ONE',
       '1 NOTE Second record of Ann',
+      '1 _UID TWO',
     ]);
+    expect(requirePerson(tree, id('I1')).note).toBe('First record of Ann');
+    tree.undo();
+    expect(requirePerson(tree, id('I1')).note).toBe('First record of Ann');
+    expect(requirePerson(tree, id('I2')).note).toBe('Second record of Ann');
+  });
+
+  it('gives the note of the merged record, with what stands under it, to someone who had none', () => {
+    const tree = memoryTree();
+    importText(
+      tree,
+      file(
+        '5.5.1',
+        '0 @I1@ INDI',
+        '1 NAME Ann /Lee/',
+        '0 @I2@ INDI',
+        '1 NAME Annie /Lee/',
+        '1 NOTE Kept a diary.',
+        '2 SOUR @S1@',
+        '3 PAGE 4',
+        '0 @S1@ SOUR',
+        '1 TITL Parish register',
+      ),
+    );
+    const id = (xref: string) =>
+      tree.db.prepare('SELECT id FROM gedcom_record WHERE xref = ?').pluck().get(xref) as string;
+    mergePersons(tree, id('I1'), id('I2'));
+    expect(requirePerson(tree, id('I1')).note).toBe('Kept a diary.');
+    expect(keptLinesOf(tree, id('I1'))).toEqual([]);
+    expect(recordOf(exportLines(tree), '0 @I1@ INDI')).toEqual([
+      '0 @I1@ INDI',
+      '1 NAME Ann /Lee/',
+      '1 NAME Annie /Lee/',
+      '1 NOTE Kept a diary.',
+      '2 SOUR @S1@',
+      '3 PAGE 4',
+    ]);
+    // Editing the note afterwards keeps the source under it.
+    updatePerson(tree, id('I1'), { note: 'Kept two diaries.' });
+    expect(recordOf(exportLines(tree), '0 @I1@ INDI').slice(3)).toEqual([
+      '1 NOTE Kept two diaries.',
+      '2 SOUR @S1@',
+      '3 PAGE 4',
+    ]);
+  });
+
+  it('joins the notes of two people when neither note stands in an imported file', () => {
+    const tree = memoryTree();
+    const a = createPerson(tree, { name: { given: 'Ann', surname: 'Lee' } }).id;
+    const b = createPerson(tree, { name: { given: 'Ann', surname: 'Lee' } }).id;
+    updatePerson(tree, a, { note: 'From her sister.' });
+    updatePerson(tree, b, { note: 'From the census.' });
+    mergePersons(tree, a, b);
+    expect(requirePerson(tree, a).note).toBe('From her sister.\n\nFrom the census.');
+    expect(exportLines(tree)).toEqual(
+      expect.arrayContaining(['1 NOTE From her sister.', '2 CONT', '2 CONT From the census.']),
+    );
   });
 
   it('moves the citations of the merged record to the person who is left', () => {

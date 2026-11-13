@@ -10,6 +10,7 @@ import {
   touch,
   type GedcomNode,
 } from './node';
+import { NOTE_MAX, cleanNote, ownNote, readOwnNote, setOwnNote } from './notes';
 
 /**
  * Sources and citations: reading one from a GEDCOM structure, and writing one
@@ -31,6 +32,8 @@ export interface SourceFields {
   abbreviation: string;
   /** Words copied from the source itself. May have several lines. */
   text: string;
+  /** The user's own remark on the source. May have several lines. */
+  note: string;
 }
 
 /** A citation as the app stores it. */
@@ -52,6 +55,7 @@ export const SOURCE_LIMITS = {
   publication: 5000,
   abbreviation: 200,
   text: 50_000,
+  note: NOTE_MAX,
 } as const;
 
 export const CITATION_LIMITS = {
@@ -85,6 +89,7 @@ export function cleanSourceFields(fields: SourceFields): SourceFields {
     publication: block(fields.publication, SOURCE_LIMITS.publication),
     abbreviation: oneLine(fields.abbreviation, SOURCE_LIMITS.abbreviation),
     text: block(fields.text, SOURCE_LIMITS.text),
+    note: cleanNote(fields.note),
   };
 }
 
@@ -110,6 +115,7 @@ export function readSource(node: GedcomNode): SourceFields {
     publication: childValue(node, 'PUBL'),
     abbreviation: childValue(node, 'ABBR'),
     text: childValue(node, 'TEXT'),
+    note: readOwnNote(node),
   });
 }
 
@@ -143,8 +149,8 @@ export function setFirst(
  * The record for a source. With no `original` it is written afresh, under the
  * cross-reference id `xref`. With the record the source was imported from,
  * only the lines whose field has changed since are rewritten; the rest, and
- * everything the app does not model (the repository, notes, other programs'
- * own tags), stay as they were.
+ * everything the app does not model (the repository, further notes, other
+ * programs' own tags), stay as they were.
  */
 export function patchSource(
   original: GedcomNode | null,
@@ -164,6 +170,7 @@ export function patchSource(
   set('abbreviation', 'ABBR');
   set('publication', 'PUBL');
   set('text', 'TEXT');
+  if (was === null || was.note !== fields.note) setOwnNote(node, fields.note);
   return node;
 }
 
@@ -174,14 +181,6 @@ export function patchSource(
  */
 export function citedSource(node: GedcomNode): string | null {
   return node.tag === 'SOUR' ? pointerTarget(node.value) : null;
-}
-
-/** The first note written under a structure itself, as opposed to a pointer to a note record. */
-export function ownNote(node: GedcomNode): GedcomNode | undefined {
-  return node.children.find(
-    (child) =>
-      child.tag === 'NOTE' && pointerTarget(child.value) === null && child.value.trim() !== '',
-  );
 }
 
 /** Reads a citation: a SOUR line that points at a source record, with what is under it. */
@@ -240,17 +239,7 @@ export function patchCitation(
     setFirst(node, 'QUAY', fields.quality === null ? '' : String(fields.quality), CITATION_ORDER);
   }
 
-  if (differs('note')) {
-    const existing = ownNote(node);
-    if (fields.note === '') {
-      if (existing) node.children = node.children.filter((child) => child !== existing);
-    } else if (!existing) {
-      node.children.push(makeNode('NOTE', fields.note));
-    } else if (existing.value !== fields.note) {
-      existing.value = fields.note;
-      touch(existing);
-    }
-  }
+  if (differs('note')) setOwnNote(node, fields.note);
   return node;
 }
 

@@ -23,7 +23,14 @@ import { mergePersons } from '../merge';
 import { migrate, schemaVersion } from '../migrate';
 import { treeMigrations } from '../schema';
 import { listCitations } from '../sources';
-import { cleanUpAfterEach, memoryTree, pngBytes, tempDir, track } from '../testing';
+import {
+  cleanUpAfterEach,
+  memoryTree,
+  pngBytes,
+  tempDir,
+  track,
+  withLaterColumns,
+} from '../testing';
 import { TREE_APPLICATION_ID, TREE_FILE_NAME, Tree, createTree, openExistingTree } from '../tree';
 import { ZipReader, writeZip } from '../zip';
 import { exportGedcom, exportGedcomFile } from './export';
@@ -833,11 +840,14 @@ describe('a tree imported before the files it names had rows', () => {
     importGedcom(older, inputOf(PICTURED), { media: false });
     const id = (xref: string) =>
       older.db.prepare('SELECT id FROM gedcom_record WHERE xref = ?').pluck().get(xref) as string;
-    const birth = listPersonEvents(older, id('I1'))[0]?.id ?? '';
     // Before the upgrade: Ann's birth is deleted, and a second record of Tom is merged into him.
-    deleteEvent(older, birth);
-    const twin = addPersonFromDraft(older, { given: 'Tom', surname: 'Lee', sex: 'M' }).id;
-    mergePersons(older, twin, id('I2'));
+    let twin = '';
+    withLaterColumns(older, () => {
+      const birth = listPersonEvents(older, id('I1'))[0]?.id ?? '';
+      deleteEvent(older, birth);
+      twin = addPersonFromDraft(older, { given: 'Tom', surname: 'Lee', sex: 'M' }).id;
+      mergePersons(older, twin, id('I2'));
+    });
 
     migrate(older.db, treeMigrations);
     expect(titles(listMedia(older, { type: 'person', id: twin }))).toEqual(['The wedding']);
@@ -898,7 +908,9 @@ describe('a tree imported before the files it names had rows', () => {
 
   it('is left alone when it was never imported', () => {
     const older = olderTree(':memory:');
-    addPersonFromDraft(older, { given: 'Ann', surname: 'Lee' });
+    withLaterColumns(older, () => {
+      addPersonFromDraft(older, { given: 'Ann', surname: 'Lee' });
+    });
     migrate(older.db, treeMigrations);
     expect(older.info()).toMatchObject({ schemaVersion: treeMigrations.length, media: 0 });
     expect(older.undoStatus().undo).not.toBeNull();

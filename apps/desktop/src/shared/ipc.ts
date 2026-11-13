@@ -133,6 +133,8 @@ export interface EventInfo {
   dateMaxJdn: number | null;
   placeText: string;
   description: string;
+  /** The user's own remark on the event. May have several lines. */
+  note: string;
 }
 
 /** A family in which the person is a child. */
@@ -157,7 +159,13 @@ export interface PartnerFamilyInfo {
 
 /** Everything the person page shows. */
 export interface PersonPage {
-  person: { id: string; sex: Sex; living: boolean | null };
+  person: {
+    id: string;
+    sex: Sex;
+    living: boolean | null;
+    /** The user's own remark on the person. May have several lines. */
+    note: string;
+  };
   summary: PersonSummary;
   names: PersonNameInfo[];
   events: EventInfo[];
@@ -178,7 +186,7 @@ export interface PersonPage {
   media: PersonMediaInfo[];
   /**
    * For a person who came from a GEDCOM file: the lines of their record that
-   * the app has no fields for (notes, other programs' own tags). They
+   * the app has no fields for (a second note, other programs' own tags). They
    * are kept as written and go back into an export. Empty for anyone else.
    */
   keptLines: string[];
@@ -203,6 +211,8 @@ export interface SourceInfo {
   abbreviation: string;
   /** Words copied from the source itself. May have several lines. */
   text: string;
+  /** The user's own remark on the source. May have several lines. */
+  note: string;
 }
 
 /** What the source forms collect. A field that is left out is not changed. */
@@ -212,6 +222,7 @@ export interface SourceInput {
   publication?: string;
   abbreviation?: string;
   text?: string;
+  note?: string;
 }
 
 /** What a list shows for one source. */
@@ -474,6 +485,7 @@ export interface EventInput {
   date?: string;
   place?: string;
   description?: string;
+  note?: string;
 }
 
 /** The result of an edit that added or linked a person. */
@@ -683,7 +695,10 @@ export interface RulzApi {
 
   // Changing the open tree. Each call is one undo step.
   addPerson(draft: PersonDraft): Promise<PersonChange>;
-  updatePerson(personId: string, patch: { sex?: Sex; living?: boolean | null }): Promise<TreeState>;
+  updatePerson(
+    personId: string,
+    patch: { sex?: Sex; living?: boolean | null; note?: string },
+  ): Promise<TreeState>;
   deletePerson(personId: string): Promise<TreeState>;
   addName(personId: string, name: NameInput & { primary?: boolean }): Promise<TreeState>;
   updateName(nameId: string, name: NameInput): Promise<TreeState>;

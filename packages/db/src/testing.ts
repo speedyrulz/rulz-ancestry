@@ -120,3 +120,25 @@ export function pngBytes(width: number, height: number, seed = 0): Buffer {
 export function undoDepth(tree: Tree): number {
   return tree.db.prepare('SELECT count(*) FROM change_tx WHERE undone = 0').pluck().get() as number;
 }
+
+/**
+ * Runs `fn` on a tree of an older schema version with the columns today's
+ * code reads and that version lacked, and takes them away again. The tests of
+ * a migration use it to edit a tree as an older build did, before upgrading it.
+ */
+export function withLaterColumns(tree: Tree, fn: () => void): void {
+  const tables = ['person', 'event', 'source'].filter(
+    (table) =>
+      tree.db.prepare('SELECT 1 FROM sqlite_master WHERE name = ?').get(table) !== undefined &&
+      tree.db.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = 'note'`).get() ===
+        undefined,
+  );
+  for (const table of tables) {
+    tree.db.exec(`ALTER TABLE ${table} ADD COLUMN note TEXT NOT NULL DEFAULT ''`);
+  }
+  try {
+    fn();
+  } finally {
+    for (const table of tables) tree.db.exec(`ALTER TABLE ${table} DROP COLUMN note`);
+  }
+}

@@ -52,6 +52,7 @@ import {
   tempDir,
   track,
   undoDepth,
+  withLaterColumns,
 } from './testing';
 import {
   NotFoundError,
@@ -584,8 +585,12 @@ describe('a tree made before files could be attached', () => {
   it('gets the new tables when it is opened, after a copy is put in its backups folder', () => {
     const dir = tempDir();
     const older = olderTree(dir);
-    const personId = createPerson(older, {}).id;
-    const sourceId = createSource(older, { title: 'Parish register' }).id;
+    let personId = '';
+    let sourceId = '';
+    withLaterColumns(older, () => {
+      personId = createPerson(older, {}).id;
+      sourceId = createSource(older, { title: 'Parish register' }).id;
+    });
     older.close();
     expect(listBackups(dir)).toEqual([]);
 
