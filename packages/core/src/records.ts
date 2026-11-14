@@ -173,6 +173,28 @@ export interface PersonRecord extends RecordBase {
   kind: 'person';
   sex: 'M' | 'F' | null;
   facts: ExternalFact[];
+  /** What the source says of the person in a few words ("Dutch painter"); empty when it says nothing. */
+  about: string;
+}
+
+/**
+ * A record of an event that names a person in some role: the child of a
+ * birth record, the bride or a witness of a marriage record. It is a record
+ * of the event, not a profile of the person, and its date and place are
+ * those of the event.
+ */
+export interface EventRecord extends RecordBase {
+  kind: 'event';
+  /** What the person is in the record, as the source says: "Bride", "Father of bride". */
+  role: string;
+  /** What the record is of, as the source says: "Marriage", "Birth". */
+  event: string;
+  /** When the event was, in the wording of a GEDCOM file; empty when not given. */
+  date: string;
+  /** Where the event was; empty when not given. */
+  place: string;
+  /** What kind of record it is and who keeps it: "Civil registration marriages, Municipal archive The Hague". */
+  held: string;
 }
 
 /**
@@ -188,7 +210,22 @@ export interface TextRecord extends RecordBase {
 }
 
 /** One result of a search. */
-export type ExternalRecord = PersonRecord | TextRecord;
+export type ExternalRecord = PersonRecord | EventRecord | TextRecord;
+
+/**
+ * How many years back an event must lie before the people it names are taken
+ * to have died. The same span as the rule for the people of a tree.
+ */
+export const PRESUMED_DEAD_AFTER_YEARS = 110;
+
+/**
+ * True when an event of a year lies more than that many years back for
+ * certain, on whatever day of the year it was: an event of the last day of
+ * 1916 is not 110 years back on any day of 2026.
+ */
+export function isLongAgo(year: number, thisYear: number): boolean {
+  return Number.isInteger(year) && year < thisYear - PRESUMED_DEAD_AFTER_YEARS;
+}
 
 /** True when a query asks nothing: a source is not asked then. */
 export function isEmptyQuery(query: PersonQuery): boolean {

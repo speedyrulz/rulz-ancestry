@@ -1710,6 +1710,11 @@ ul.media-grid,
   width: 100%;
 }
 
+.record-form .record-asks {
+  margin: 0 0 0.5rem;
+  padding-left: 1.25rem;
+}
+
 .record-form .hint ul {
   margin: 0.25rem 0;
 }

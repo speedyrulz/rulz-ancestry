@@ -72,6 +72,7 @@ describe('parseWikitreeSearch', () => {
             },
             { type: 'death', date: 'ABT APR 1910', place: '' },
           ],
+          about: '',
         },
       ],
       total: 1,

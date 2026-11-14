@@ -7,11 +7,13 @@ import { nara1940CensusManifest } from './sources/nara-1940-census/manifest';
 import { nara1950CensusManifest } from './sources/nara-1950-census/manifest';
 import { naraCatalogManifest } from './sources/nara-catalog/manifest';
 import { openArchivesManifest } from './sources/open-archives/manifest';
+import { wikidataManifest } from './sources/wikidata/manifest';
 import { wikitreeManifest } from './sources/wikitree/manifest';
 
 /** Every data source the app knows about. Add new sources here. */
 export const manifests: readonly ConnectorManifest[] = [
   wikitreeManifest,
+  wikidataManifest,
   locManifest,
   internetArchiveManifest,
   naraCatalogManifest,

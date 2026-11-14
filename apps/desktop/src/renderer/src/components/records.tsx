@@ -147,6 +147,26 @@ function Result({ record, attached, busy, onAttach }: ResultProps) {
       {record.kind === 'person' && record.sex !== null && (
         <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
       )}
+      {record.kind === 'person' && record.about !== '' && (
+        <div className="record-fact" data-testid="record-about">
+          {record.about}
+        </div>
+      )}
+      {record.kind === 'event' && (
+        <>
+          <div className="record-fact" data-testid="record-event">
+            {[
+              record.role,
+              [record.event, record.date === '' ? '' : dateWords(record.date), record.place]
+                .filter((part) => part !== '')
+                .join(', '),
+            ]
+              .filter((part) => part !== '')
+              .join(' in: ')}
+          </div>
+          {record.held !== '' && <div className="record-fact muted">{record.held}</div>}
+        </>
+      )}
       {record.kind === 'person' &&
         record.facts.map((fact) => (
           <div key={fact.type} className="record-fact">
@@ -218,7 +238,7 @@ function SourceResults({
       {found.hidden > 0 && (
         <p className="hint" data-testid="record-hidden">
           {countOf(found.hidden, 'result', 'results')} {found.hidden === 1 ? 'is' : 'are'} not
-          shown: private profiles and profiles of living people.
+          shown: private profiles, and people who may be living.
         </p>
       )}
       {found.problem !== null && (
@@ -496,7 +516,6 @@ export function RecordSearchDialog({
 
   const personSources = setup?.sources.filter((source) => source.searches === 'person') ?? [];
   const textSources = setup?.sources.filter((source) => source.searches === 'text') ?? [];
-  const sourceNames = personSources.map((source) => source.name).join(', ');
   const linkNames = setup?.links.map((link) => link.name).join(', ') ?? '';
   const set = (field: keyof Form) => (value: string) =>
     setForm((now) => ({ ...now, [field]: value }));
@@ -628,9 +647,15 @@ export function RecordSearchDialog({
               }
             />
             <p className="hint" data-testid="record-sends">
-              &quot;Search&quot; sends these four fields to {sourceNames}, and nothing else. A
-              record may lie up to two years from a year given.
+              &quot;Search&quot; sends what this form shows, and nothing else:
             </p>
+            <ul className="hint record-asks" data-testid="record-person-asks">
+              {personSources.map((source) => (
+                <li key={source.id}>
+                  {source.name}: {source.asks}.
+                </li>
+              ))}
+            </ul>
             <button
               type="submit"
               className="primary"

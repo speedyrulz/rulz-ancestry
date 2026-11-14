@@ -19,8 +19,9 @@ been tried and comes back out line for line. The app offers places while you
 type, and can link each place of a tree to where it lies on the map, from a
 list of the world's places that it downloads when you ask. A person's page
 tells their life as a timeline and marks its places on a map. Phase 2 is
-complete with that. Phase 3 has started: the app can search WikiTree for a
-person of your tree and attach a result to the person as a source with one
+complete with that. Phase 3 has started: the app can search WikiTree, the
+records of Dutch and Belgian archives at Open Archives, and Wikidata for a
+person of your tree, and attach a result to the person as a source with one
 click. It searches the newspapers of the Library of Congress and the books of
 the Internet Archive for words, such as the person's name. It opens a search at
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
@@ -164,13 +165,22 @@ Timeline and map:
 
 Searching for records:
 
-- **"Search records" on a person's page** looks for the person at
-  [WikiTree](https://www.wikitree.com/). The form starts with their name and
-  their years of birth and death; you can change or empty each before you
-  search.
-- **What is sent:** those four fields, to WikiTree, when you press "Search".
-  Nothing else of your tree, nothing while you type, nothing in the
-  background. The app says so before the first search and asks you to agree.
+- **"Search records" on a person's page** looks for the person at three
+  services. The form starts with their name and their years of birth and
+  death; you can change or empty each before you search.
+  - [WikiTree](https://www.wikitree.com/), a shared family tree, is sent the
+    four fields.
+  - [Open Archives](https://www.openarchieven.nl/en/) indexes the records of
+    Dutch and Belgian archives. It is sent the name, and the years as a span
+    from two years before the birth to two years after the death. A result is
+    a record that names the person in some role: the child of a birth record,
+    the bride or a witness of a marriage.
+  - [Wikidata](https://www.wikidata.org/) has entries for people of some note
+    only. It is sent the name, not the years.
+- **What is sent** is what the form shows, when you press "Search". Nothing
+  else of your tree, nothing while you type, nothing in the background. The
+  app says before the first search which service is sent what, and asks you
+  to agree; it asks again when there is more to say.
 - **Newspapers and books** have a form of their own, for words. It starts with
   the person's name as a phrase, printed between the year of their birth and
   the year after their death, and you can add a state.
@@ -183,7 +193,11 @@ Searching for records:
   or a book is about your person is for you to read. A result does not say
   where on the page the words stand.
 - **Living people:** the app does not search for a person who may be living,
-  and shows no profiles of living people or private profiles.
+  and shows no profiles of living people or private profiles. An archive
+  record is shown only when it is the record of the person's own death or its
+  event lies more than 110 years back, and an entry of Wikidata only when it
+  gives a death or a birth more than 110 years back. The window says how many results it left
+  out.
 - **A service that asks to be left alone is left alone,** also after you close
   and reopen the app. The Library of Congress shuts a program out for an hour
   when it is asked too often.

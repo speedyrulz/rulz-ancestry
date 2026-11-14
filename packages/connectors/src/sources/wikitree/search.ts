@@ -128,6 +128,7 @@ function recordOf(match: unknown): PersonRecord | null {
     title: title === '' ? key : title,
     url: WIKITREE_PROFILE_URL + encodeURIComponent(key),
     sex: gender === 'Male' ? 'M' : gender === 'Female' ? 'F' : null,
+    about: '',
     facts: [factOf(match, status, 'birth'), factOf(match, status, 'death')].filter(
       (fact) => fact !== null,
     ),

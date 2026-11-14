@@ -103,12 +103,75 @@ const bookAnswer = {
     ],
   },
 };
+/** What Open Archives answers in these tests: one record long ago, and one of a time people may still live from. */
+const archiveAnswer = {
+  response: {
+    number_found: 2,
+    docs: [
+      {
+        pid: 'Person1',
+        identifier: 'REC-1',
+        archive_code: 'exa',
+        archive: 'Example Municipal Archive',
+        personname: 'Ada Test',
+        relationtype: 'Bride',
+        eventtype: 'Marriage',
+        eventdate: { day: 21, month: 5, year: 1872 },
+        eventplace: ['Voorbeeldstad'],
+        sourcetype: 'Civil registration marriages',
+        url: 'https://elsewhere.example/',
+      },
+      {
+        pid: 'Person2',
+        identifier: 'REC-2',
+        archive_code: 'exa',
+        personname: 'Ada Test',
+        relationtype: 'Witness',
+        eventtype: 'Marriage',
+        eventdate: { year: 1990 },
+      },
+    ],
+  },
+};
+/** What Wikidata answers in these tests: one person who died long ago, and one who may be living. */
+const entryAnswer = {
+  results: {
+    bindings: [
+      {
+        item: { type: 'uri', value: 'http://www.wikidata.org/entity/Q90001' },
+        name: { type: 'literal', value: 'Ada Test' },
+        description: { type: 'literal', value: 'surveyor (1850–1910)' },
+        birth: { type: 'literal', value: '1850-03-12T00:00:00Z' },
+        birthPrecision: { type: 'literal', value: '11' },
+        birthLatest: { type: 'literal', value: '1850' },
+        death: { type: 'literal', value: '1910-01-01T00:00:00Z' },
+        deathPrecision: { type: 'literal', value: '9' },
+        gender: { type: 'uri', value: 'http://www.wikidata.org/entity/Q6581072' },
+      },
+      {
+        item: { type: 'uri', value: 'http://www.wikidata.org/entity/Q90002' },
+        name: { type: 'literal', value: 'Ada Test' },
+        birth: { type: 'literal', value: '1985-06-01T00:00:00Z' },
+        birthPrecision: { type: 'literal', value: '11' },
+        birthLatest: { type: 'literal', value: '1985' },
+      },
+    ],
+  },
+};
 /** What a source answers when asked; a test can put its own answer in its place. */
 let answerOf: (url: string) => Response;
 const usualAnswer = (url: string): Response => {
   const host = new URL(url).host;
   const data =
-    host === 'www.loc.gov' ? newspaperAnswer : host === 'archive.org' ? bookAnswer : sourceAnswer;
+    host === 'www.loc.gov'
+      ? newspaperAnswer
+      : host === 'archive.org'
+        ? bookAnswer
+        : host === 'api.openarchieven.nl'
+          ? archiveAnswer
+          : host === 'query.wikidata.org'
+            ? entryAnswer
+            : sourceAnswer;
   return new Response(JSON.stringify(data));
 };
 /** What the fake folder picker answers next; null is a cancelled dialog. */
@@ -1659,6 +1722,8 @@ describe('the search for records', () => {
     });
     expect(setup.sources.map((source) => [source.id, source.searches])).toEqual([
       ['wikitree', 'person'],
+      ['open-archives', 'person'],
+      ['wikidata', 'person'],
       ['loc', 'text'],
       ['internet-archive', 'text'],
     ]);
@@ -1704,6 +1769,7 @@ describe('the search for records', () => {
         url: 'https://www.wikitree.com/wiki/Test-90001',
         sex: null,
         facts: [{ type: 'birth', date: 'MAR 1850', place: '' }],
+        about: '',
       },
     ]);
     expect(askedOfSources).toHaveLength(1);
@@ -2268,5 +2334,140 @@ describe('a source that asks to be left alone', () => {
         offset: 0,
       }),
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe('the search of archive records and of Wikidata', () => {
+  const search = (personId: string, sourceId: string, query: object = QUERY) =>
+    call<RecordSearchResult>('searchRecords', { personId, sourceId, query, offset: 0 });
+  const attach = (personId: string, sourceId: string, key: string) =>
+    call<AttachRecordResult>('attachRecord', { personId, sourceId, key });
+
+  it('asks Open Archives for the name and a span of years, and shows nobody who may be living', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await search(ada, 'open-archives', { ...QUERY, deathYear: 1910 });
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items).toEqual([
+      {
+        connectorId: 'open-archives',
+        key: 'exa:REC-1/Person1',
+        kind: 'event',
+        title: 'Ada Test',
+        // Made by the app, not taken from the answer.
+        url: 'https://www.openarchieven.nl/exa:REC-1/en',
+        role: 'Bride',
+        event: 'Marriage',
+        date: '21 MAY 1872',
+        place: 'Voorbeeldstad',
+        held: 'Civil registration marriages, Example Municipal Archive',
+      },
+    ]);
+    // The witness of 1990 may be living, and is counted, not shown.
+    expect(found).toMatchObject({ total: 2, hidden: 1 });
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe(
+      'https://api.openarchieven.nl/1.1/records/search.json',
+    );
+    expect(Object.fromEntries(asked.searchParams)).toEqual({
+      name: 'Ada Test 1848-1912',
+      lang: 'en',
+      number_show: '20',
+      start: '0',
+    });
+  });
+
+  it('asks Wikidata for the name alone, and shows nobody who may be living', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await search(ada, 'wikidata', { ...QUERY, deathYear: 1910 });
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items).toEqual([
+      {
+        connectorId: 'wikidata',
+        key: 'Q90001',
+        kind: 'person',
+        title: 'Ada Test',
+        url: 'https://www.wikidata.org/wiki/Q90001',
+        sex: 'F',
+        facts: [
+          { type: 'birth', date: '12 MAR 1850', place: '' },
+          { type: 'death', date: '1910', place: '' },
+        ],
+        about: 'surveyor (1850–1910)',
+      },
+    ]);
+    expect(found).toMatchObject({ total: null, hidden: 1 });
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe('https://query.wikidata.org/sparql');
+    const question = asked.searchParams.get('query') ?? '';
+    expect(question).toContain('"haswbstatement:P31=Q5 ada test"');
+    expect(question).not.toContain('1850');
+    expect(question).not.toContain('1910');
+  });
+
+  it('attaches a record of an archive and an entry of Wikidata as sources', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await search(ada, 'open-archives');
+    await search(ada, 'wikidata');
+    const asked = askedOfSources.length;
+    const record = await attach(ada, 'open-archives', 'exa:REC-1/Person1');
+    const entry = await attach(ada, 'wikidata', 'Q90001');
+    if (!record.ok || !entry.ok) throw new Error('a result was not attached');
+    const cited = (await call<PersonPage>('getPersonPage', ada)).citations;
+    expect(cited).toMatchObject([
+      {
+        sourceTitle: 'Open Archives (Open Archieven)',
+        page: 'Ada Test (exa:REC-1/Person1)',
+        text: 'Role: Bride\nMarriage, 21 May 1872, Voorbeeldstad\nCivil registration marriages, Example Municipal Archive',
+        url: 'https://www.openarchieven.nl/exa:REC-1/en',
+      },
+      {
+        sourceTitle: 'Wikidata',
+        page: 'Ada Test (Q90001)',
+        text: 'Born 12 March 1850\nDied 1910\nsurveyor (1850–1910)',
+        url: 'https://www.wikidata.org/wiki/Q90001',
+      },
+    ]);
+    expect(askedOfSources).toHaveLength(asked);
+    // What was counted and not shown cannot be attached.
+    expect(await attach(ada, 'open-archives', 'exa:REC-2/Person2')).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    expect(await attach(ada, 'wikidata', 'Q90002')).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+  });
+
+  it('keeps the rules of every search for both', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const rita = await addPerson('Rita', { birthDate: '1990' });
+    for (const sourceId of ['open-archives', 'wikidata']) {
+      expect(await search(ada, sourceId)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    }
+    await call('agreeToRecordSearch');
+    for (const sourceId of ['open-archives', 'wikidata']) {
+      expect(await search(rita, sourceId)).toMatchObject({
+        ok: false,
+        problem: { kind: 'living' },
+      });
+      // Neither is asked for words.
+      expect(
+        await call<RecordSearchResult>('searchRecordTexts', {
+          personId: ada,
+          sourceId,
+          query: TEXT,
+          offset: 0,
+        }),
+      ).toMatchObject({ ok: false, problem: { kind: 'source' } });
+    }
+    expect(askedOfSources).toEqual([]);
   });
 });

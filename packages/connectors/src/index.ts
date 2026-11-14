@@ -47,6 +47,24 @@ export {
   locSearchParams,
   parseLocSearch,
 } from './sources/loc/search';
+export { openArchivesManifest } from './sources/open-archives/manifest';
+export {
+  OPEN_ARCHIVES_RECORD_URL,
+  openArchivesConnector,
+  openArchivesName,
+  openArchivesSearchParams,
+  openArchivesSpan,
+  parseOpenArchivesSearch,
+} from './sources/open-archives/search';
+export { wikidataManifest } from './sources/wikidata/manifest';
+export {
+  WIKIDATA_ENTITY_URL,
+  parseWikidataSearch,
+  wikidataConnector,
+  wikidataName,
+  wikidataQuery,
+  wikidataSearchParams,
+} from './sources/wikidata/search';
 export { wikitreeManifest } from './sources/wikitree/manifest';
 export {
   WIKITREE_APP_ID,

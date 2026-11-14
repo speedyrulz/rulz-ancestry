@@ -29,6 +29,8 @@ function profile(number: number, extra: object = {}) {
  * results and then the rest of `total`, and notes every address asked for. With
  * `busy`, the answer is "too many requests". The Library of Congress answers with
  * one page of a newspaper and the Internet Archive with one book, both made up.
+ * Open Archives answers with a marriage record of 1872 and one of 1990, and
+ * Wikidata with one person who died in 1912 and one born in 1985.
  * The tests never reach any of them.
  */
 async function answerSearches(
@@ -62,6 +64,58 @@ async function answerSearches(
           );
         }
         const host = new URL(url).host;
+        if (host === 'api.openarchieven.nl') {
+          const record = (number: number, year: number, role: string) => ({
+            pid: `Person${number}`,
+            identifier: `REC-${number}`,
+            archive_code: 'exa',
+            archive: 'Example Municipal Archive',
+            personname: 'Josiah Marsh',
+            relationtype: role,
+            eventtype: 'Marriage',
+            eventdate: { day: 21, month: 5, year },
+            eventplace: ['Voorbeeldstad'],
+            sourcetype: 'Civil registration marriages',
+          });
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                response: {
+                  number_found: 2,
+                  docs: [record(1, 1872, 'Groom'), record(2, 1990, 'Witness')],
+                },
+              }),
+            ),
+          );
+        }
+        if (host === 'query.wikidata.org') {
+          const entry = (id: string, birth: string, death?: string) => ({
+            item: { type: 'uri', value: `http://www.wikidata.org/entity/${id}` },
+            name: { type: 'literal', value: 'Josiah Marsh' },
+            description: { type: 'literal', value: 'surveyor' },
+            birth: { type: 'literal', value: birth },
+            birthPrecision: { type: 'literal', value: '11' },
+            birthLatest: { type: 'literal', value: birth.slice(0, 4) },
+            ...(death === undefined
+              ? {}
+              : {
+                  death: { type: 'literal', value: death },
+                  deathPrecision: { type: 'literal', value: '9' },
+                }),
+          });
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                results: {
+                  bindings: [
+                    entry('Q90001', '1850-03-12T00:00:00Z', '1912-01-01T00:00:00Z'),
+                    entry('Q90002', '1985-06-01T00:00:00Z'),
+                  ],
+                },
+              }),
+            ),
+          );
+        }
         if (host === 'www.loc.gov') {
           return Promise.resolve(
             new Response(
@@ -138,7 +192,11 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
   await expect(window.getByTestId('record-surname')).toHaveValue('Marsh');
   await expect(window.getByTestId('record-birth')).toHaveValue('1850');
   await expect(window.getByTestId('record-death')).toHaveValue('1912');
-  await expect(window.getByTestId('record-sends')).toContainText('WikiTree');
+  // The form says which service is sent what.
+  const asks = window.getByTestId('record-person-asks');
+  await expect(asks).toContainText('WikiTree: the given name, the last name and the years');
+  await expect(asks).toContainText('Open Archives');
+  await expect(asks).toContainText('Wikidata: the given name and the last name, not the years');
   expect(await askedOfInternet(app)).toEqual([]);
 
   // A year that is none is not sent.
@@ -166,10 +224,10 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
   await expect(results.getByTestId('record-hidden')).toContainText('2 results are not shown');
   await expect(results).toContainText('Profile data from WikiTree');
 
-  // One request went out, to WikiTree, with the name and the year and nothing else.
+  // One request went out to each of the three. WikiTree's has the name and the year and nothing else.
   const asked = await askedOfInternet(app);
-  expect(asked).toHaveLength(1);
-  const url = new URL(asked[0] ?? '');
+  expect(asked).toHaveLength(3);
+  const url = new URL(asked.find((address) => address.includes('api.wikitree.com')) ?? '');
   expect(url.origin + url.pathname).toBe('https://api.wikitree.com/api.php');
   expect(url.searchParams.get('FirstName')).toBe('Josiah');
   expect(url.searchParams.get('LastName')).toBe('Marsh');
@@ -194,7 +252,37 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
   await expect(results.getByTestId('record-result')).toHaveCount(3);
   await expect(results.getByTestId('record-result').nth(2)).toContainText('Later Marsh');
   await expect(results.getByTestId('record-more')).toHaveCount(0);
-  expect(await askedOfInternet(app)).toHaveLength(2);
+
+  // A record of an archive names the person in a role. One of 1990 is not shown:
+  // those it names may be living.
+  const archive = window.getByTestId('records-open-archives');
+  await expect(archive.getByTestId('record-result')).toHaveCount(1);
+  await expect(archive.getByTestId('record-event')).toHaveText(
+    'Groom in: Marriage, 21 May 1872, Voorbeeldstad',
+  );
+  await expect(archive).toContainText('Civil registration marriages, Example Municipal Archive');
+  await expect(archive.getByTestId('record-hidden')).toContainText('1 result is not shown');
+  await expect(archive.getByTestId('record-link')).toHaveAttribute(
+    'href',
+    'https://www.openarchieven.nl/exa:REC-1/en',
+  );
+  // An entry of Wikidata comes with a few words about the person, and without the living.
+  const entries = window.getByTestId('records-wikidata');
+  await expect(entries.getByTestId('record-result')).toHaveCount(1);
+  await expect(entries.getByTestId('record-about')).toHaveText('surveyor');
+  await expect(entries).toContainText('Died 1912');
+  await expect(entries.getByTestId('record-hidden')).toContainText('1 result is not shown');
+
+  // One request to each of the three, and one for more at WikiTree.
+  const requests = (await askedOfInternet(app)).map((address) => new URL(address));
+  expect(requests.map((url) => url.host).sort()).toEqual([
+    'api.openarchieven.nl',
+    'api.wikitree.com',
+    'api.wikitree.com',
+    'query.wikidata.org',
+  ]);
+  const archiveAsked = requests.find((url) => url.host === 'api.openarchieven.nl');
+  expect(archiveAsked?.searchParams.get('name')).toMatch(/^Josiah Marsh \d{4}-\d{4}$/);
 
   // Nothing was added to the tree.
   await window.getByTestId('record-search-close').click();
@@ -227,13 +315,15 @@ test('does not search for a person who may be living, and waits when a source as
   await window.getByTestId('open-records').click();
   await window.getByTestId('record-agree').click();
   await window.getByTestId('record-search-go').click();
-  await expect(window.getByTestId('record-problem')).toContainText(
+  await expect(window.getByTestId('records-wikitree').getByTestId('record-problem')).toContainText(
     'asks to be left alone for a while. It can be asked again at',
   );
   // A second try is not sent at all.
   await window.getByTestId('record-search-go').click();
-  await expect(window.getByTestId('record-problem')).toContainText('It can be asked again at');
-  expect(await askedOfInternet(app)).toHaveLength(1);
+  await expect(window.getByTestId('records-wikitree').getByTestId('record-problem')).toContainText(
+    'It can be asked again at',
+  );
+  expect(await askedOfInternet(app)).toHaveLength(3);
 });
 
 /** Keeps the app from opening the browser, and notes every address it would have opened. */
@@ -283,7 +373,7 @@ test('attaches a result as a source, opens a search in the browser, and cites a 
   await expect(one.getByTestId('record-attach')).toHaveCount(0);
   await expect(results.getByTestId('record-attach')).toHaveCount(1);
   await expect(window.getByTestId('undo')).toHaveAttribute('title', 'Undo Attach record (Ctrl+Z)');
-  expect(await askedOfInternet(app)).toHaveLength(1);
+  expect(await askedOfInternet(app)).toHaveLength(3);
 
   // A search at a site the app never asks goes to the browser, and nowhere else.
   await window.getByTestId('record-open-find-a-grave').click();
@@ -293,7 +383,7 @@ test('attaches a result as a source, opens a search in the browser, and cites a 
   expect(opened.searchParams.get('firstname')).toBe('Josiah');
   expect(opened.searchParams.get('lastname')).toBe('Marsh');
   expect(opened.searchParams.get('birthyear')).toBe('1850');
-  expect(await askedOfInternet(app)).toHaveLength(1);
+  expect(await askedOfInternet(app)).toHaveLength(3);
 
   // A page found there is cited by its address. The app does not ask for the page.
   await window.getByTestId('record-clip-find-a-grave').click();
@@ -308,7 +398,7 @@ test('attaches a result as a source, opens a search in the browser, and cites a 
   await clip.getByTestId('citation-page').fill('Memorial 1');
   await clip.getByTestId('citation-submit').click();
   await expect(clip).toHaveCount(0);
-  expect(await askedOfInternet(app)).toHaveLength(1);
+  expect(await askedOfInternet(app)).toHaveLength(3);
   expect(await openedInBrowser(app)).toHaveLength(1);
 
   await window.getByTestId('record-search-close').click();

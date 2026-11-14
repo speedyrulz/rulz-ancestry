@@ -1,4 +1,5 @@
 import type {
+  EventRecord,
   ExternalRecord,
   Page,
   PageRequest,
@@ -28,13 +29,18 @@ export interface SourceConnector {
   searchTexts?(query: TextQuery, page: PageRequest, options?: SearchOptions): Promise<SearchAnswer>;
 }
 
-/** A source that is asked for a person. */
-export interface PersonConnector extends SourceConnector {
+/**
+ * A source that is asked for a person. It answers with people, or with
+ * records of events that name a person.
+ */
+export interface PersonConnector<
+  R extends PersonRecord | EventRecord = PersonRecord,
+> extends SourceConnector {
   searchPersons(
     query: PersonQuery,
     page: PageRequest,
     options?: SearchOptions,
-  ): Promise<SearchAnswer<PersonRecord>>;
+  ): Promise<SearchAnswer<R>>;
 }
 
 /** A source that is asked for words. */

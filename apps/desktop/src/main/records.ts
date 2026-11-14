@@ -9,6 +9,10 @@ import {
   internetArchiveManifest,
   locConnector,
   locManifest,
+  openArchivesConnector,
+  openArchivesManifest,
+  wikidataConnector,
+  wikidataManifest,
   wikitreeConnector,
   wikitreeManifest,
   type ConnectorManifest,
@@ -103,8 +107,9 @@ export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion'
  *
  * 1: a name and two years, to WikiTree, and in a link to sites opened in the browser.
  * 2: also words and the years of printing, to the Library of Congress and the Internet Archive.
+ * 3: the name and the years also to Open Archives, and the name to Wikidata.
  */
-export const RECORD_SEARCH_NOTICE_VERSION = 2;
+export const RECORD_SEARCH_NOTICE_VERSION = 3;
 
 /** The setting that holds what the client keeps about a host between runs of the app. */
 export const recordSearchHostSetting = (host: string) => `recordSearch.host.${host}`;
@@ -151,6 +156,10 @@ const EMPTY_TEXT_QUERY: TextQuery = {
  */
 const ASKS: Readonly<Record<string, string>> = {
   [wikitreeManifest.id]: 'the given name, the last name and the years of birth and death',
+  [openArchivesManifest.id]:
+    'the given name, the last name, and a span of years from two years before the birth to two years after the death; with only one of the two years, the span reaches 110 years from it. It looks in records of Dutch and Belgian archives for someone of that name, in any role',
+  [wikidataManifest.id]:
+    'the given name and the last name, not the years. It has entries for people of some note only',
   [locManifest.id]:
     'the words, the years of printing and the state. It looks in the text of newspaper pages',
   [internetArchiveManifest.id]:
@@ -196,6 +205,8 @@ export class RecordSearchService {
     });
     const connectors: SourceConnector[] = [
       wikitreeConnector(this.#http.for(wikitreeManifest)),
+      openArchivesConnector(this.#http.for(openArchivesManifest), this.#now),
+      wikidataConnector(this.#http.for(wikidataManifest), this.#now),
       locConnector(this.#http.for(locManifest)),
       internetArchiveConnector(this.#http.for(internetArchiveManifest)),
     ];
@@ -339,7 +350,12 @@ export class RecordSearchService {
       connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
       citation: {
         page: cleanText(`${record.title} (${record.key})`, CITATION_LIMITS.page),
-        text: record.kind === 'person' ? factsText(record) : printText(record),
+        text:
+          record.kind === 'person'
+            ? factsText(record)
+            : record.kind === 'event'
+              ? eventText(record)
+              : printText(record),
         url: record.url,
         accessedAt: localDay(this.#now()),
       },
@@ -505,6 +521,25 @@ function isOnSite(address: string, manifest: ConnectorManifest): boolean {
   }
 }
 
+/** A date of a record in the words the app uses for dates. */
+function dateWords(date: string): string {
+  const parsed = date === '' ? null : parseDate(date);
+  return (parsed === null ? null : describeDate(parsed)) ?? date;
+}
+
+/**
+ * What a record of an event says, as the citation keeps it: the person's
+ * role in it, the event with its date and place, and where the record is held.
+ */
+function eventText(record: Extract<ExternalRecord, { kind: 'event' }>): string {
+  const event = [record.event, dateWords(record.date), record.place]
+    .filter((part) => part !== '')
+    .join(', ');
+  return [record.role === '' ? '' : `Role: ${record.role}`, event, record.held]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
 /** What a result says of a text, as the citation keeps it: who made it, and when it was printed. */
 function printText(record: Extract<ExternalRecord, { kind: 'text' }>): string {
   const parsed = record.date === '' ? null : parseDate(record.date);
@@ -542,6 +577,7 @@ function factsText(record: Extract<ExternalRecord, { kind: 'person' }>): string 
       return said === '' ? '' : `${fact.type === 'birth' ? 'Born' : 'Died'} ${said}`;
     })
     .filter((line) => line !== '')
+    .concat(record.about === '' ? [] : [record.about])
     .join('\n');
 }
 

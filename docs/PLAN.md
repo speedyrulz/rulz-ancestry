@@ -740,7 +740,7 @@ Not done, and why:
 | 3a   | The HTTP client, the connector interface, the search for a person at WikiTree, the search window, and a check against WikiTree itself                       | **Done 2026-11-13** |
 | 3b   | Attaching a result as a citation (a web address and the date consulted on a citation), the clip form, and the links to sites the app never fetches (Tier C) | **Done 2026-11-13** |
 | 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | **Done 2026-11-13** |
-| 3d   | Open Archives and Wikidata                                                                                                                                  | Planned             |
+| 3d   | Open Archives and Wikidata                                                                                                                                  | **Done 2026-11-13** |
 | 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | Planned             |
 
 Attaching comes second, so that the phase's test ("a search returns grouped
@@ -748,6 +748,52 @@ results and one click attaches a record as a citation") is met with one source
 before more are added. Sources that need a key come last. Three views were asked
 for on the split and on part 3a (the primary, an Opus helper and a Codex helper);
 they agreed on this order, except that Codex put the Tier C links last.
+
+### Phase 3d outcome: archive records and Wikidata (2026-11-13)
+
+Delivered:
+
+- **Two more sources under "People".** A search for a person now asks WikiTree, Open Archives and Wikidata, each within its own limits, and shows the results under each one's name.
+- **The Open Archives connector** (`packages/connectors/src/sources/open-archives/search.ts`): `records/search.json` with `name`, `lang`, `number_show` and `start`. The name is followed by a span of years, from two years before the birth to two years after the death; with one of the two years, the span reaches as far as a life can.
+- **A record of an event** (`EventRecord` in `packages/core/src/records.ts`). A result of Open Archives is not a profile of a person: it is a record that names them in a role. It shows the name, the role, the event with its date and place, the kind of record and the archive that holds it.
+- **The Wikidata connector** (`sources/wikidata/search.ts`), with a new manifest. One question to the Wikidata Query Service searches the entries of humans for the name and gives each one's label, description, sex and dates of birth and death. Only the name is sent.
+- **A few words about a person.** `PersonRecord` gained `about`, which Wikidata fills ("Dutch painter (1853–1890)"); it tells people of one name apart.
+- **Nobody who may be living is shown.** An archive record is shown when its event lies more than 110 years back, or when it is the record of the person's own death; an entry of Wikidata when it gives a death, or a birth whose latest possible year lies more than 110 years back. The rest is counted and the window says how many were left out. The span is the one the tree's own rule uses (`PRESUMED_DEAD_AFTER_YEARS`).
+- **The form says what each service is sent,** as the form for newspapers does. The notice is at version 3 and is shown again.
+- **Checks against both services themselves,** beside the three there were (`pnpm test:contract`).
+
+Decided while building:
+
+- **Both services were tried before the connectors were written,** with a handful of requests for a painter who died in 1890.
+- **A year after the name means the year of the event** at Open Archives, not of the birth: a search for the name and "1853" found the records of 1853. So the years are sent as the span of a life, in which the person's own records and those they appear in lie.
+- **Wikidata is asked through its Query Service, in one request.** Both design views preferred two requests to the wiki's own API and no text of the user in a SPARQL question. Measured: the claims of five entries, one of them of a famous person, came to 533 KB, so a page of twenty could pass the client's limit of 2 MB; the one question's answer for the same came to a few KB. The name is put into the question only after everything but letters, digits, and the hyphen, apostrophe and full stop inside a name is taken out, and in small letters, so that nothing can end the text it stands in or be a command to the search. A test checks that with texts made to break out.
+- **The years are not sent to Wikidata.** Its search looks for words. The user sees each result's years.
+- **Paging at Wikidata** asks for one result more than a page, to learn whether there is more; the service does not say how many there are in all. Results beyond 200 are not asked for.
+- **A date of Wikidata is read as exactly as the entry knows it.** The question asks for each date's precision: a date known to the year is shown as the year, one known to the decade or the century is not shown, and a birth counts by the last year it can lie in.
+- **Nothing typed can be a command to either service.** For Open Archives digits go too: after a name they are years to it.
+- **The link of a result is made by the app** from checked parts: the archive's code and the record's id at Open Archives, the entry's number at Wikidata.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code.
+
+- **The 110 years were a year too short** (both). An event of 1916 was shown in 2026, although its last day is not 110 years back yet. An event must now lie more than 110 years back on whatever day of its year it was (\`isLongAgo\`).
+- **A birth known to the decade or the century counted from its first year** (Opus). Wikidata keeps "the twentieth century" as the first day of 1901, and such a person may have been born in 1990. The question now asks how exactly each date is known, and a birth counts by the last year it can lie in. A date is also shown only as exactly as it is known; the guess that a first of January means "the year" is gone.
+- **Of two births of one entry the earlier one counted** (Opus). The later one does now.
+- **A text that only began like a date counted as a death** (Codex), and so did the thirty-first of February. Only a whole and real date is a date now.
+- **OR, AND and NOT in capitals were commands to Wikidata's search** (both). The name is sent in small letters, and after the rule that keeps the search to humans.
+- **The notice did not say what is sent with one year only** (both): the span then reaches 110 years from it. It says so now.
+- **Left:** two people of one archive record are two results with one address, and attaching one marks both as attached (Opus). The record is cited either way, and a second citation of the same page would add nothing.
+
+Turned down from the design views: showing only death records of Open Archives (Codex; it would hide the birth and marriage records the search is for, and the 110 years serve the same end), a limit of 100 years in place of the tree's 110 (Opus), and asking Wikidata through the wiki's own API in two requests (both; see above for the measurement).
+
+Tests: unit tests went from 1005 to 1036, end-to-end tests stayed at 38 (the first of them now covers all three services). The five checks against the services themselves passed.
+
+Not done:
+
+- **Reading one record in full** at Open Archives: the other people a record names, its scan.
+- **Family links of Wikidata** (parents, partners, children), its places of birth and death, and its ids at other sites.
+- **A search by place or by kind of record** at Open Archives, and a search for two people of one record.
+- **Open Archives' own terms of reuse per archive were not read.** Each archive sets its own; the result names the archive. The service's disclaimer page was not read either.
+- **Wikidata's Query Service is to move to new addresses in 2026 and 2027,** by its own manual. The weekly check will say when the address the app uses stops answering.
 
 ### Phase 3c outcome: newspapers and books, searched for words (2026-11-13)
 
