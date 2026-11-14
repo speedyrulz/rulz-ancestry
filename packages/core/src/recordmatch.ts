@@ -317,9 +317,9 @@ function aliveVerdict(
 }
 
 /** What a person is in a record of an event, as far as the score cares. */
-type Part = 'born' | 'died' | 'married' | 'child' | 'named';
+export type Part = 'born' | 'died' | 'married' | 'child' | 'named';
 
-const BIRTH_EVENTS = ['birth', 'baptism', 'geboorte', 'doop'];
+const BIRTH_EVENTS = ['birth', 'baptism', 'christening', 'geboorte', 'doop'];
 const DEATH_EVENTS = ['death', 'burial', 'overlijden', 'begraven', 'begrafenis'];
 const MARRIAGE_EVENTS = ['marriage', 'huwelijk', 'trouwen', 'ondertrouw'];
 const CHILD_ROLES = /^(child|kind|baptized|dopeling|born|geborene)$/;
@@ -331,7 +331,7 @@ const CHILD_ROLES = /^(child|kind|baptized|dopeling|born|geborene)$/;
  * household), or someone the record only names (a parent, a witness). Only
  * the first two say something of the person's own dates.
  */
-function partOf(record: EventRecord): Part {
+export function partOf(record: EventRecord): Part {
   const role = normalizeName(record.role);
   const event = normalizeName(record.event);
   const is = (words: readonly string[]) => words.some((word) => event.includes(word));

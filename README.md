@@ -27,7 +27,8 @@ the Internet Archive and the catalog of the US National Archives for words,
 such as the person's name; the National Archives need a free key of your own. It opens a search at
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
 a source when you paste its address. Phase 4 has started: each result that is a
-person or a record of a person says how well it fits the person of your tree. See
+person or a record of a person says how well it fits the person of your tree, and
+can be set beside that person, to take over the dates and places you tick. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -189,6 +190,22 @@ Searching for records:
   nothing: two people of one name, born in one year in one town, both "fit
   well". Newspapers, books and archive descriptions get no label, because
   they are found by their words.
+- **Compare, and take over.** "Compare" on a result sets it beside the person:
+  for the person's birth, baptism, death and burial, the date and the place
+  your tree has, what the record says, and how the two stand ("The record is
+  more exact", "Your tree is more exact", "They differ", "Only the record has
+  it"). You tick what to take over; nothing is ticked for you. One press
+  writes it and cites the record as the source of the person and of each
+  event you changed, and one Undo takes all of it back.
+  - A date or place that says less than your tree's is not offered: a year
+    where you have the day, a shorter place where yours begins the same way.
+  - A baptism is not written as a birth, nor a burial as a death, and nothing
+    is taken from a record in which the person is a bride, a parent or a
+    witness. Names and the sex are shown for reading and are not taken over.
+  - The app does not know whether a record is of your person, and it compares
+    places by their words: it cannot tell "Ashford, VT" from another Ashford,
+    so it says only that the two begin alike.
+  - Nothing is sent to the internet for any of this.
 - **What is sent** is what the form shows, when you press "Search". Nothing
   else of your tree, nothing while you type, nothing in the background. The
   app says before the first search which service is sent what, and asks you

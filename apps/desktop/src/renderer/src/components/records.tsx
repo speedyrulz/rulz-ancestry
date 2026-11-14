@@ -1,8 +1,6 @@
 import {
   TEXT_QUERY_MAX,
   US_STATES,
-  describeDate,
-  parseDate,
   textQueryProblem,
   type ExternalRecord,
   type PersonQuery,
@@ -21,6 +19,7 @@ import type {
 import { api, errorMessage } from '../api';
 import { countOf } from '../format';
 import { ClipDialog } from './citations';
+import { RecordCompareDialog, dateWords, fitWhy, fitWords } from './recordcompare';
 import { Dialog, TextField } from './ui';
 
 /**
@@ -34,7 +33,9 @@ import { Dialog, TextField } from './ui';
  * words, which start as the person's name, and for the years they were
  * printed in. Each form says which source is sent what.
  *
- * A result can be attached to the person as a source with one click. For
+ * A result can be attached to the person as a source with one click, and a
+ * result that is a person or a record of one can be set beside the person
+ * of the tree (see `recordcompare.tsx`). For
  * sites the app does not search itself, a button opens a search in the
  * user's browser, and a page found there is cited by pasting its address.
  */
@@ -108,12 +109,6 @@ function yearOf(text: string): number | null | undefined {
   return /^\d{1,4}$/.test(typed) && Number(typed) >= 1 ? Number(typed) : undefined;
 }
 
-/** A date of a record in the words the rest of the app uses for dates. */
-function dateWords(date: string): string {
-  const parsed = parseDate(date);
-  return (parsed === null ? null : describeDate(parsed)) ?? date;
-}
-
 function timeOf(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -124,18 +119,6 @@ function problemWords(problem: RecordSearchProblem): string {
     : problem.message;
 }
 
-/**
- * The words for how well a result fits. They say what agrees, not who a
- * record is of: that is for the user to judge. A result that scores low with
- * nothing against it has little to go by, which is not a conflict.
- */
-function fitWords(fit: RecordFitInfo): string {
-  if (fit.band === 'strong') return 'Fits well';
-  if (fit.band === 'possible') return 'May fit';
-  if (fit.band === 'unlikely') return 'Does not fit';
-  return fit.doubts.length === 0 ? 'Little to go by' : 'Some details conflict';
-}
-
 interface ResultProps {
   record: ExternalRecord;
   /** How well the result fits the person; undefined for a text, which is not held against them. */
@@ -143,12 +126,18 @@ interface ResultProps {
   attached: boolean;
   busy: boolean;
   onAttach: () => void;
+  onCompare: () => void;
 }
 
-function Result({ record, fit, attached, busy, onAttach }: ResultProps) {
+function Result({ record, fit, attached, busy, onAttach, onCompare }: ResultProps) {
   return (
     <li data-testid="record-result">
       <span className="record-attach">
+        {record.kind !== 'text' && (
+          <button type="button" onClick={onCompare} data-testid="record-compare-open">
+            Compare
+          </button>
+        )}{' '}
         {attached ? (
           <span className="badge" data-testid="record-attached">
             Attached as a source
@@ -170,15 +159,9 @@ function Result({ record, fit, attached, busy, onAttach }: ResultProps) {
       {record.kind === 'person' && record.sex !== null && (
         <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
       )}
-      {fit !== undefined && (fit.reasons.length > 0 || fit.doubts.length > 0) && (
+      {fit !== undefined && fitWhy(fit) !== '' && (
         <div className="record-fact muted" data-testid="record-fit-why">
-          {[
-            fit.reasons.join('. '),
-            fit.doubts.length === 0 ? '' : `Against it: ${fit.doubts.join('; ').toLowerCase()}`,
-          ]
-            .filter((part) => part !== '')
-            .join('. ')}
-          .
+          {fitWhy(fit)}
         </div>
       )}
       {record.kind === 'person' && record.about !== '' && (
@@ -238,6 +221,7 @@ interface SourceResultsProps {
   /** The key of the result that is being attached; null when none is. */
   attaching: string | null;
   onAttach: (record: ExternalRecord) => void;
+  onCompare: (record: ExternalRecord) => void;
   onMore: () => void;
 }
 
@@ -247,6 +231,7 @@ function SourceResults({
   attached,
   attaching,
   onAttach,
+  onCompare,
   onMore,
 }: SourceResultsProps) {
   return (
@@ -270,6 +255,7 @@ function SourceResults({
               attached={attached.has(record.key)}
               busy={attaching !== null}
               onAttach={() => onAttach(record)}
+              onCompare={() => onCompare(record)}
             />
           ))}
         </ol>
@@ -439,11 +425,20 @@ interface SourceListProps {
   attached: ReadonlySet<string>;
   attaching: string | null;
   onAttach: (source: RecordSourceInfo, record: ExternalRecord) => void;
+  onCompare: (source: RecordSourceInfo, record: ExternalRecord) => void;
   onMore: (source: RecordSourceInfo, offset: number) => void;
 }
 
 /** The results of the sources of one form, each under the name of its source. */
-function SourceList({ sources, found, attached, attaching, onAttach, onMore }: SourceListProps) {
+function SourceList({
+  sources,
+  found,
+  attached,
+  attaching,
+  onAttach,
+  onCompare,
+  onMore,
+}: SourceListProps) {
   return (
     <>
       {sources.map((source) => (
@@ -460,6 +455,7 @@ function SourceList({ sources, found, attached, attaching, onAttach, onMore }: S
           }
           attaching={attaching}
           onAttach={(record) => onAttach(source, record)}
+          onCompare={(record) => onCompare(source, record)}
           onMore={() => {
             const offset = found[source.id]?.nextOffset;
             if (offset !== null && offset !== undefined) onMore(source, offset);
@@ -515,6 +511,8 @@ export function RecordSearchDialog({
   const [problem, setProblem] = useState<string | null>(null);
   /** The form for a page found in the browser: at a site the app knows, or at any other. */
   const [clip, setClip] = useState<{ site: RecordLinkInfo | null } | null>(null);
+  /** The result that is set beside the person; null when none is. */
+  const [comparing, setComparing] = useState<{ sourceId: string; key: string } | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -659,6 +657,11 @@ export function RecordSearchDialog({
         (failure: unknown) => setProblem(errorMessage(failure)),
       )
       .finally(() => setAttaching(null));
+  };
+
+  const compare = (source: RecordSourceInfo, record: ExternalRecord) => {
+    setProblem(null);
+    setComparing({ sourceId: source.id, key: record.key });
   };
 
   const openLink = (link: RecordLinkInfo) => {
@@ -866,6 +869,7 @@ export function RecordSearchDialog({
               attached={attached}
               attaching={attaching}
               onAttach={attach}
+              onCompare={compare}
               onMore={(source, offset) =>
                 ask({ kind: 'person', query: sent }, source, offset, round.current.person)
               }
@@ -975,6 +979,7 @@ export function RecordSearchDialog({
               attached={attached}
               attaching={attaching}
               onAttach={attach}
+              onCompare={compare}
               onMore={(source, offset) =>
                 ask({ kind: 'text', query: sentText }, source, offset, round.current.text)
               }
@@ -1028,6 +1033,29 @@ export function RecordSearchDialog({
           citations={citations}
           onTree={onTree}
           onClose={() => setClip(null)}
+        />
+      )}
+
+      {comparing !== null && (
+        <RecordCompareDialog
+          personId={personId}
+          name={name}
+          sourceId={comparing.sourceId}
+          recordKey={comparing.key}
+          onTaken={(result) => {
+            onTree(result.tree);
+            // The record is cited now, and the tree it is held against has changed.
+            setAttached((now) => new Set(now).add(attachedKey(comparing.sourceId, comparing.key)));
+            setFound((all) =>
+              Object.fromEntries(
+                Object.entries(all).map(([sourceId, found]) => [
+                  sourceId,
+                  { ...found, fits: result.fits[sourceId] ?? {} },
+                ]),
+              ),
+            );
+          }}
+          onClose={() => setComparing(null)}
         />
       )}
 

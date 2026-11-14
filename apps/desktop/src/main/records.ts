@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   ConnectorError,
   HttpClient,
@@ -27,16 +28,25 @@ import {
 } from '@rulz/connectors';
 import {
   CITATION_LIMITS,
+  PLACE_TEXT_MAX,
+  canCiteFor,
+  canTakeDate,
+  canTakePlace,
   describeDate,
+  isEventOf,
   isEmptyQuery,
   isEmptyTextQuery,
   jdnToCalendar,
   scoreRecord,
   parseDate,
   queryYear,
+  recordFacts,
+  relateDates,
+  relatePlaces,
   textQueryProblem,
   type ExternalRecord,
   type MatchSubject,
+  type RecordFact,
   type PageRequest,
   type PersonQuery,
   type TextQuery,
@@ -45,6 +55,7 @@ import {
   citedUrls,
   getPerson,
   getSetting,
+  listCitations,
   listNames,
   listPersonEvents,
   presumedLivingIds,
@@ -52,10 +63,15 @@ import {
   type CitationInput,
   type ConnectorSource,
   type Db,
+  type RecordFactsPlan,
   type Tree,
+  type TreeEvent,
 } from '@rulz/db';
 import type {
   AttachRecordRequest,
+  CompareRecordResult,
+  RecordComparison,
+  RecordFactTarget,
   RecordLinkInfo,
   RecordLinkRequest,
   RecordSearchProblem,
@@ -65,6 +81,7 @@ import type {
   RecordSearchSetup,
   RecordSourceInfo,
   RecordSourceKeyResult,
+  TakeRecordFactsRequest,
   TextSearchRequest,
 } from '../shared/ipc';
 
@@ -99,6 +116,11 @@ import type {
  * A result can be attached to the person it was found for. The page names it
  * by its key only; what is written into the tree is what this service itself
  * read from the source, and nothing is sent.
+ *
+ * A result can also be set beside the person, and dates and places of it
+ * taken over. The page says which, by the type of an event and the event of
+ * the tree; the values are this service's own. What the page chose is taken
+ * only while the tree is still as the comparison showed it.
  */
 
 /** The setting that holds the day the user agreed to the notice. */
@@ -149,6 +171,16 @@ const SHOWN_LIMIT = 2000;
 export type RecordAttachment =
   | { ok: true; connector: ConnectorSource; citation: CitationInput & { url: string } }
   | { ok: false; problem: RecordSearchProblem };
+
+/** What taking facts of a result over writes into the tree; see `RecordSearchService.take`. */
+export type RecordTake =
+  | {
+      ok: true;
+      connector: ConnectorSource;
+      citation: CitationInput & { url: string };
+      plan: RecordFactsPlan;
+    }
+  | { ok: false; problem: RecordSearchProblem; comparison: RecordComparison | null };
 
 export interface RecordSearchOptions {
   appDb: Db;
@@ -429,31 +461,9 @@ export class RecordSearchService {
    * page passes its key, never its contents.
    */
   attachment(tree: Tree, request: AttachRecordRequest): RecordAttachment {
-    const fail = (problem: RecordSearchProblem): RecordAttachment => ({ ok: false, problem });
-    if (getPerson(tree, request.personId) === null) {
-      return fail({
-        kind: 'gone',
-        message: 'This person is no longer in the tree.',
-        retryAt: null,
-      });
-    }
-    const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
-    const shown = this.#shown.get(shownKey(request.sourceId, request.key));
-    if (connector === undefined || shown === undefined || shown.personId !== request.personId) {
-      return fail({
-        kind: 'record',
-        message: 'This result is no longer at hand. Search again, then attach it.',
-        retryAt: null,
-      });
-    }
-    const { record } = shown;
-    if (!isOnSite(record.url, connector.manifest)) {
-      return fail({
-        kind: 'record',
-        message: 'This result does not lead to the site of its source, so it is not attached.',
-        retryAt: null,
-      });
-    }
+    const found = this.#shownFor(tree, request);
+    if (!found.ok) return found;
+    const { connector, record } = found;
     // A source whose terms bar keeping what it returns is cited by the
     // record's identifier and address alone; the app made both itself.
     if (connector.manifest.mayStoreText === false) {
@@ -483,6 +493,219 @@ export class RecordSearchService {
         accessedAt: localDay(this.#now()),
       },
     };
+  }
+
+  /**
+   * The result a request names, with its source. It must be one this service
+   * showed for this person since the tree was opened, and lead to the site of
+   * its source.
+   */
+  #shownFor(
+    tree: Tree,
+    request: AttachRecordRequest,
+  ):
+    | { ok: true; connector: SourceConnector; record: ExternalRecord }
+    | { ok: false; problem: RecordSearchProblem } {
+    const fail = (kind: RecordSearchProblem['kind'], message: string) => ({
+      ok: false as const,
+      problem: { kind, message, retryAt: null },
+    });
+    if (getPerson(tree, request.personId) === null) {
+      return fail('gone', 'This person is no longer in the tree.');
+    }
+    const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
+    const shown = this.#shown.get(shownKey(request.sourceId, request.key));
+    if (connector === undefined || shown === undefined || shown.personId !== request.personId) {
+      return fail('record', 'This result is no longer at hand. Search again, then attach it.');
+    }
+    if (!isOnSite(shown.record.url, connector.manifest)) {
+      return fail(
+        'record',
+        'This result does not lead to the site of its source, so it is not attached.',
+      );
+    }
+    return { ok: true, connector, record: shown.record };
+  }
+
+  /**
+   * A result set beside the person it was found for: what it says of their
+   * birth, baptism, death or burial, and how each date and place stands to
+   * every event of that type the tree has. Nothing is written or sent.
+   */
+  comparison(tree: Tree, request: AttachRecordRequest): CompareRecordResult {
+    const found = this.#shownFor(tree, request);
+    if (!found.ok) return found;
+    const { connector, record } = found;
+    const person = getPerson(tree, request.personId);
+    if (record.kind === 'text' || person === null) {
+      return {
+        ok: false,
+        problem: {
+          kind: 'record',
+          message:
+            'A text was found by its words. It has no dates of a person to set beside the tree.',
+          retryAt: null,
+        },
+      };
+    }
+    // What a source's terms bar the app from keeping is not taken into a tree.
+    const mayKeep = connector.manifest.mayStoreText !== false;
+    const said = mayKeep ? factsToTake(record) : [];
+    const events = listPersonEvents(tree, request.personId);
+    const facts = said.map((fact) => {
+      const beside = (event: TreeEvent | null): RecordFactTarget => {
+        const [dateOfTree, placeOfTree] = [event?.dateText ?? '', event?.placeText ?? ''];
+        const date = relateDates(dateOfTree, fact.date);
+        const place = relatePlaces(placeOfTree, fact.place);
+        const citations =
+          event === null ? [] : listCitations(tree, { type: 'event', id: event.id });
+        const cited = citations.some((citation) => citation.url === record.url);
+        return {
+          eventId: event?.id ?? null,
+          eventType: event?.type ?? fact.type,
+          date: {
+            tree: dateOfTree,
+            record: fact.date,
+            relation: date,
+            canTake: canTakeDate(date),
+          },
+          place: {
+            tree: placeOfTree,
+            record: fact.place,
+            relation: place,
+            canTake: canTakePlace(place),
+          },
+          canCite: event !== null && !cited && canCiteFor(date, place),
+          cited,
+          otherCitations: citations.filter((citation) => citation.url !== record.url).length,
+        };
+      };
+      // A baptism is set beside a christening of the tree too: it is the same rite.
+      const ofType = events.filter((event) => isEventOf(fact.type, event.type));
+      return {
+        type: fact.type,
+        targets: ofType.length === 0 ? [beside(null)] : ofType.map((event) => beside(event)),
+      };
+    });
+    const fit = scoreRecord(subjectOf(tree, request.personId), record);
+    const shown: Omit<RecordComparison, 'stamp'> = {
+      sourceName: connector.manifest.name,
+      title: record.title,
+      url: record.url,
+      fit: fit === null ? null : { band: fit.band, reasons: fit.reasons, doubts: fit.doubts },
+      names: [...listNames(tree, request.personId)]
+        .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+        .map((name) => `${name.given} ${name.surname}`.trim())
+        .filter((name) => name !== ''),
+      sex: { tree: person.sex, record: record.kind === 'person' ? record.sex : null },
+      about: record.kind === 'person' ? record.about : '',
+      event:
+        record.kind === 'event'
+          ? {
+              role: record.role,
+              event: record.event,
+              date: record.date,
+              place: record.place,
+              held: record.held,
+            }
+          : null,
+      facts,
+      nothing: !mayKeep
+        ? `The terms of ${connector.manifest.name} do not allow keeping what it returns, so nothing of this record is taken over. It can be attached as a source.`
+        : facts.length > 0
+          ? ''
+          : "Nothing is taken from this record: it gives no date or place of the person's own birth, baptism, death or burial. It can be attached as a source.",
+      attached: citedUrls(tree, request.personId).has(record.url),
+    };
+    // The stamp names all that was shown, and the record as it was read.
+    const stamp = createHash('sha256')
+      .update(JSON.stringify([shown, record]))
+      .digest('hex');
+    return { ok: true, comparison: { stamp, ...shown } };
+  }
+
+  /**
+   * What taking facts of a result over writes into the tree. The page says
+   * which dates and places, by the type of an event and the event of the
+   * tree; the values are those this service read from the source. It is
+   * refused when the tree is no longer as the comparison showed it, and when
+   * something is asked for that the comparison does not offer.
+   */
+  take(tree: Tree, request: TakeRecordFactsRequest): RecordTake {
+    const compared = this.comparison(tree, request);
+    if (!compared.ok) return { ...compared, comparison: null };
+    const { comparison } = compared;
+    const fail = (kind: RecordSearchProblem['kind'], message: string): RecordTake => ({
+      ok: false,
+      problem: { kind, message, retryAt: null },
+      comparison,
+    });
+    if (comparison.stamp !== request.stamp) {
+      return fail(
+        'changed',
+        'The tree has changed since this was shown. Look at it again, then choose.',
+      );
+    }
+    const found = this.#shownFor(tree, request);
+    const attachment = this.attachment(tree, request);
+    if (!found.ok || !attachment.ok) {
+      return fail('record', 'This result is no longer at hand. Search again.');
+    }
+    const said = factsToTake(found.record);
+    const types = new Set<string>();
+    const events: RecordFactsPlan['events'] = [];
+    for (const take of request.takes) {
+      const fact = said.find((entry) => entry.type === take.type);
+      const target = comparison.facts
+        .find((entry) => entry.type === take.type)
+        ?.targets.find((entry) => entry.eventId === take.eventId);
+      if (
+        fact === undefined ||
+        target === undefined ||
+        types.has(take.type) ||
+        (take.date && !target.date.canTake) ||
+        (take.place && !target.place.canTake) ||
+        (!take.date && !take.place && !target.canCite)
+      ) {
+        return fail('choice', 'This cannot be taken over from the record as it stands.');
+      }
+      types.add(take.type);
+      events.push({
+        // The event's own type: a baptism may go to a christening of the tree.
+        type: target.eventType,
+        eventId: take.eventId,
+        ...(take.date ? { date: fact.date } : {}),
+        ...(take.place ? { place: fact.place } : {}),
+      });
+    }
+    return {
+      ok: true,
+      connector: attachment.connector,
+      citation: attachment.citation,
+      plan: { events },
+    };
+  }
+
+  /**
+   * How well every result shown for a person fits them as the tree has them
+   * now, by source and key. For after the tree changed under a search.
+   */
+  fits(tree: Tree, personId: string): Record<string, Record<string, RecordFitInfo>> {
+    const all: Record<string, Record<string, RecordFitInfo>> = {};
+    if (getPerson(tree, personId) === null) return all;
+    const subject = subjectOf(tree, personId);
+    for (const [key, shown] of this.#shown) {
+      if (shown.personId !== personId) continue;
+      const fit = scoreRecord(subject, shown.record);
+      if (fit === null) continue;
+      const sourceId = key.slice(0, key.indexOf('\n'));
+      (all[sourceId] ??= {})[shown.record.key] = {
+        band: fit.band,
+        reasons: fit.reasons,
+        doubts: fit.doubts,
+      };
+    }
+    return all;
   }
 
   /** Asks a source that keeps people for a person. */
@@ -653,6 +876,18 @@ export class RecordSearchService {
 
 function shownKey(sourceId: string, key: string): string {
   return `${sourceId}\n${key}`;
+}
+
+/**
+ * What a record says of the person's own events, as it would be written
+ * into the tree: a place no longer than the tree keeps. What is set beside
+ * the tree and what is written are then the same words.
+ */
+function factsToTake(record: ExternalRecord): RecordFact[] {
+  return recordFacts(record).map((fact) => ({
+    ...fact,
+    place: fact.place.slice(0, PLACE_TEXT_MAX).trim(),
+  }));
 }
 
 /** True when an address is HTTPS and on the site of a source, where its records' pages are. */

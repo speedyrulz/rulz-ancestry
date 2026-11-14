@@ -67,6 +67,22 @@ export {
   type YearSpan,
 } from './recordmatch';
 export {
+  TAKE_TYPES,
+  agrees,
+  canCiteFor,
+  canTakeDate,
+  canTakePlace,
+  conflicts,
+  isEventOf,
+  recordFacts,
+  relateDates,
+  relatePlaces,
+  type DateRelation,
+  type PlaceRelation,
+  type RecordFact,
+  type TakeType,
+} from './recordcompare';
+export {
   distanceKm,
   frameOf,
   gatherMarkers,

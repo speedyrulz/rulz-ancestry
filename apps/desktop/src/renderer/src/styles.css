@@ -1100,6 +1100,26 @@ details > .hint {
   vertical-align: top;
 }
 
+/* A heading for the rows of one event, in a comparison of a record. */
+.compare .compare-group {
+  width: auto;
+  background: var(--surface-2);
+  white-space: normal;
+}
+
+.compare .compare-group .muted {
+  font-weight: 400;
+}
+
+.compare-note {
+  margin: 8px 0;
+}
+
+.compare-tick {
+  display: block;
+  margin-top: 4px;
+}
+
 .compare thead th label {
   display: flex;
   align-items: baseline;

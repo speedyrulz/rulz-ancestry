@@ -21,6 +21,7 @@ import {
   listPersonCitations,
   listSourceCitations,
   listSources,
+  takeRecordFacts,
   unlinkCitation,
   updateCitation,
   updateSource,
@@ -515,5 +516,157 @@ describe('attaching a record of a site the app knows', () => {
       TreeRuleError,
     );
     expect(count(tree, 'source')).toBe(1);
+  });
+});
+
+describe('taking facts of a record over', () => {
+  const SITE = {
+    id: 'example-site',
+    create: { title: 'Example Site', publication: 'example.org' },
+  };
+  const RECORD = {
+    page: 'Profile 1',
+    text: 'Born 1870, Ashford, Vermont',
+    url: 'https://example.org/p/1',
+    accessedAt: '2026-11-14',
+  };
+  const usesOf = (tree: Tree, personId: string) =>
+    listPersonCitations(tree, personId).map((citation) =>
+      citation.uses.map((use) => `${use.type} ${use.id}`).sort(),
+    );
+
+  it('fills a place, makes an event, and cites the record for each, in one step', () => {
+    const { tree, personId, birth } = start();
+    const before = snapshot(tree);
+    const depth = undoDepth(tree);
+    const { citation, added, eventIds } = takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [
+        { type: 'birth', eventId: birth.id, place: 'Ashford, Vermont' },
+        { type: 'death', eventId: null, date: '12 JAN 1931', place: 'Millbrook' },
+      ],
+    });
+    expect(added).toBe(true);
+    expect(citation).toMatchObject(RECORD);
+    expect(getSource(tree, citation.sourceId)).toMatchObject(SITE.create);
+    const events = listPersonEvents(tree, personId);
+    expect(events).toMatchObject([
+      { id: birth.id, type: 'birth', dateText: '1870', placeText: 'Ashford, Vermont' },
+      { type: 'death', dateText: '12 JAN 1931', dateQualifier: 'exact', placeText: 'Millbrook' },
+    ]);
+    // The date is one the app can sort by, not only words.
+    expect(events[1]?.dateMinJdn).not.toBeNull();
+    expect(events[1]?.dateMinJdn).toBe(events[1]?.dateMaxJdn);
+    expect(eventIds).toEqual(events.map((event) => event.id));
+    // One citation, for the person and for both events.
+    expect(usesOf(tree, personId)).toEqual([
+      [`event ${events[0]?.id}`, `event ${events[1]?.id}`, `person ${personId}`].sort(),
+    ]);
+    expect(undoDepth(tree)).toBe(depth + 1);
+    expect(tree.undoStatus().undo?.label).toBe('Take facts from record');
+
+    const after = snapshot(tree);
+    tree.undo();
+    expect(snapshot(tree)).toEqual(before);
+    tree.redo();
+    expect(snapshot(tree)).toEqual(after);
+  });
+
+  it('changes only the field that was chosen', () => {
+    const { tree, personId } = start();
+    const death = addPersonEvent(tree, personId, {
+      type: 'death',
+      date: '1930',
+      place: 'Millbrook',
+      description: 'fever',
+      note: 'As the family told it.',
+    });
+    takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [{ type: 'death', eventId: death.id, date: '12 JAN 1931' }],
+    });
+    expect(listPersonEvents(tree, personId)[1]).toMatchObject({
+      id: death.id,
+      dateText: '12 JAN 1931',
+      placeText: 'Millbrook',
+      description: 'fever',
+      note: 'As the family told it.',
+    });
+  });
+
+  it('only cites an event when there is nothing to write, and does nothing the second time', () => {
+    const { tree, personId, birth } = start();
+    const before = listPersonEvents(tree, personId);
+    takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [{ type: 'birth', eventId: birth.id }],
+    });
+    expect(listPersonEvents(tree, personId)).toEqual(before);
+    expect(listCitations(tree, birth)).toMatchObject([{ url: RECORD.url }]);
+    const depth = undoDepth(tree);
+    const again = takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [{ type: 'birth', eventId: birth.id }],
+    });
+    expect(again.added).toBe(false);
+    expect(count(tree, 'citation')).toBe(1);
+    expect(count(tree, 'citation_link')).toBe(2);
+    expect(undoDepth(tree)).toBe(depth);
+  });
+
+  it('uses the citation the page already has for the record, wherever it was linked', () => {
+    const { tree, personId, birth, sourceId } = start();
+    // Cited for the birth alone, by hand.
+    const own = addCitation(tree, birth, { sourceId }, { url: RECORD.url });
+    const { citation, added } = takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [{ type: 'death', eventId: null, date: '1931' }],
+    });
+    expect(added).toBe(false);
+    expect(citation.id).toBe(own.id);
+    expect(count(tree, 'citation')).toBe(1);
+    // No source was made for the site: the citation is of the user's own source.
+    expect(count(tree, 'source')).toBe(1);
+    const death = listPersonEvents(tree, personId)[1];
+    expect(usesOf(tree, personId)).toEqual([
+      [`event ${birth.id}`, `event ${death?.id}`, `person ${personId}`].sort(),
+    ]);
+  });
+
+  it('adds no second citation of a record where its address is cited already', () => {
+    const { tree, personId, birth, sourceId } = start();
+    // Two citations of one address, made by hand: one for the person, one for the birth.
+    addCitation(tree, { type: 'person', id: personId }, { sourceId }, { url: RECORD.url });
+    addCitation(tree, birth, { sourceId }, { url: RECORD.url, page: 'p. 2' });
+    const { added } = takeRecordFacts(tree, personId, SITE, RECORD, {
+      events: [{ type: 'birth', eventId: birth.id, place: 'Ashford, Vermont' }],
+    });
+    expect(added).toBe(false);
+    expect(listPersonEvents(tree, personId)[0]?.placeText).toBe('Ashford, Vermont');
+    // The place is written; the person and the birth each still have the one citation.
+    expect(listCitations(tree, birth)).toHaveLength(1);
+    expect(listCitations(tree, { type: 'person', id: personId })).toHaveLength(1);
+    expect(count(tree, 'citation')).toBe(2);
+    expect(count(tree, 'citation_link')).toBe(2);
+  });
+
+  it('writes nothing at all when one part of it cannot be done', () => {
+    const { tree, personId, birth } = start();
+    const other = addPersonFromDraft(tree, { given: 'Mary', surname: 'Hale', birthDate: '1872' });
+    const hers = listPersonEvents(tree, other.id)[0]?.id ?? '';
+    const before = snapshot(tree);
+    const depth = undoDepth(tree);
+    const fine = { type: 'birth', eventId: birth.id, place: 'Ashford' };
+    const refused = (
+      events: Parameters<typeof takeRecordFacts>[4]['events'],
+      personOf = personId,
+    ) => expect(() => takeRecordFacts(tree, personOf, SITE, RECORD, { events })).toThrow();
+    // An event of someone else, an event of another type, an event that is gone,
+    // an event to make with nothing in it, a person who is gone.
+    refused([fine, { type: 'birth', eventId: hers, date: '1870' }]);
+    refused([fine, { type: 'death', eventId: birth.id, date: '1931' }]);
+    refused([fine, { type: 'death', eventId: MISSING, date: '1931' }]);
+    refused([fine, { type: 'death', eventId: null }]);
+    refused([fine], MISSING);
+    expect(() =>
+      takeRecordFacts(tree, personId, SITE, { ...RECORD, url: ' ' }, { events: [fine] }),
+    ).toThrow(TreeRuleError);
+    expect(snapshot(tree)).toEqual(before);
+    expect(undoDepth(tree)).toBe(depth);
   });
 });

@@ -7,6 +7,7 @@ import {
   NOTE_MAX,
   PLACE_TEXT_MAX,
   SOURCE_LIMITS,
+  TAKE_TYPES,
   TEXT_QUERY_MAX,
   US_STATES,
   canOpenOutside,
@@ -33,6 +34,7 @@ import {
   addChildOf,
   addCitation,
   attachRecord,
+  takeRecordFacts,
   addFamilyEvent,
   addMediaFiles,
   addName,
@@ -676,6 +678,50 @@ export function createHandlers(
           attachRecord(tree, request.personId, found.connector, found.citation),
         );
         return { ok: true, tree: session.state(), citationId: citation.id, added };
+      },
+    ),
+
+    compareRecord: define<'compareRecord'>(
+      z.tuple([
+        z.strictObject({ personId: id, sourceId: siteId, key: z.string().min(1).max(200) }),
+      ]),
+      (request) => records.comparison(session.tree, request),
+    ),
+
+    takeRecordFacts: define<'takeRecordFacts'>(
+      z.tuple([
+        z.strictObject({
+          personId: id,
+          sourceId: siteId,
+          key: z.string().min(1).max(200),
+          stamp: z.string().regex(/^[0-9a-f]{64}$/),
+          takes: z
+            .array(
+              z.strictObject({
+                type: z.enum(TAKE_TYPES),
+                eventId: id.nullable(),
+                date: z.boolean(),
+                place: z.boolean(),
+              }),
+            )
+            .min(1)
+            .max(TAKE_TYPES.length),
+        }),
+      ]),
+      (request) => {
+        const found = records.take(session.tree, request);
+        if (!found.ok) return found;
+        const { citation } = session.change((tree) =>
+          takeRecordFacts(tree, request.personId, found.connector, found.citation, found.plan),
+        );
+        const after = records.comparison(session.tree, request);
+        return {
+          ok: true,
+          tree: session.state(),
+          citationId: citation.id,
+          comparison: after.ok ? after.comparison : null,
+          fits: records.fits(session.tree, request.personId),
+        };
       },
     ),
 

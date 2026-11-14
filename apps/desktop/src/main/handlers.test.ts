@@ -8,6 +8,7 @@ import {
   type AppInfo,
   type AttachRecordResult,
   type ChartInfo,
+  type CompareRecordResult,
   type DuplicateList,
   type GazetteerEntry,
   type GazetteerStatus,
@@ -34,6 +35,7 @@ import {
   type SourceChange,
   type SourceDetails,
   type SourceListPage,
+  type TakeRecordFactsResult,
   type TreeState,
 } from '../shared/ipc';
 import { GazetteerService } from './gazetteer';
@@ -183,6 +185,9 @@ const catalogAnswer = {
     },
   },
 };
+/** A stamp of a comparison and a choice, of the right shape and of nothing. */
+const STAMP = '0'.repeat(64);
+const TAKE = { type: 'birth', eventId: null, date: true, place: false };
 /** A key that is none: it only has to be found again wherever it must not be. */
 const CANARY = 'canary-key-0123456789';
 /** Whether the fake of Windows' data protection works, and can read what was kept. */
@@ -398,6 +403,58 @@ describe('argument checks', () => {
       [
         'attachRecord',
         { personId: MISSING, sourceId: 'wikitree', key: 'a', url: 'https://x.example' },
+      ],
+      ['compareRecord', { personId: MISSING, sourceId: 'wikitree' }],
+      ['compareRecord', { personId: MISSING, sourceId: 'wikitree', key: 'a', title: 'Ada' }],
+      ['takeRecordFacts', { personId: MISSING, sourceId: 'wikitree', key: 'a', stamp: STAMP }],
+      [
+        'takeRecordFacts',
+        { personId: MISSING, sourceId: 'wikitree', key: 'a', stamp: STAMP, takes: [] },
+      ],
+      [
+        'takeRecordFacts',
+        { personId: MISSING, sourceId: 'wikitree', key: 'a', stamp: 'short', takes: [TAKE] },
+      ],
+      [
+        'takeRecordFacts',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          key: 'a',
+          stamp: STAMP,
+          takes: [{ ...TAKE, type: 'marriage' }],
+        },
+      ],
+      [
+        'takeRecordFacts',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          key: 'a',
+          stamp: STAMP,
+          // A value is never taken from the page.
+          takes: [{ ...TAKE, value: '1850' }],
+        },
+      ],
+      [
+        'takeRecordFacts',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          key: 'a',
+          stamp: STAMP,
+          takes: [{ ...TAKE, eventId: 'not-an-id' }],
+        },
+      ],
+      [
+        'takeRecordFacts',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          key: 'a',
+          stamp: STAMP,
+          takes: [TAKE, TAKE, TAKE, TAKE, TAKE],
+        },
       ],
       ['setRecordSourceKey', { sourceId: 'nara-catalog' }],
       ['setRecordSourceKey', { sourceId: 'nara-catalog', key: 'short' }],
@@ -2864,5 +2921,589 @@ describe('how well a result fits the person', () => {
     if (!found.ok) throw new Error(found.problem.message);
     expect(found.items).toHaveLength(1);
     expect(found.fits).toEqual({});
+  });
+});
+
+describe('a result set beside the person, and its facts taken over', () => {
+  /** What WikiTree answers here: one profile of someone made up, with a day, a place and a death. */
+  const profile = (extra: object = {}) =>
+    new Response(
+      JSON.stringify([
+        {
+          status: 0,
+          matches: [
+            {
+              Id: 1,
+              Name: 'Test-90001',
+              FirstName: 'Ada',
+              LastNameAtBirth: 'Test',
+              LastNameCurrent: 'Test',
+              BirthDate: '1850-03-12',
+              DeathDate: '1910-00-00',
+              BirthLocation: 'Ashford, Vermont',
+              Gender: 'Female',
+              IsLiving: 0,
+              Privacy: 60,
+              ...extra,
+            },
+          ],
+          total: 1,
+        },
+      ]),
+    );
+  const REF = { sourceId: 'wikitree', key: 'Test-90001' };
+  const search = async (personId: string, sourceId = 'wikitree') => {
+    const found = await call<RecordSearchResult>('searchRecords', {
+      personId,
+      sourceId,
+      query: QUERY,
+      offset: 0,
+    });
+    if (!found.ok) throw new Error(found.problem.message);
+    return found;
+  };
+  const compare = async (personId: string, ref: object = REF) => {
+    const result = await call<CompareRecordResult>('compareRecord', { personId, ...ref });
+    if (!result.ok) throw new Error(result.problem.message);
+    return result.comparison;
+  };
+  const take = (personId: string, stamp: string, takes: object[], ref: object = REF) =>
+    call<TakeRecordFactsResult>('takeRecordFacts', { personId, ...ref, stamp, takes });
+  const pageOf = (personId: string) => call<PersonPage>('getPersonPage', personId);
+  const eventsOf = async (personId: string) =>
+    (await pageOf(personId)).events.map((event) => ({
+      id: event.id,
+      type: event.type,
+      date: event.dateText,
+      place: event.placeText,
+    }));
+
+  it('says how each date and place of the record stands to the tree, and writes nothing', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    const [birth] = await eventsOf(ada);
+    const asked = askedOfSources.length;
+    const before = session.state();
+
+    const comparison = await compare(ada);
+    expect(comparison).toEqual({
+      stamp: expect.stringMatching(/^[0-9a-f]{64}$/),
+      sourceName: 'WikiTree',
+      title: 'Ada Test',
+      url: 'https://www.wikitree.com/wiki/Test-90001',
+      fit: { band: 'strong', reasons: ['Same name', 'Born in the same year'], doubts: [] },
+      names: ['Ada Test'],
+      sex: { tree: 'U', record: 'F' },
+      about: '',
+      event: null,
+      facts: [
+        {
+          type: 'birth',
+          targets: [
+            {
+              eventId: birth?.id,
+              eventType: 'birth',
+              // A day within the year the tree has: the record says more.
+              date: { tree: '1850', record: '12 MAR 1850', relation: 'more-exact', canTake: true },
+              place: {
+                tree: '',
+                record: 'Ashford, Vermont',
+                relation: 'record-only',
+                canTake: true,
+              },
+              canCite: true,
+              cited: false,
+              otherCitations: 0,
+            },
+          ],
+        },
+        {
+          type: 'death',
+          targets: [
+            {
+              // The tree has no death: taking it over makes one.
+              eventId: null,
+              eventType: 'death',
+              date: { tree: '', record: '1910', relation: 'record-only', canTake: true },
+              place: { tree: '', record: '', relation: 'neither', canTake: false },
+              canCite: false,
+              cited: false,
+              otherCitations: 0,
+            },
+          ],
+        },
+      ],
+      nothing: '',
+      attached: false,
+    });
+    // The same comparison has the same stamp.
+    expect((await compare(ada)).stamp).toBe(comparison.stamp);
+    expect(askedOfSources).toHaveLength(asked);
+    expect(session.state()).toEqual(before);
+  });
+
+  it('takes over what was chosen, cites the record for each event, and undoes it in one step', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    const [birth] = await eventsOf(ada);
+    const before = await pageOf(ada);
+    const asked = askedOfSources.length;
+    const { stamp } = await compare(ada);
+
+    const result = await take(ada, stamp, [
+      { type: 'birth', eventId: birth?.id, date: true, place: true },
+      { type: 'death', eventId: null, date: true, place: false },
+    ]);
+    if (!result.ok) throw new Error(result.problem.message);
+    expect(askedOfSources).toHaveLength(asked);
+    expect(result.tree).toMatchObject({ sources: 1, undo: 'Take facts from record' });
+    const events = await eventsOf(ada);
+    expect(events).toEqual([
+      { id: birth?.id, type: 'birth', date: '12 MAR 1850', place: 'Ashford, Vermont' },
+      { id: expect.any(String), type: 'death', date: '1910', place: '' },
+    ]);
+    const page = await pageOf(ada);
+    expect(page.citations).toMatchObject([
+      {
+        id: result.citationId,
+        sourceTitle: 'WikiTree',
+        page: 'Ada Test (Test-90001)',
+        text: 'Born 12 March 1850, Ashford, Vermont\nDied 1910',
+        url: 'https://www.wikitree.com/wiki/Test-90001',
+      },
+    ]);
+    expect(page.citations[0]?.uses.map((use) => `${use.type} ${use.id}`).sort()).toEqual(
+      [`person ${ada}`, `event ${events[0]?.id}`, `event ${events[1]?.id}`].sort(),
+    );
+
+    // The comparison as it stands now: nothing is left to take, and both events cite the record.
+    expect(result.comparison).toMatchObject({
+      attached: true,
+      facts: [
+        {
+          type: 'birth',
+          targets: [
+            {
+              date: { relation: 'same', canTake: false },
+              place: { relation: 'same', canTake: false },
+              cited: true,
+              canCite: false,
+            },
+          ],
+        },
+        { type: 'death', targets: [{ eventId: events[1]?.id, cited: true, canCite: false }] },
+      ],
+    });
+    expect(result.comparison?.stamp).not.toBe(stamp);
+    // The labels of the results go by the tree as it is now.
+    expect(result.fits).toEqual({
+      wikitree: {
+        'Test-90001': {
+          band: 'strong',
+          reasons: ['Same name', 'Born in the same year', 'Same place', 'Died in the same year'],
+          doubts: [],
+        },
+      },
+    });
+
+    // One Undo takes back the dates, the place, the new event, the citation and the source.
+    const undone = await call<TreeState>('undo');
+    expect(undone).toMatchObject({ sources: 0, redo: 'Take facts from record' });
+    expect(await pageOf(ada)).toEqual(before);
+  });
+
+  it('refuses when the tree is no longer as the comparison showed it', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    const [birth] = await eventsOf(ada);
+    const { stamp } = await compare(ada);
+    // The birth is edited after the comparison was shown.
+    await call('updateEvent', birth?.id, { type: 'birth', date: '1851' });
+    const state = session.state();
+    const takes = [{ type: 'birth', eventId: birth?.id, date: true, place: false }];
+
+    const refused = await take(ada, stamp, takes);
+    expect(refused).toMatchObject({
+      ok: false,
+      problem: { kind: 'changed' },
+      // And the comparison as it stands now comes back, to choose in again.
+      comparison: {
+        facts: [
+          { targets: [{ date: { tree: '1851', relation: 'differs', canTake: true } }] },
+          { type: 'death' },
+        ],
+      },
+    });
+    expect(session.state()).toEqual(state);
+    expect((await pageOf(ada)).citations).toEqual([]);
+
+    // An event of that type added meanwhile is a change too.
+    const fresh = await compare(ada);
+    await call('addPersonEvent', ada, { type: 'death', date: '1909' });
+    expect(
+      await take(ada, fresh.stamp, [{ type: 'death', eventId: null, date: true, place: false }]),
+    ).toMatchObject({ ok: false, problem: { kind: 'changed' } });
+    expect((await eventsOf(ada)).filter((event) => event.type === 'death')).toHaveLength(1);
+
+    // With the stamp of what is shown now, it is taken.
+    const now = await compare(ada);
+    expect(await take(ada, now.stamp, takes)).toMatchObject({ ok: true });
+    expect((await eventsOf(ada))[0]).toMatchObject({ date: '12 MAR 1850' });
+  });
+
+  it('takes only what the comparison offers', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    // The record knows the year only; the tree knows the day.
+    answerOf = () => profile({ BirthDate: '1850-00-00', BirthLocation: '' });
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850' });
+    const other = await addPerson('Bea', { birthDate: '1850' });
+    await search(ada);
+    const [birth] = await eventsOf(ada);
+    const [hers] = await eventsOf(other);
+    const comparison = await compare(ada);
+    expect(comparison.facts[0]?.targets[0]).toMatchObject({
+      date: { tree: '12 MAR 1850', record: '1850', relation: 'less-exact', canTake: false },
+      canCite: true,
+    });
+    const { stamp } = comparison;
+    const state = session.state();
+    const choice = (takes: object[], personId = ada, ref: object = REF) =>
+      take(personId, stamp, takes, ref);
+    const refusals: [Promise<TakeRecordFactsResult>, string][] = [
+      // A date that says less than the tree's.
+      [choice([{ type: 'birth', eventId: birth?.id, date: true, place: false }]), 'choice'],
+      // A place the record does not give.
+      [choice([{ type: 'birth', eventId: birth?.id, date: false, place: true }]), 'choice'],
+      // A second birth, where the tree has one.
+      [choice([{ type: 'birth', eventId: null, date: true, place: false }]), 'choice'],
+      // An event of someone else, and an event of another type.
+      [choice([{ type: 'birth', eventId: hers?.id, date: false, place: false }]), 'choice'],
+      [choice([{ type: 'death', eventId: birth?.id, date: true, place: false }]), 'choice'],
+      // Something the record says nothing of.
+      [choice([{ type: 'baptism', eventId: null, date: true, place: false }]), 'choice'],
+      // One type twice.
+      [
+        choice([
+          { type: 'death', eventId: null, date: true, place: false },
+          { type: 'death', eventId: null, date: true, place: false },
+        ]),
+        'choice',
+      ],
+      // A death to make with nothing in it.
+      [choice([{ type: 'death', eventId: null, date: false, place: false }]), 'choice'],
+      // A result that was not shown, one shown for someone else, a person who is gone.
+      [choice([TAKE], ada, { sourceId: 'wikitree', key: 'Test-1' }), 'record'],
+      [choice([TAKE], other), 'record'],
+      [choice([TAKE], MISSING), 'gone'],
+    ];
+    for (const [refusal, kind] of refusals) {
+      expect(await refusal).toMatchObject({ ok: false, problem: { kind } });
+    }
+    expect(session.state()).toEqual(state);
+
+    // The record agrees with the birth, so it can be cited for it with nothing changed.
+    const cited = await choice([{ type: 'birth', eventId: birth?.id, date: false, place: false }]);
+    if (!cited.ok) throw new Error(cited.problem.message);
+    expect(await eventsOf(ada)).toEqual([birth]);
+    expect((await pageOf(ada)).citations[0]?.uses).toHaveLength(2);
+    expect(cited.comparison?.facts[0]?.targets[0]).toMatchObject({ cited: true, canCite: false });
+  });
+
+  it('counts the other sources of an event, and sets the record beside every event of a type', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '1849' });
+    await call('addPersonEvent', ada, { type: 'birth', date: 'MAR 1850', place: 'Ashford' });
+    const [first, second] = await eventsOf(ada);
+    await call('addCitation', { type: 'event', id: first?.id }, { create: { title: 'Bible' } }, {});
+    await search(ada);
+    const comparison = await compare(ada);
+    expect(comparison.facts[0]).toMatchObject({
+      type: 'birth',
+      targets: [
+        { eventId: first?.id, date: { relation: 'differs', canTake: true }, otherCitations: 1 },
+        {
+          eventId: second?.id,
+          date: { relation: 'more-exact', canTake: true },
+          place: { relation: 'fuller', canTake: true },
+          otherCitations: 0,
+        },
+      ],
+    });
+    // Taken into the second birth, the first stays as it is.
+    const result = await take(ada, comparison.stamp, [
+      { type: 'birth', eventId: second?.id, date: true, place: true },
+    ]);
+    expect(result.ok).toBe(true);
+    expect(await eventsOf(ada)).toEqual([
+      first,
+      { id: second?.id, type: 'birth', date: '12 MAR 1850', place: 'Ashford, Vermont' },
+      // No death was asked for, and none was made.
+    ]);
+  });
+
+  it('takes a baptism as a baptism, and nothing from a record that only names the person', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const record = (number: number, role: string, event: string, year: number) => ({
+      pid: `Person${number}`,
+      identifier: `REC-${number}`,
+      archive_code: 'exa',
+      archive: 'Example Municipal Archive',
+      personname: 'Ada Test',
+      relationtype: role,
+      eventtype: event,
+      eventdate: { day: 20, month: 3, year },
+      eventplace: ['Voorbeeldstad'],
+      sourcetype: 'Church records',
+    });
+    answerOf = () =>
+      new Response(
+        JSON.stringify({
+          response: {
+            number_found: 3,
+            docs: [
+              record(1, 'Dopeling', 'Doop', 1850),
+              record(2, 'Bride', 'Marriage', 1872),
+              record(3, 'Mother', 'Birth', 1875),
+            ],
+          },
+        }),
+      );
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850' });
+    await search(ada, 'open-archives');
+    const [birth] = await eventsOf(ada);
+    const ref = (number: number) => ({
+      sourceId: 'open-archives',
+      key: `exa:REC-${number}/Person${number}`,
+    });
+
+    // The one who was baptized: the date is of the baptism, not of the birth.
+    const baptism = await compare(ada, ref(1));
+    expect(baptism.event).toEqual({
+      role: 'Dopeling',
+      event: 'Doop',
+      date: '20 MAR 1850',
+      place: 'Voorbeeldstad',
+      held: 'Church records, Example Municipal Archive',
+    });
+    expect(baptism.facts).toMatchObject([
+      { type: 'baptism', targets: [{ eventId: null, date: { relation: 'record-only' } }] },
+    ]);
+    expect(
+      await take(
+        ada,
+        baptism.stamp,
+        [{ type: 'birth', eventId: birth?.id, date: true, place: false }],
+        ref(1),
+      ),
+    ).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+    const taken = await take(
+      ada,
+      baptism.stamp,
+      [{ type: 'baptism', eventId: null, date: true, place: true }],
+      ref(1),
+    );
+    expect(taken.ok).toBe(true);
+    expect(await eventsOf(ada)).toEqual([
+      birth,
+      { id: expect.any(String), type: 'baptism', date: '20 MAR 1850', place: 'Voorbeeldstad' },
+    ]);
+
+    // A bride and a mother: the record is of something else, and nothing of it is theirs.
+    for (const number of [2, 3]) {
+      const named = await compare(ada, ref(number));
+      expect(named.facts).toEqual([]);
+      expect(named.nothing).toContain('Nothing is taken from this record');
+      for (const type of ['birth', 'death', 'baptism', 'burial']) {
+        expect(
+          await take(
+            ada,
+            named.stamp,
+            [{ type, eventId: null, date: true, place: true }],
+            ref(number),
+          ),
+        ).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+      }
+    }
+    expect((await eventsOf(ada)).map((event) => event.type)).toEqual(['birth', 'baptism']);
+  });
+
+  it('sets a baptism beside a christening of the tree, and makes no second event for it', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () =>
+      new Response(
+        JSON.stringify({
+          response: {
+            number_found: 1,
+            docs: [
+              {
+                pid: 'Person1',
+                identifier: 'REC-1',
+                archive_code: 'exa',
+                archive: 'Example Municipal Archive',
+                personname: 'Ada Test',
+                relationtype: 'Dopeling',
+                eventtype: 'Doop',
+                eventdate: { day: 20, month: 3, year: 1850 },
+                eventplace: ['Voorbeeldstad'],
+                sourcetype: 'Church records',
+              },
+            ],
+          },
+        }),
+      );
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850' });
+    // As a file from another program has it.
+    await call('addPersonEvent', ada, { type: 'christening', date: '1850' });
+    await search(ada, 'open-archives');
+    const before = await eventsOf(ada);
+    const christening = before.find((event) => event.type === 'christening');
+    const ref = { sourceId: 'open-archives', key: 'exa:REC-1/Person1' };
+
+    const comparison = await compare(ada, ref);
+    expect(comparison.facts).toMatchObject([
+      {
+        type: 'baptism',
+        targets: [
+          {
+            eventId: christening?.id,
+            eventType: 'christening',
+            date: { tree: '1850', record: '20 MAR 1850', relation: 'more-exact', canTake: true },
+            place: { relation: 'record-only', canTake: true },
+          },
+        ],
+      },
+    ]);
+    // Where the tree has a christening, no baptism is made beside it.
+    expect(
+      await take(
+        ada,
+        comparison.stamp,
+        [{ type: 'baptism', eventId: null, date: true, place: true }],
+        ref,
+      ),
+    ).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+    const taken = await take(
+      ada,
+      comparison.stamp,
+      [{ type: 'baptism', eventId: christening?.id, date: true, place: true }],
+      ref,
+    );
+    if (!taken.ok) throw new Error(taken.problem.message);
+    const after = await eventsOf(ada);
+    expect(after.map((event) => event.type).sort()).toEqual(['birth', 'christening']);
+    // It stays a christening, with the day and the place of the record.
+    expect(after.find((event) => event.id === christening?.id)).toEqual({
+      id: christening?.id,
+      type: 'christening',
+      date: '20 MAR 1850',
+      place: 'Voorbeeldstad',
+    });
+    expect(taken.comparison?.facts[0]?.targets[0]).toMatchObject({
+      eventType: 'christening',
+      cited: true,
+    });
+  });
+
+  it('offers no citing of an event the record speaks against, and no shorter place', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    // Another year, and a town of the same name that may lie elsewhere.
+    answerOf = () => profile({ BirthDate: '1862-00-00', BirthLocation: 'Ashford, Maine' });
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850' });
+    const [birth] = await eventsOf(ada);
+    const born = (date: string, place: string) =>
+      call('updateEvent', birth?.id, { type: 'birth', date, place });
+    const target = async () => (await compare(ada)).facts[0]?.targets[0];
+    const cite = async () =>
+      take(ada, (await compare(ada)).stamp, [
+        { type: 'birth', eventId: birth?.id, date: false, place: false },
+      ]);
+    await born('12 MAR 1850', 'Ashford, Vermont');
+    await search(ada);
+
+    // The words do not say that the two are one town, and the window does not either.
+    expect(await target()).toMatchObject({
+      date: { relation: 'differs', canTake: true },
+      place: { relation: 'alike', canTake: true },
+      canCite: false,
+    });
+    expect(await cite()).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+
+    // The tree's place is the longer one: the record's is not offered in its place.
+    await born('1862', 'Ashford, Vermont, USA');
+    expect(await target()).toMatchObject({
+      date: { relation: 'same' },
+      place: { relation: 'alike-less', canTake: false },
+      // The year agrees and nothing differs: the record may be cited for the birth.
+      canCite: true,
+    });
+    expect(
+      await take(ada, (await compare(ada)).stamp, [
+        { type: 'birth', eventId: birth?.id, date: false, place: true },
+      ]),
+    ).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+
+    // The same year in another town: the record says something else of this birth.
+    await born('1862', 'Millbrook, Vermont');
+    expect(await target()).toMatchObject({
+      date: { relation: 'same' },
+      place: { relation: 'differs', canTake: true },
+      canCite: false,
+    });
+    expect(await cite()).toMatchObject({ ok: false, problem: { kind: 'choice' } });
+    expect((await pageOf(ada)).citations).toEqual([]);
+  });
+
+  it('shows a place as long as the tree keeps it, and writes what it showed', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile({ BirthLocation: `Ashford, ${'Vermont '.repeat(90)}` });
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    await search(ada);
+    const [birth] = await eventsOf(ada);
+    const comparison = await compare(ada);
+    const shown = comparison.facts[0]?.targets[0]?.place.record ?? '';
+    expect(shown.startsWith('Ashford, Vermont Vermont')).toBe(true);
+    expect(shown.length).toBeLessThanOrEqual(500);
+    const taken = await take(ada, comparison.stamp, [
+      { type: 'birth', eventId: birth?.id, date: false, place: true },
+    ]);
+    expect(taken.ok).toBe(true);
+    expect((await eventsOf(ada))[0]?.place).toBe(shown);
+  });
+
+  it('sets no text beside a person', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await call<RecordSearchResult>('searchRecordTexts', {
+      personId: ada,
+      sourceId: 'loc',
+      query: TEXT,
+      offset: 0,
+    });
+    if (!found.ok) throw new Error(found.problem.message);
+    const ref = { personId: ada, sourceId: 'loc', key: found.items[0]?.key };
+    expect(await call<CompareRecordResult>('compareRecord', ref)).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    expect(
+      await call<TakeRecordFactsResult>('takeRecordFacts', { ...ref, stamp: STAMP, takes: [TAKE] }),
+    ).toMatchObject({ ok: false, problem: { kind: 'record' }, comparison: null });
   });
 });

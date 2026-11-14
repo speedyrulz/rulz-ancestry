@@ -9,6 +9,7 @@ import {
   type SourceFields,
 } from '@rulz/core';
 import { sql } from './connection';
+import { addPersonEvent, listPersonEvents, updateEvent } from './events';
 import { getGedcomSource, getStoredRecord } from './gedcom/store';
 import { NotFoundError, TreeRuleError, type Tree } from './tree';
 
@@ -500,6 +501,78 @@ export function attachRecord(
     const id = insertCitation(tree, resolveSource(tree, { connector }), input);
     insertLink(tree, id, { type: 'person', id: personId });
     return { citation: requireCitation(tree, id), added: true };
+  });
+}
+
+/** What to take over from a record into the events of a person. */
+export interface RecordFactsPlan {
+  events: {
+    /** The type of the event: of the one named, or of the one to make. */
+    type: string;
+    /** The person's own event to change or to cite; null to make one. */
+    eventId: string | null;
+    /** The date to write; left out when the date stays. */
+    date?: string;
+    /** The place to write; left out when the place stays. */
+    place?: string;
+  }[];
+}
+
+/**
+ * Takes dates and places of a record over into a person's events and cites
+ * the record: for the person as a whole, as `attachRecord` does, and for
+ * each event named. An event without a date and a place to write is only
+ * cited. One step, and one Undo. The record's citation is the one the
+ * person's page already has for its address, when it has one.
+ */
+export function takeRecordFacts(
+  tree: Tree,
+  personId: string,
+  connector: ConnectorSource,
+  input: CitationInput & { url: string },
+  plan: RecordFactsPlan,
+): { citation: Citation; added: boolean; eventIds: string[] } {
+  return tree.transact('Take facts from record', () => {
+    requireTarget(tree, { type: 'person', id: personId });
+    // Everything is looked at before anything is written.
+    const own = new Map(listPersonEvents(tree, personId).map((event) => [event.id, event]));
+    for (const entry of plan.events) {
+      const writes = entry.date !== undefined || entry.place !== undefined;
+      if (entry.eventId === null) {
+        if (!writes) throw new TreeRuleError('an event to make needs a date or a place');
+        continue;
+      }
+      const event = own.get(entry.eventId);
+      if (event === undefined) {
+        throw new TreeRuleError('facts of a record go to an event of the person itself');
+      }
+      if (event.type !== entry.type) {
+        throw new TreeRuleError(`this event is no ${entry.type}`);
+      }
+    }
+    const { citation, added } = attachRecord(tree, personId, connector, input);
+    const cite = (target: CitationTarget) => {
+      // Cited already too when another citation of the same address is linked.
+      const cited =
+        isLinked(tree, citation.id, target) ||
+        listCitations(tree, target).some((other) => other.url === citation.url);
+      if (!cited) insertLink(tree, citation.id, target);
+    };
+    // A citation the page already had may support one event only until now.
+    cite({ type: 'person', id: personId });
+    const eventIds = plan.events.map((entry) => {
+      const patch = {
+        ...(entry.date === undefined ? {} : { date: entry.date }),
+        ...(entry.place === undefined ? {} : { place: entry.place }),
+      };
+      const id =
+        entry.eventId === null
+          ? addPersonEvent(tree, personId, { type: entry.type, ...patch }).id
+          : updateEvent(tree, entry.eventId, patch).id;
+      cite({ type: 'event', id });
+      return id;
+    });
+    return { citation, added, eventIds };
   });
 }
 

@@ -10,6 +10,7 @@ import type {
   AncestorSlot,
   DateCalendar,
   DateQualifier,
+  DateRelation,
   DescendantNode,
   ExternalRecord,
   GedcomVersion,
@@ -17,7 +18,9 @@ import type {
   NameType,
   Pedigree,
   PersonQuery,
+  PlaceRelation,
   Sex,
+  TakeType,
   TextQuery,
 } from '@rulz/core';
 
@@ -637,6 +640,8 @@ export interface RecordSearchProblem {
     | 'empty' /* the query names nobody, or cannot be sent as it is */
     | 'source' /* the source is not known */
     | 'record' /* the record is not one the search showed for this person */
+    | 'changed' /* the tree or the record is no longer as the comparison showed it */
+    | 'choice' /* what was chosen to take over is not on offer */
     | 'paused' /* the source must be left alone until `retryAt` */
     | 'offline' /* the source could not be reached */
     | 'timeout'
@@ -714,6 +719,107 @@ export type AttachRecordResult =
       added: boolean;
     }
   | { ok: false; problem: RecordSearchProblem };
+
+/** A date or a place of a record beside that of the tree. */
+export interface RecordFieldInfo<Relation> {
+  /** What the tree has; empty when it has nothing. */
+  tree: string;
+  /** What the record says; empty when it says nothing. */
+  record: string;
+  relation: Relation;
+  /** True when the user may choose to take the record's value over. */
+  canTake: boolean;
+}
+
+/** What a record says of an event, beside one event of the tree. */
+export interface RecordFactTarget {
+  /** The event of the tree; null when the tree has none of this type, and taking over makes one. */
+  eventId: string | null;
+  /** The type of the event of the tree: a baptism is set beside a christening too. The fact's own type when there is no event. */
+  eventType: string;
+  date: RecordFieldInfo<DateRelation>;
+  place: RecordFieldInfo<PlaceRelation>;
+  /**
+   * True when the record can be cited for the event with nothing taken over: it agrees with the
+   * event's date or its place, and says nothing against the other.
+   */
+  canCite: boolean;
+  /** True when the event cites this record already. */
+  cited: boolean;
+  /** How many other citations the event has. They may say otherwise than the record. */
+  otherCitations: number;
+}
+
+/** What a record says of the person's own birth, baptism, death or burial. */
+export interface RecordFactInfo {
+  type: TakeType;
+  /**
+   * One for each event of this type the tree has for the person (for a baptism, each christening
+   * too); one without an event when it has none.
+   */
+  targets: RecordFactTarget[];
+}
+
+/**
+ * A result of a search set beside the person it was found for. The main
+ * process works it out from the tree and from what it read from the source;
+ * the page shows it and says what to take, by type and event, never by value.
+ */
+export interface RecordComparison {
+  /** Names what was shown. A request to take over carries it, and is refused when the tree has changed since. */
+  stamp: string;
+  sourceName: string;
+  title: string;
+  url: string;
+  fit: RecordFitInfo | null;
+  /** The names the tree has for the person, the main one first. */
+  names: string[];
+  sex: { tree: Sex; record: 'M' | 'F' | null };
+  /** What the source says of the person in a few words; empty when nothing. */
+  about: string;
+  /** For a record of an event: what it is and the person's part in it, for reading. */
+  event: { role: string; event: string; date: string; place: string; held: string } | null;
+  facts: RecordFactInfo[];
+  /** Why nothing of the record can be taken over, in words; empty when something can. */
+  nothing: string;
+  /** True when the person's page cites the record already. */
+  attached: boolean;
+}
+
+export type CompareRecordResult =
+  { ok: true; comparison: RecordComparison } | { ok: false; problem: RecordSearchProblem };
+
+/** What to take over from a result into the tree. Values are never passed: the main process has them. */
+export interface TakeRecordFactsRequest extends AttachRecordRequest {
+  /** The stamp of the comparison the choices were made in. */
+  stamp: string;
+  takes: {
+    type: TakeType;
+    /** The event of the tree as the comparison named it; null to make one. */
+    eventId: string | null;
+    /** Take the record's date. */
+    date: boolean;
+    /** Take the record's place. With neither, the record is only cited for the event. */
+    place: boolean;
+  }[];
+}
+
+export type TakeRecordFactsResult =
+  | {
+      ok: true;
+      tree: TreeState;
+      citationId: string;
+      /** The comparison as it stands now; null when the result is no longer at hand. */
+      comparison: RecordComparison | null;
+      /** How well every result shown for the person fits them now, by source and key. */
+      fits: Record<string, Record<string, RecordFitInfo>>;
+    }
+  | {
+      ok: false;
+      problem: RecordSearchProblem;
+      /** The comparison as it stands now, where the tree changed since it was shown. */
+      comparison: RecordComparison | null;
+    };
 
 /** A search to open in the browser, at a site the app does not ask itself. */
 export interface RecordLinkRequest {
@@ -1023,6 +1129,19 @@ export interface RulzApi {
    */
   attachRecord(request: AttachRecordRequest): Promise<AttachRecordResult>;
   /**
+   * Sets a result of the search beside the person it was found for: what the
+   * record says of their birth, baptism, death or burial, and how each date
+   * and place stands to the tree's. Nothing is sent and nothing is written.
+   */
+  compareRecord(request: AttachRecordRequest): Promise<CompareRecordResult>;
+  /**
+   * Takes dates and places of a result over into the tree, as chosen in a
+   * comparison, and cites the record for the person and for each event it
+   * touched. One step, and one Undo. Refused when the tree is no longer as
+   * the comparison showed it. Nothing is sent.
+   */
+  takeRecordFacts(request: TakeRecordFactsRequest): Promise<TakeRecordFactsResult>;
+  /**
    * Opens a search for a person at a site in the user's browser. The app
    * itself asks the site nothing. Refused for a person who may be living, and
    * before the notice is agreed to.
@@ -1200,6 +1319,8 @@ export const API_METHODS = [
   'searchRecordTexts',
   'cancelRecordSearch',
   'attachRecord',
+  'compareRecord',
+  'takeRecordFacts',
   'openRecordLink',
   'setRecordSourceKey',
   'removeRecordSourceKey',

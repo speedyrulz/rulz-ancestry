@@ -627,3 +627,94 @@ test('takes a key for the National Archives, keeps it out of sight, and searches
 function keysSent(app: ElectronApplication): Promise<string[]> {
   return app.evaluate(() => (globalThis as unknown as { keysSent?: string[] }).keysSent ?? []);
 }
+
+test('sets a result beside the person, takes over what is ticked, and undoes it in one step', async ({
+  app,
+  window,
+}) => {
+  await answerSearches(app, 5);
+  await createTree(window, 'Compare');
+  await addPerson(window, { given: 'Josiah', surname: 'Marsh', birthDate: '1850' });
+  await window.getByTestId('open-records').click();
+  await window.getByTestId('record-agree').click();
+  await window.getByTestId('record-search-go').click();
+  const results = window.getByTestId('records-wikitree');
+  const one = results.getByTestId('record-result').first();
+  await expect(one.getByTestId('record-fit')).toHaveText('Fits well');
+  // A page of a newspaper is not set beside a person.
+  await expect(one.getByTestId('record-compare-open')).toHaveCount(1);
+  const asked = (await askedOfInternet(app)).length;
+
+  await one.getByTestId('record-compare-open').click();
+  const compare = window.getByTestId('record-compare');
+  await expect(compare).toContainText('Compare a record with Josiah Marsh');
+  await expect(compare.getByTestId('compare-link')).toHaveAttribute(
+    'href',
+    'https://www.wikitree.com/wiki/Marsh-90001',
+  );
+  await expect(compare.getByTestId('compare-fit')).toHaveText('Fits well');
+  await expect(compare.getByTestId('compare-hint')).toContainText(
+    'does not know whether this record is of Josiah Marsh',
+  );
+  // Each date and place, and how the two sides stand.
+  const birthDate = compare.getByTestId('compare-birth-date');
+  await expect(birthDate).toContainText('1850');
+  await expect(birthDate).toContainText('12 March 1850');
+  await expect(birthDate.getByTestId('compare-stands')).toHaveText('The record is more exact');
+  const birthPlace = compare.getByTestId('compare-birth-place');
+  await expect(birthPlace).toContainText('Ashford, Vermont');
+  await expect(birthPlace.getByTestId('compare-stands')).toHaveText('Only the record has it');
+  await expect(compare.getByTestId('compare-death')).toContainText('your tree has none');
+  const deathDate = compare.getByTestId('compare-death-date');
+  await expect(deathDate).toContainText('about 1912');
+  await expect(compare.getByTestId('compare-name')).toContainText('a name is not taken over');
+  await expect(compare.getByTestId('compare-sex')).toContainText('Male');
+
+  // Nothing is ticked, and with nothing ticked nothing can be taken.
+  await expect(compare.getByTestId('compare-take')).toHaveCount(3);
+  for (const box of await compare.getByTestId('compare-take').all()) {
+    await expect(box).not.toBeChecked();
+  }
+  await expect(compare.getByTestId('compare-go')).toBeDisabled();
+
+  // The place of the birth and the death are ticked; the date of the birth is left as it is.
+  await birthPlace.getByTestId('compare-take').check();
+  await deathDate.getByTestId('compare-take').check();
+  await expect(compare.getByTestId('compare-birth-cite')).toHaveText(
+    'The birth will read: 1850, Ashford, Vermont. The record will be cited for it.',
+  );
+  await expect(compare.getByTestId('compare-death-cite')).toHaveText(
+    'The death will read: about 1912. The record will be cited for it.',
+  );
+  await compare.getByTestId('compare-go').click();
+  await expect(compare.getByTestId('compare-done')).toContainText('Undo takes all of it back');
+  // The comparison shows the tree as it is now.
+  await expect(birthPlace.getByTestId('compare-stands')).toHaveText('The same');
+  await expect(birthPlace.getByTestId('compare-take')).toHaveCount(0);
+  await expect(deathDate.getByTestId('compare-stands')).toHaveText('The same');
+  await expect(birthDate.getByTestId('compare-take')).not.toBeChecked();
+  await expect(compare.getByTestId('compare-birth-cite')).toHaveText(
+    'This birth of your tree cites the record already.',
+  );
+  await expect(compare.getByTestId('compare-attached')).toHaveText('Attached as a source');
+  await expect(compare.getByTestId('compare-go')).toBeDisabled();
+  // Nothing was asked of the internet for any of it.
+  expect(await askedOfInternet(app)).toHaveLength(asked);
+  await compare.getByTestId('compare-close').click();
+  await expect(compare).toHaveCount(0);
+
+  // The list knows the record is cited, and holds it against the tree as it is now.
+  await expect(one.getByTestId('record-attached')).toHaveText('Attached as a source');
+  await expect(one.getByTestId('record-fit-why')).toHaveText(
+    'Same name. Born in the same year. Same place. Died in about the same year.',
+  );
+  await window.getByTestId('record-search-close').click();
+
+  // One step in the tree, and one Undo.
+  const undo = window.getByTestId('undo');
+  await expect(undo).toHaveAttribute('title', 'Undo Take facts from record (Ctrl+Z)');
+  await expect(window.getByText('Ashford, Vermont').first()).toBeVisible();
+  await undo.click();
+  await expect(undo).toHaveAttribute('title', 'Undo Add person (Ctrl+Z)');
+  await expect(window.getByText('Ashford, Vermont')).toHaveCount(0);
+});

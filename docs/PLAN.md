@@ -740,7 +740,7 @@ The parts of Phase 4 are numbered 4.1 to 4.4, because "4b" in the table above is
 | Part | Scope                                                                                                                                                | Status              |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 4.1  | A score for how well a search result fits the person of the tree, shown in the search window, and measured on a labelled set of made-up cases        | **Done 2026-11-14** |
-| 4.2  | A view that sets a result beside the person, and takes facts of the result over into the tree, each with its citation                                | Planned             |
+| 4.2  | A view that sets a result beside the person, and takes facts of the result over into the tree, each with its citation                                | **Done 2026-11-14** |
 | 4.3  | An inbox: results kept to look at later, and results turned down that do not come back                                                               | Planned             |
 | 4.4  | A search for several people in one go, started by the user: direct ancestors first, within every source's limits, with a count of what will be asked | Needs a decision    |
 
@@ -782,7 +782,7 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 - **A result shown before could take the label of a later one with the same key** (Codex). It keeps the label it was shown with.
 - **The measurement proved less than it said** (both). The test let a wrong strong fit pass as long as some case was marked as undecidable; it now counts the wrong strong fits that something in the record could have told apart, and that count must be nought. The second set was called "unseen" and came from the same names; it is now drawn from other names and places, and is called a second draw. The kinds of case the reviews found missing are in the generator, and each counter-example is a test of its own.
 - **Found by the measurement itself:** an initial "T." was taken for the small word of a Dutch surname and dropped, so that "T. Marsh" had no given name. The rewritten scoring missed 17 such cases of 1,680 until that was put right.
-- **Left:** a label is not worked out again when the tree is changed while the window is open (Opus). The window lies over the person's page, and nothing of the person can be edited meanwhile.
+- **Left:** a label is not worked out again when the tree is changed while the window is open (Opus). The window lies over the person's page, and nothing of the person can be edited meanwhile. Part 4.2 closed this: taking facts over is the one change the window can make, and the labels are worked out again after it.
 
 Tests: unit tests went from 1071 to 1101, end-to-end tests stayed at 39.
 
@@ -795,6 +795,52 @@ Not done:
 - **How common a name is.** A rare name that agrees says more than a common one; the scoring does not know either.
 - **Sorting by fit,** and a filter that hides what does not fit.
 - **Weights from data.** See above.
+
+### Phase 4.2 outcome: a result beside the person, and its facts taken over (2026-11-14)
+
+Delivered:
+
+- **"Compare" on a result that is a person or a record of one.** A window sets the result beside the person it was found for: the names and the sex for reading, and for the person's birth, baptism, death and burial the date and place of the tree, of the record, and how the two stand.
+- **What the record says of the person's own events** (`recordFacts` in `packages/core/src/recordcompare.ts`). A profile says of a birth and a death. A record of an event says of one, and only when the person is the one who was born, baptized, buried or who died. A baptism is a baptism and a burial a burial; of a bride, a groom, a parent, a witness or a child that a record of something else names it says nothing, and nothing is taken.
+- **How two dates stand** (`relateDates`), by the days each can mean: the same, the record more exact, the tree more exact, closer days that the record only gives as "about", overlapping in part, or apart. **How two places stand** (`relatePlaces`), by their parts, which commas divide: the same, one holding all the other says, beginning alike, or different.
+- **Ticks, and one press.** Nothing is ticked at the start. Date and place are ticked apart, under the event of the tree they would go to; where the tree has several events of a type, the record is set beside each, and only one of them can be chosen. An event the tree does not have is made. The line under the ticks says what the event will read.
+- **One step in the tree** (`takeRecordFacts` in `packages/db/src/sources.ts`): the dates, the places, a new event, the citation and its links are one transaction and one Undo. A press that is refused writes nothing.
+- **One citation for a record,** found by its web address as "Attach as source" finds it, linked to the person and to each event that was written to. A record that agrees with an event can be cited for it with nothing changed.
+- **The labels of the list are worked out again** after a take, against the tree as it then is.
+
+Decided while building:
+
+- **The main process works the comparison out, and the page sends back choices, never values.** The page names a result by its source and key, and says what to take by the type of an event and the id of an event of the tree. What is written is what the main process read from the source.
+- **Only a result the search showed for this person** since the tree was opened can be compared or taken from, as for attaching.
+- **A stamp guards against a stale view.** The comparison carries a hash of everything it showed and of the record. A request to take over carries it back, and is refused when it no longer fits; the comparison as it stands then comes back with the refusal.
+- **Where two values agree as far as each goes, the one that says less is never offered:** a year for a day, a place that every part of is in the tree's already, a shorter place that begins as the tree's does. Where they differ, the user chooses between them.
+- **Names and the sex are not taken over.** A name of a source is one line, and the tree keeps names in parts; a second name is a decision the person's page is the place for. Both design views were against taking the sex from a record.
+- **A source whose terms bar keeping what it returns offers nothing to take.** Only the National Archives are marked so, and they return texts, which are not compared at all.
+- **Nothing is sent to the internet** by comparing or taking over.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code. Neither found a fault in the write itself: the one step, the stamp, the checks of what was ticked, whose event is written to, the citation's links. Their findings were in how dates and places are compared, and that part was rewritten.
+
+- **A shorter place could be offered in place of a longer one** (both). Any two places with the same first part counted as "the same town, written another way", and the record's could be taken: "Ashford, VT" over "Ashford, Example County, Vermont, USA". Such a place is no longer offered when it is the shorter of the two.
+- **Two towns of one name were called the same town** (both), and so were a town and a longer name that begins with it ("Ashford" and "Ashford Hill"). The words cannot tell, so the window no longer says so: it reads "They begin alike; the rest is written differently", and that is no agreement.
+- **A place of fewer parts was "another place"** (primary, while fixing the above). "Vermont" beside "Ashford, Vermont" was offered as if it differed. Places are now compared part by part, and a place whose parts are all in the other is the shorter one.
+- **A record could be cited for an event it spoke against** (Opus). The same town and another year was enough. A record is now offered as the source of an event only when the date or the place agrees and the other does not differ.
+- **A christening of the tree was not seen** (Opus). A GEDCOM file keeps a baptism as a christening more often than not; the window said "your tree has none" and offered to make a second event. A baptism is now set beside a christening too, and written into it. A record whose event is called a christening is read as a baptism.
+- **"More exact" for a date that is only closer** (both). "About 12 March 1850" beside "1850" names closer days and is less sure of them; it has its own words now. Two dates that share some days, as a year in two calendars does, read "They overlap in part" where they read "They differ".
+- **A long place was compared whole and written cut** (Opus). It is cut to the length the tree keeps before it is compared, so that what is shown is what is written.
+- **A second link to one record** (Opus), where the person's page already had two citations of one address. An event that cites the address is taken as cited.
+- **"Taken over" after a press that only cited** (Opus). The notice says what was done.
+- **Turned down:** the list is not put right when a take is undone (Opus). The search window is modal: Undo cannot be reached until it is closed, and it starts empty when opened again.
+
+Tests: unit tests went from 1101 to 1185, end-to-end tests from 39 to 40.
+
+Not done:
+
+- **Places are compared by their words.** "VT" and "Vermont" are two words, and "St." and "Saint" two towns. The window then says less than a reader sees, and offers no citing by the place alone. It needs the gazetteer.
+- **The score of part 4.1 still takes two towns of one name for the same place.** It gives a few points for it; the window of this part no longer says so.
+- **A cremation of the tree is not set beside a burial.** They are two events, and a record of a burial makes a burial.
+- **A second event of a type cannot be added** where the tree has one already; the record's value replaces the tree's or is left.
+- **Names, the sex, and marriages.** A marriage needs the family and the other partner.
+- **A source that bars keeping its results** has no test of its own here: none of the sources of people does.
 
 ### Phase 3 breakdown
 
