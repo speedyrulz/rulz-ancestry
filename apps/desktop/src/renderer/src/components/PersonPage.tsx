@@ -25,6 +25,7 @@ import {
 } from '../format';
 import { CitationEditDialog, CitationText, FactSourcesDialog, sourceTitle } from './citations';
 import { LifeSection } from './life';
+import { RecordRunDialog } from './recordrun';
 import { RecordSearchDialog } from './records';
 import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
@@ -56,6 +57,7 @@ type Open =
   | { kind: 'child'; familyId?: string; surname: string }
   | { kind: 'relationship' }
   | { kind: 'records' }
+  | { kind: 'record-run' }
   | { kind: 'merge' }
   | { kind: 'delete' }
   | { kind: 'note' }
@@ -383,6 +385,14 @@ export function PersonPageView({
             data-testid="open-records"
           >
             Search records
+          </button>
+          <button
+            type="button"
+            title="Look for this person and their direct ancestors in records outside your tree, in one go"
+            onClick={() => setOpen({ kind: 'record-run' })}
+            data-testid="open-record-run"
+          >
+            Search for ancestors
           </button>
           <button
             type="button"
@@ -934,6 +944,14 @@ export function PersonPageView({
           name={name}
           tree={tree}
           citations={page.citations}
+          onTree={onTree}
+          onClose={() => setOpen(null)}
+        />
+      )}
+      {open?.kind === 'record-run' && (
+        <RecordRunDialog
+          personId={person.id}
+          name={name}
           onTree={onTree}
           onClose={() => setOpen(null)}
         />

@@ -20,6 +20,7 @@ import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from 
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
+import { RecordRun } from './recordrun';
 import { RecordSearchService } from './records';
 import { findMediaFile } from './mediafiles';
 import { TreeSession } from './session';
@@ -304,8 +305,9 @@ function registerIpc(
   session: TreeSession,
   places: GazetteerService,
   records: RecordSearchService,
+  runs: RecordRun,
 ): void {
-  const handlers = createHandlers(session, platform, places, records);
+  const handlers = createHandlers(session, platform, places, records, runs);
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -412,9 +414,22 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
 
-    registerIpc(treeSession, gazetteer, records);
+    const runs = new RecordRun(records);
+    registerIpc(treeSession, gazetteer, records, runs);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
+    // A search belongs to the window that started it. When the page is loaded
+    // again or its process is gone, that window is no more, and nothing tells
+    // the search so from the page: so it is ended here. Nothing is asked for
+    // a window that is not there.
+    const pageGone = (): void => {
+      runs.stop();
+      records.cancel();
+    };
+    mainWindow.webContents.on('did-start-navigation', (details) => {
+      if (details.isMainFrame && !details.isSameDocument) pageGone();
+    });
+    mainWindow.webContents.on('render-process-gone', pageGone);
     mainWindow.on('closed', () => {
       mainWindow = undefined;
     });

@@ -1810,6 +1810,25 @@ ul.media-grid,
   font-size: 0.9rem;
 }
 
+/* The lists of a search for several people: who is asked for, and the services. */
+.run-list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.run-list li {
+  margin-bottom: 0.25rem;
+}
+
+ul.run-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.run-list .hint {
+  margin: 0.1rem 0 0.4rem;
+}
+
 /* What can be done with a result, in a row under what it says. */
 .record-actions {
   display: flex;

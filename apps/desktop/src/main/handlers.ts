@@ -127,8 +127,9 @@ import type {
   TreePlaceInfo,
   TreeState,
 } from '../shared/ipc';
-import { RECORD_INBOX_MAX } from '../shared/ipc';
+import { RECORD_INBOX_MAX, RECORD_RUN_MAX_GENERATIONS } from '../shared/ipc';
 import type { GazetteerService } from './gazetteer';
+import { RecordRun } from './recordrun';
 import type { RecordSearchService } from './records';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
 
@@ -326,6 +327,12 @@ const recordRef = z.strictObject({
   from: recordCopy,
 });
 
+/** Whose ancestors a search for several people is for, and how far back. */
+const recordRunRequest = z.strictObject({
+  personId: id,
+  generations: z.number().int().min(1).max(RECORD_RUN_MAX_GENERATIONS),
+});
+
 const citationTarget = z.strictObject({
   type: z.enum(['person', 'family', 'event', 'name']),
   id,
@@ -417,16 +424,22 @@ export function createHandlers(
   platform: Platform,
   gazetteer: GazetteerService,
   records: RecordSearchService,
+  /** The search for several people. Handed in by tests that set its pace. */
+  runs: RecordRun = new RecordRun(records),
 ): ApiHandlers {
+  // What was found for one tree is not kept for the next, however the tree is
+  // left; and a search for several people ends with its tree.
+  session.whenTreeCloses(() => {
+    runs.clear();
+    records.reset();
+  });
+
   /**
    * The link for a gazetteer entry the page names by its number. The page
    * sends the number only; the name and the coordinates are read here. An
    * entry that is not there (the gazetteer was removed meanwhile) gives no
    * link, and the place is saved as typed.
    */
-  // What was found for one tree is not kept for the next, however the tree is left.
-  session.whenTreeCloses(() => records.reset());
-
   const placeLinkOf = (id: number | undefined): PlaceLink | undefined => {
     const place = id === undefined ? null : gazetteer.get(id);
     return place === null
@@ -803,6 +816,38 @@ export function createHandlers(
     removeRecordSourceKey: define<'removeRecordSourceKey'>(z.tuple([siteId]), (sourceId) =>
       records.removeKey(sourceId),
     ),
+
+    // A search for several people. The page says whose ancestors and how far
+    // back, and which sources; who is asked for, and what is sent for each, is
+    // worked out here from the tree, for the plan and again for the start.
+    planRecordRun: define<'planRecordRun'>(z.tuple([recordRunRequest]), (request) =>
+      runs.plan(session.tree, request),
+    ),
+
+    startRecordRun: define<'startRecordRun'>(
+      z.tuple([
+        recordRunRequest.extend({
+          sourceIds: z.array(siteId).min(1).max(10),
+          stamp: z.string().regex(/^[0-9a-f]{64}$/),
+        }),
+      ]),
+      (request) => {
+        const tree = session.tree;
+        return runs.start(tree, request, () => session.holds(tree));
+      },
+    ),
+
+    getRecordRun: define<'getRecordRun'>(
+      z.tuple([
+        z.strictObject({
+          runId: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+          since: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        }),
+      ]),
+      (request) => runs.update(request),
+    ),
+
+    stopRecordRun: define<'stopRecordRun'>(none, () => runs.stop()),
 
     openRecordLink: define<'openRecordLink'>(
       z.tuple([z.strictObject({ personId: id, linkId: siteId, query: personQuery })]),

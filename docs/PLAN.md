@@ -742,9 +742,9 @@ The parts of Phase 4 are numbered 4.1 to 4.4, because "4b" in the table above is
 | 4.1  | A score for how well a search result fits the person of the tree, shown in the search window, and measured on a labelled set of made-up cases        | **Done 2026-11-14** |
 | 4.2  | A view that sets a result beside the person, and takes facts of the result over into the tree, each with its citation                                | **Done 2026-11-14** |
 | 4.3  | An inbox: results kept to look at later, and results turned down that do not come back                                                               | **Done 2026-11-14** |
-| 4.4  | A search for several people in one go, started by the user: direct ancestors first, within every source's limits, with a count of what will be asked | Needs a decision    |
+| 4.4  | A search for several people in one go, started by the user: direct ancestors first, within every source's limits, with a count of what will be asked | **Done 2026-11-14** |
 
-Part 4.4 is where the plan and a rule of Phase 3 pull apart. The plan has jobs in the background that ask the sources for each person. The rule is that the app asks nothing of the internet unless the user presses a button for it. Three views were asked for on the split (the primary, an Opus helper and a Codex helper), and they agree on a way to keep the rule: one press starts a run that is bounded and can be seen and stopped, names the sources and how many requests it will send, looks again at each person just before each request, and never starts by itself. Whether one press may cover many people is for the project owner to decide, and so is which sources such a run may ask: the Library of Congress shuts a client out for an hour, and the National Archives count every request against the user's own key. Part 4.3 had a decision of its own: until then results were kept in memory only, and some sources' terms bar keeping what they return. The project owner decided on 2026-11-14 that results may be stored on disk; the outcome is below.
+Part 4.4 is where the plan and a rule of Phase 3 pull apart. The plan has jobs in the background that ask the sources for each person. The rule is that the app asks nothing of the internet unless the user presses a button for it. Three views were asked for on the split (the primary, an Opus helper and a Codex helper), and they agree on a way to keep the rule: one press starts a run that is bounded and can be seen and stopped, names the sources and how many requests it will send, looks again at each person just before each request, and never starts by itself. Whether one press may cover many people was for the project owner to decide, and so was which sources such a run may ask: the Library of Congress shuts a client out for an hour, and the National Archives count every request against the user's own key. The project owner decided both on 2026-11-14: one press may cover a person and their direct ancestors, and such a run asks WikiTree and Open Archives only; the outcome of part 4.4 is below. Part 4.3 had a decision of its own: until then results were kept in memory only, and some sources' terms bar keeping what they return. The project owner decided on 2026-11-14 that results may be stored on disk; the outcome is below.
 
 ### Phase 4.1 outcome: how well a result fits (2026-11-14)
 
@@ -887,11 +887,62 @@ Tests: unit tests went from 1185 to 1217, end-to-end tests from 40 to 41.
 Not done:
 
 - **A kept result is not read again from its source.** It says what the source said on the day it was kept. Reading one record again by its key needs a call each connector does not have yet.
-- **Nothing puts a result into the inbox but the user.** A search for several people in one go is part 4.4, and needs the owner's decision.
+- **Nothing puts a result into the inbox but the user.** The search for several people in one go of part 4.4 does not either: what it finds is kept only by a press for that result.
 - **Turning down is for one person,** not for the whole tree, and there is no way to turn down or remove several at once.
 - **The inbox is not sorted by fit,** and has no search of its own.
 - **A person's page does not say how many results are kept for them.** The inbox can be narrowed to the person whose page is open.
 - **Whether a source's terms allow keeping a record for good** was read from each source's terms when its connector was written, as a yes or no (`mayStoreText`). The manifests also carry how long an answer is cached (`cacheTtlHours`), which is about freshness; its comment in `manifest.ts` reads as if it were a limit on keeping, and should be reworded or settled per source.
+
+### Phase 4.4 outcome: a search for several people in one go (2026-11-14)
+
+With this part Phase 4 is complete, except for the AI assistant, which is "4b" in the table of phases.
+
+Delivered:
+
+- **A button "Search for ancestors" on a person's page.** It opens a window that first lists who would be asked for: the person and their direct ancestors, the nearest first, each with the name and the years that would be sent. Below it stands who is left out and why: a person who may be living, one without a given name or a surname, one without a year of birth or death.
+- **The user chooses how far back** (the parents up to five generations; three to begin with) **and which services are asked.** WikiTree is ticked to begin with and Open Archives is not. The window says how many requests the press sends at most, to which service, and about how long it takes. Nothing is sent before "Start" is pressed.
+- **The run:** one request for each person at each ticked service, for the first 20 results. The window shows how far each service is, and "Stop" ends the run. Closing the window ends it too.
+- **The results stand person by person,** with the labels of part 4.1. A person with a result that fits well or may fit is unfolded; the others are one press away. Each result has the buttons of the search for one person: set beside the person, attach as a source, keep for later, not this person.
+- **The run is in the main process** (`apps/desktop/src/main/recordrun.ts`), and the page asks twice a second how it stands. Every question goes through one new entry of the search service (`searchOnce` in `records.ts`), where the rules of a search are kept.
+
+Decided while building:
+
+- **The project owner decided that one press may ask for several people,** for a person and their direct ancestors only, five generations at most: 63 people, and 126 requests when both services are ticked.
+- **WikiTree and Open Archives only.** They keep people and records of people, so a result can be held against a person of the tree. The others stay with the search for one person: a text gets no label, the Library of Congress shuts a client out for an hour, the terms of the Internet Archive have not been read, the National Archives count each request against the user's own key, and Wikidata keeps people of some note only. The main process refuses any other source for a run, whatever the page asks.
+- **The notice is at version 5 and is shown again.** One press now sends the names and years of several people; the notice says so, and that the list is shown first.
+- **Nothing of a run is written to disk.** What it found is in memory until its window closes. A result reaches the tree as after any search, by a press for that result, and each such press is one step and one Undo.
+- **A run starts from the list the user saw.** The list has a stamp made from who is asked for and what is sent for each. The start is refused when the tree no longer gives the same stamp, and the window shows the list as it is now.
+- **Each person is looked at again just before their request is sent:** whether the notice still holds, whether they are still in the tree, whether they may now be living, and whether their name and years are still those the list showed. If not, nothing is sent for them and the window says why.
+- **Slower than the services allow.** One line of questions for each service, one person after the other, and at least a second between two requests to one service. WikiTree's published limit is 200 requests a minute and Open Archives' is 4 a second.
+- **Nothing is asked twice.** A request that failed is not sent again in that run. A service that answers "too many requests", or does not answer twice in a row, is asked no more in that run, and the window says until when it asked to be left alone. When the internet cannot be reached the run ends.
+- **A run ends with what it belongs to:** "Stop", the window closing, another run starting, the tree closing, a backup being put in the tree's place, the page being loaded again, and the page's process ending. An answer that comes after the end is dropped.
+- **A result is now remembered for the person it was found for.** Until this part the main process remembered a result by its source and key alone, so a record found for two people belonged to the one it was found for last. A run finds the same record for a father and a son who share a name; each can now keep or attach it. This changes the search for one person in one way: a result shown for one person is still theirs after the same record was shown for another. At most 5,000 results are remembered, and a full run brings 2,520.
+- **Someone who stands twice among the ancestors is asked for once.**
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code. Neither found a request sent before the notice or for a person who may be living, a request to a source a run may not ask, a second request for one person at one service, or a write into the tree by a run.
+
+- **The reason was lost when the last look refused a person** (both). The HTTP client reports whatever that look throws as a request given up, so a person who was renamed, deleted or marked as living while their request waited its turn was shown as "not asked" with no reason. Nothing was sent for them either way. The search service now keeps what the look found and reports it. The test of the last look had made its changes one step too early to reach this path; a new one makes them while the request waits.
+- **Loading the page again left the run going with no window** (Opus). The window ends its run when it closes, and a page that is loaded again (Ctrl+R in Electron's own menu) closes nothing in its own eyes. The main process now ends the run, and a search for one person that is under way, when the page starts to load again or its process is gone.
+- **Putting a backup in the tree's place did not end a run or clear what was found** (both). Restoring replaces the open tree without closing it in the way that tells the search. A run then ended at its next step, but an answer on its way could still be remembered and offered for the tree that took its place. Restoring now tells the search as closing does. The search for one person had the same gap since Phase 3.
+- **An older answer could be shown after a newer one** (both). The regular question and the one after "Stop" can be under way together. Whichever came last was shown, so a stopped run could read "Searching" for half a second, and a result the user had just kept could lose its label on screen. The window now leaves aside an answer older than what it has.
+- **A refused start could leave the window at "Loading"** (Codex), when the refusal said the notice is not agreed to and the window had not loaded what the notice says. It now reads both again. The app has no way to take an agreement back, so this needed a newer wording from another build.
+- **A test that proved less than it said** (Opus). The test that a run ends when another starts looked only at whether the first run could still be asked about. It now also checks that the answer to the first run, which comes after its end, is nobody's result.
+- **Turned down:** a list can be started from twice, and the stamp can be worked out without asking for the list (Codex). The stamp ties a start to the tree as it is, and is no secret. Starting again is what the user does by opening the window again, and a page that could call the start twice could as well call the search for one person as often. The limits of each service are kept by the HTTP client under both.
+- **Turned down:** the limit of 5,000 remembered results could drop one a window still shows (Codex). A full run brings 2,520, they are the newest, and its window is modal, so nothing else is remembered while it is open. A result that was dropped could not be kept or attached, and nothing else.
+- **Turned down:** a service that is left because the app's own count for it is used up is said to have asked to be left alone (Opus). The message is the client's and differs in that case: it says the service has been asked as often as it allows for now.
+
+Tests: unit tests went from 1217 to 1230, end-to-end tests from 41 to 44.
+
+Not done:
+
+- **The run was not tried against WikiTree or Open Archives themselves.** The tests answer in their place. The terms of both were not read again for this part; the limits are those recorded when their connectors were written.
+- **No source of texts, and not Wikidata.** They stay with the search for one person.
+- **Direct ancestors only.** No descendants, no brothers and sisters, and no way to untick one person of the list.
+- **The first 20 results of each service, and no "More results"** in this window. The search for one person has it.
+- **The app does not remember who was asked for.** A second run for the same people sends the same requests again, unless the answers are still in memory.
+- **No "keep all that fit well".** Each result is kept or attached by its own press.
+- **A new run needs the window to be opened again.**
+- **The window was checked by eye in two screenshots,** in light colours and at one window size.
 
 ### Phase 3 breakdown
 

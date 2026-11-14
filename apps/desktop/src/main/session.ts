@@ -135,6 +135,11 @@ export class TreeSession {
     return this.#tree;
   }
 
+  /** True while `tree` is the tree that is open, and not one that was closed or replaced since. */
+  holds(tree: Tree): boolean {
+    return this.#tree === tree;
+  }
+
   state(): TreeState {
     const tree = this.tree;
     const info = tree.info();
@@ -365,6 +370,9 @@ export class TreeSession {
     const dir = this.#treeDir();
     // If this fails nothing has been touched yet, and the restore is abandoned.
     backupTree(tree, { now: this.#now() });
+    // The tree that takes its place is another one: what was found or is
+    // under way for this one ends with it, as when it is closed.
+    this.#tellClosing();
     tree.close();
     this.#tree = null;
     try {
@@ -420,16 +428,14 @@ export class TreeSession {
 
   /**
    * Has `listener` called whenever the open tree is closed: by the user, by
-   * opening another tree, or when the app quits. It is called before the
-   * tree's file is closed.
+   * opening another tree, by putting a backup in its place, or when the app
+   * quits. It is called before the tree's file is closed.
    */
   whenTreeCloses(listener: () => void): void {
     this.#closeListeners.push(listener);
   }
 
-  #closeCurrent(): { backupError: string | null } {
-    const tree = this.#tree;
-    if (!tree) return { backupError: null };
+  #tellClosing(): void {
     for (const listener of this.#closeListeners) {
       try {
         listener();
@@ -437,6 +443,12 @@ export class TreeSession {
         // A listener that fails must not keep the tree from closing.
       }
     }
+  }
+
+  #closeCurrent(): { backupError: string | null } {
+    const tree = this.#tree;
+    if (!tree) return { backupError: null };
+    this.#tellClosing();
     let backupError: string | null = null;
     try {
       if (tree.dir !== null) backupTree(tree, { now: this.#now() });

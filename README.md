@@ -26,10 +26,12 @@ click. It searches the newspapers of the Library of Congress, the books of
 the Internet Archive and the catalog of the US National Archives for words,
 such as the person's name; the National Archives need a free key of your own. It opens a search at
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
-a source when you paste its address. Phase 4 has started: each result that is a
+a source when you paste its address. Phase 4 is complete as well: each result that is a
 person or a record of a person says how well it fits the person of your tree, and
 can be set beside that person, to take over the dates and places you tick. A
-result can be kept in an inbox to look at later, or turned down for a person. See
+result can be kept in an inbox to look at later, or turned down for a person.
+And one press searches for a person and their direct ancestors, after listing
+who is asked for. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -224,10 +226,32 @@ Searching for records:
     the inbox says which day. The source may say something else by now.
   - Of a result of the US National Archives only the identifier and the
     address are kept, because their terms do not allow keeping more.
-- **What is sent** is what the form shows, when you press "Search". Nothing
-  else of your tree, nothing while you type, nothing in the background. The
-  app says before the first search which service is sent what, and asks you
-  to agree; it asks again when there is more to say.
+- **Search for ancestors.** "Search for ancestors" on a person's page asks
+  for that person and their direct ancestors with one press.
+  - First it lists who would be asked for, the nearest first, with the name
+    and the years that would be sent for each, and who is left out: anyone
+    who may be living, anyone without a given name or a surname, anyone
+    without a year of birth or death. You choose how far back it goes, from
+    the parents to five generations, and it says how many requests the press
+    sends at most. Nothing is sent before you press "Start".
+  - It asks [WikiTree](https://www.wikitree.com/) and
+    [Open Archives](https://www.openarchieven.nl/) only, and only those you
+    tick. WikiTree is ticked to begin with.
+  - Each person is asked for once at each service, for the first 20 results,
+    with at least a second between two requests to one service. Nothing is
+    asked a second time. A service that says it is asked too often, or does
+    not answer twice in a row, is left alone for the rest of that search.
+  - "Stop" ends it, and so does closing its window, closing the tree or
+    quitting the app. It never starts by itself.
+  - The results stand person by person, with the same labels and buttons as
+    after a search for one person. Nothing is written into your tree until
+    you attach or keep a result, one at a time.
+  - If you edit a person while the search runs, nothing is sent for them, and
+    the window says so.
+- **What is sent** is what the form or the list shows, when you press "Search"
+  or "Start". Nothing else of your tree, nothing while you type, nothing in
+  the background. The app says before the first search which service is sent
+  what, and asks you to agree; it asks again when there is more to say.
 - **Newspapers and books** have a form of their own, for words. It starts with
   the person's name as a phrase, printed between the year of their birth and
   the year after their death, and you can add a state.

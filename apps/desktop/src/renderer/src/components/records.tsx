@@ -118,7 +118,7 @@ function yearOf(text: string): number | null | undefined {
   return /^\d{1,4}$/.test(typed) && Number(typed) >= 1 ? Number(typed) : undefined;
 }
 
-function timeOf(at: number): string {
+export function timeOf(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -186,7 +186,92 @@ export function RecordLines({ record }: { record: ExternalRecord }) {
   );
 }
 
-interface ResultProps {
+interface RecordNoticeProps {
+  /** Every source the app can ask, with what each is sent. */
+  sources: RecordSourceInfo[];
+  /** The sites a search is opened at in the browser. */
+  links: RecordLinkInfo[];
+  onAgree: () => void;
+  onClose: () => void;
+}
+
+/**
+ * What a search sends, to whom and when: shown before the first search, and
+ * again when it has more to say. The search for one person and the search
+ * for several people show the same notice, and one agreement covers both.
+ */
+export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeProps) {
+  return (
+    <div data-testid="record-search-notice">
+      <p className="dialog-text">
+        A search asks other services on the internet. Before the first one:
+      </p>
+      <ul>
+        <li>
+          <strong>What is sent, and to whom:</strong> what the search forms show, and nothing else
+          of your tree. You can change or empty each field before you search.
+          <ul data-testid="record-notice-sources">
+            {sources.map((source) => (
+              <li key={source.id}>
+                {source.name}: {source.asks}.
+              </li>
+            ))}
+          </ul>
+        </li>
+        <li>
+          <strong>What you type is sent as you type it.</strong> The forms start with the name and
+          the years of this person. Words you add, such as another name or a place, go to the
+          service too.
+        </li>
+        <li data-testid="record-notice-several">
+          <strong>Several people in one go:</strong> &quot;Search for ancestors&quot; asks for a
+          person and their direct ancestors with one press. Before that press it lists everyone it
+          will ask for, with the name and the years that are sent for each as your tree has them,
+          and the services it will ask. It asks WikiTree and Open Archives only, and only those you
+          tick.
+        </li>
+        <li>
+          <strong>What a service sees besides:</strong> like any website, the internet address of
+          your PC. Each service has its own privacy rules.
+        </li>
+        <li>
+          <strong>When:</strong> only when you press &quot;Search&quot;, or &quot;Start&quot; in a
+          search for ancestors. Nothing is sent while you type, and nothing in the background: a
+          search for ancestors ends when you close its window.
+        </li>
+        <li>
+          <strong>Other sites:</strong> {links.map((link) => link.name).join(', ')}. The app does
+          not ask these itself. A button opens a search there in your own browser, and the name and
+          the years of the search for people are part of the address it opens. That site, and your
+          browser&apos;s history, then hold them; if you are signed in there, the site knows who
+          searched.
+        </li>
+        <li>
+          <strong>Living people:</strong> the app does not search for a person who may be living,
+          and it shows no profiles of living people.
+        </li>
+        <li>
+          <strong>What is kept:</strong> results stay in the app&apos;s memory until the tree or the
+          app closes. Nothing is added to your tree unless you attach a result, keep it for later or
+          turn it down; what you keep or turn down is saved in the tree&apos;s file, and goes where
+          the tree&apos;s folder goes. The app notes when it asked each service, and until when a
+          service asked to be left alone, so that it does not ask too often; it does not note what
+          was asked.
+        </li>
+      </ul>
+      <div className="dialog-actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button type="button" className="primary" onClick={onAgree} data-testid="record-agree">
+          I understand
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export interface ResultProps {
   record: ExternalRecord;
   /** How well the result fits the person; undefined for a text, which is not held against them. */
   fit: RecordFitInfo | undefined;
@@ -202,7 +287,8 @@ interface ResultProps {
   onAllow: () => void;
 }
 
-function Result({
+/** One result of a search, with what can be done with it. */
+export function Result({
   record,
   fit,
   mark,
@@ -855,7 +941,6 @@ export function RecordSearchDialog({
 
   const personSources = setup?.sources.filter((source) => source.searches === 'person') ?? [];
   const textSources = setup?.sources.filter((source) => source.searches === 'text') ?? [];
-  const linkNames = setup?.links.map((link) => link.name).join(', ') ?? '';
   const set = (field: keyof Form) => (value: string) =>
     setForm((now) => ({ ...now, [field]: value }));
   const setText = (field: 'words' | 'fromYear' | 'toYear' | 'state') => (value: string) =>
@@ -884,63 +969,12 @@ export function RecordSearchDialog({
       )}
 
       {setup !== null && setup.allowed && !setup.agreed && (
-        <div data-testid="record-search-notice">
-          <p className="dialog-text">
-            A search asks other services on the internet. Before the first one:
-          </p>
-          <ul>
-            <li>
-              <strong>What is sent, and to whom:</strong> what the search forms show, and nothing
-              else of your tree. You can change or empty each field before you search.
-              <ul data-testid="record-notice-sources">
-                {setup.sources.map((source) => (
-                  <li key={source.id}>
-                    {source.name}: {source.asks}.
-                  </li>
-                ))}
-              </ul>
-            </li>
-            <li>
-              <strong>What you type is sent as you type it.</strong> The forms start with the name
-              and the years of this person. Words you add, such as another name or a place, go to
-              the service too.
-            </li>
-            <li>
-              <strong>What a service sees besides:</strong> like any website, the internet address
-              of your PC. Each service has its own privacy rules.
-            </li>
-            <li>
-              <strong>When:</strong> only when you press &quot;Search&quot;. Nothing is sent while
-              you type, and nothing in the background.
-            </li>
-            <li>
-              <strong>Other sites:</strong> {linkNames}. The app does not ask these itself. A button
-              opens a search there in your own browser, and the name and the years of the search for
-              people are part of the address it opens. That site, and your browser&apos;s history,
-              then hold them; if you are signed in there, the site knows who searched.
-            </li>
-            <li>
-              <strong>Living people:</strong> the app does not search for a person who may be
-              living, and it shows no profiles of living people.
-            </li>
-            <li>
-              <strong>What is kept:</strong> results stay in the app&apos;s memory until the tree or
-              the app closes. Nothing is added to your tree unless you attach a result, keep it for
-              later or turn it down; what you keep or turn down is saved in the tree&apos;s file,
-              and goes where the tree&apos;s folder goes. The app notes when it asked each service,
-              and until when a service asked to be left alone, so that it does not ask too often; it
-              does not note what was asked.
-            </li>
-          </ul>
-          <div className="dialog-actions">
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="primary" onClick={agree} data-testid="record-agree">
-              I understand
-            </button>
-          </div>
-        </div>
+        <RecordNotice
+          sources={setup.sources}
+          links={setup.links}
+          onAgree={agree}
+          onClose={onClose}
+        />
       )}
 
       {setup !== null && setup.allowed && setup.agreed && (

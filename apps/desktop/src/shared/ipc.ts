@@ -642,7 +642,7 @@ export interface RecordSearchProblem {
     | 'empty' /* the query names nobody, or cannot be sent as it is */
     | 'source' /* the source is not known */
     | 'record' /* the record is not one the search showed for this person, or the tree keeps for them */
-    | 'changed' /* the tree or the record is no longer as the comparison showed it */
+    | 'changed' /* the tree or the record is no longer as the comparison, or the plan of a run, showed it */
     | 'choice' /* what was chosen to take over is not on offer */
     | 'paused' /* the source must be left alone until `retryAt` */
     | 'offline' /* the source could not be reached */
@@ -905,6 +905,113 @@ export interface RecordLinkRequest {
 }
 
 export type RecordLinkResult = { ok: true } | { ok: false; problem: RecordSearchProblem };
+
+/** How many generations of ancestors a search for several people reaches at most. */
+export const RECORD_RUN_MAX_GENERATIONS = 5;
+
+/** How many generations it starts with. */
+export const RECORD_RUN_GENERATIONS = 3;
+
+/** Whose ancestors to search for, and how far back. */
+export interface RecordRunPlanRequest {
+  /** The person the run starts from. They are searched for too. */
+  personId: string;
+  /** Generations of ancestors: 1 for the parents, up to {@link RECORD_RUN_MAX_GENERATIONS}. */
+  generations: number;
+}
+
+/** One person of a search for several people, as the list before the run shows them. */
+export interface RecordRunPerson {
+  personId: string;
+  /** The name as the tree has it; empty when the person has none. */
+  name: string;
+  /** 0 for the person the run starts from, 1 for their parents, and so on. */
+  generation: number;
+  /** What is sent for them, to each source that is ticked. Null for someone who is left out. */
+  query: PersonQuery | null;
+  /**
+   * Why nothing is sent for them; null when they are searched for.
+   * - "living": they may be living;
+   * - "name": the tree has no given name or no last name for them;
+   * - "years": the tree has neither a year of birth nor a year of death, and
+   *   a name alone fits too many people to judge what comes back.
+   */
+  leftOut: 'living' | 'name' | 'years' | null;
+}
+
+/**
+ * What a search for several people would ask, worked out by the main process
+ * from the tree. Nothing is sent for it. The window shows it, and a run
+ * starts only from a plan that is still true.
+ */
+export interface RecordRunPlan {
+  /** Whether the user has agreed to the notice that says what a search sends. */
+  agreed: boolean;
+  /** The person the run starts from, and then their ancestors, the nearest first. Each person once. */
+  people: RecordRunPerson[];
+  /** The sources a run may ask. A run asks those the user ticks. */
+  sources: RecordSourceInfo[];
+  /** The sources that are ticked when the window opens. */
+  ticked: string[];
+  /** The least time between two requests of a run to one source, in seconds. */
+  gapSeconds: number;
+  /** Names what the plan shows. A request to start carries it, and is refused when the tree has changed since. */
+  stamp: string;
+}
+
+export interface RecordRunStartRequest extends RecordRunPlanRequest {
+  /** The sources to ask, of those the plan offers. */
+  sourceIds: string[];
+  /** The stamp of the plan the user saw. */
+  stamp: string;
+}
+
+/** Where one question of a run stands: one person at one source. */
+export interface RecordRunItem {
+  personId: string;
+  sourceId: string;
+  /**
+   * - "waiting": its turn has not come;
+   * - "asking": the source is being asked now;
+   * - "done": the source answered, and `result` holds the answer;
+   * - "skipped": nothing was sent, since the person is no longer as the plan showed them;
+   * - "failed": the source was asked and did not answer in a way the app can read;
+   * - "not-asked": the run ended, or left the source, before its turn came.
+   */
+  state: 'waiting' | 'asking' | 'done' | 'skipped' | 'failed' | 'not-asked';
+  /** Why it was skipped, failed or not asked, in words; empty otherwise. */
+  message: string;
+  /** The answer of the source; null unless the state is "done". */
+  result: Extract<RecordSearchResult, { ok: true }> | null;
+}
+
+/** A search for several people as it stands, with the questions that changed since the page last asked. */
+export interface RecordRunUpdate {
+  runId: number;
+  /** "running" while it asks; "finished" when it came to its end; "stopped" when it was ended early. */
+  status: 'running' | 'finished' | 'stopped';
+  /** Why the whole run ended early, in words; empty when it did not, or when the user stopped it. */
+  ended: string;
+  /**
+   * Why the run asks a source no more, by the source's id, and when the
+   * source may be asked again where that is known (Unix milliseconds). A
+   * source that is still asked is not named.
+   */
+  left: Record<string, { message: string; retryAt: number | null }>;
+  /** Goes up with every change. The page hands the last one it saw back, and gets what changed since. */
+  revision: number;
+  /** The questions that changed after the revision the page named; all of them when it named none. */
+  items: RecordRunItem[];
+}
+
+export type RecordRunStartResult =
+  | { ok: true; run: RecordRunUpdate }
+  | {
+      ok: false;
+      problem: RecordSearchProblem;
+      /** The plan as it stands now, where the tree changed since the one the user saw. */
+      plan: RecordRunPlan | null;
+    };
 
 /** One place of the open tree: a text that events give as their place. */
 export interface TreePlaceInfo {
@@ -1248,6 +1355,24 @@ export interface RulzApi {
   setRecordSourceKey(request: RecordSourceKeyRequest): Promise<RecordSourceKeyResult>;
   /** Removes the saved key of a source. */
   removeRecordSourceKey(sourceId: string): Promise<RecordSourceKeyResult>;
+  /**
+   * What a search for a person and their ancestors would ask: who, with the
+   * name and the years that would be sent for each, who is left out and why,
+   * and the sources. Sends nothing. Null when the person is gone.
+   */
+  planRecordRun(request: RecordRunPlanRequest): Promise<RecordRunPlan | null>;
+  /**
+   * Starts a search for several people: one question for each person of the
+   * plan at each source that is ticked. It goes on after this returns; ask
+   * `getRecordRun` to follow it. Refused before the notice is agreed to, and
+   * when the tree is no longer as the plan showed it. Nothing of what is found
+   * is written into the tree.
+   */
+  startRecordRun(request: RecordRunStartRequest): Promise<RecordRunStartResult>;
+  /** The run as it stands, with what changed after `since`. Null when there is no such run. */
+  getRecordRun(request: { runId: number; since: number }): Promise<RecordRunUpdate | null>;
+  /** Ends the run that is under way: nothing more is sent, and an answer on its way is dropped. */
+  stopRecordRun(): Promise<void>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -1421,6 +1546,10 @@ export const API_METHODS = [
   'openRecordLink',
   'setRecordSourceKey',
   'removeRecordSourceKey',
+  'planRecordRun',
+  'startRecordRun',
+  'getRecordRun',
+  'stopRecordRun',
   'getChart',
   'getRelationship',
   'findDuplicates',

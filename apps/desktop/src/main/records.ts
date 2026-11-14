@@ -139,6 +139,11 @@ import { keptFormOf, keptRecordOf, madeAddress, markTitle, whenOf } from './kept
  * the copy the tree holds. The page still names it by its key only, and says
  * which copy it means; that copy is read from the tree and checked again
  * here, since a tree's file can come from anywhere.
+ *
+ * A search for several people (`recordrun.ts`) asks through `searchOnce`, one
+ * person at one source at a time. The three rules hold for each of its
+ * questions as they do for a search of one person, and it is sent the name
+ * and the years the tree has, which the list before the run showed.
  */
 
 /** The setting that holds the day the user agreed to the notice. */
@@ -156,8 +161,10 @@ export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion'
  * 2: also words and the years of printing, to the Library of Congress and the Internet Archive.
  * 3: the name and the years also to Open Archives, and the name to Wikidata.
  * 4: words, and the user's own key, to the US National Archives.
+ * 5: one press can send the names and the years of several people: a person
+ *    and their ancestors, as a list shows them before the press.
  */
-export const RECORD_SEARCH_NOTICE_VERSION = 4;
+export const RECORD_SEARCH_NOTICE_VERSION = 5;
 
 /** The setting that holds the user's key for a source, as Windows encrypted it. */
 export const recordSearchKeySetting = (sourceId: string) => `recordSearch.key.${sourceId}`;
@@ -182,8 +189,49 @@ export const recordSearchHostSetting = (host: string) => `recordSearch.host.${ho
 /** How many results are asked for at a time. */
 export const RECORD_SEARCH_PAGE = 20;
 
-/** How many results are remembered for attaching. The oldest go first. */
-const SHOWN_LIMIT = 2000;
+/**
+ * How many results are remembered for attaching. The oldest go first. A
+ * search for several people brings 2,520 at most (63 people, two sources, 20
+ * results each), and all of them must stay at hand while its window is open.
+ */
+const SHOWN_LIMIT = 5000;
+
+/**
+ * The sources a search for several people may ask, as the project owner
+ * decided on 2026-11-14: those that keep people or records of people, whose
+ * results can be held against a person of the tree. The others are left to
+ * the search for one person: a text gets no label, the Library of Congress
+ * shuts a client out for an hour, the terms of the Internet Archive have not
+ * been read, the National Archives count each question against the user's own
+ * key, and Wikidata keeps people of some note only.
+ */
+export const RECORD_RUN_SOURCE_IDS: readonly string[] = [
+  wikitreeManifest.id,
+  openArchivesManifest.id,
+];
+
+/** A question that may not be sent after all, as the last look before sending found. */
+class Refusal extends Error {
+  readonly problem: RecordSearchProblem;
+
+  constructor(problem: RecordSearchProblem) {
+    super(problem.message);
+    this.name = 'Refusal';
+    this.problem = problem;
+  }
+}
+
+const GIVEN_UP: RecordSearchProblem = {
+  kind: 'cancelled',
+  message: 'The search was given up.',
+  retryAt: null,
+};
+
+const NOT_AGREED: RecordSearchProblem = {
+  kind: 'notice',
+  message: 'Nothing is sent before you have agreed to what a search sends.',
+  retryAt: null,
+};
 
 /** What is needed to cite a result; see `RecordSearchService.attachment`. */
 export type RecordAttachment =
@@ -260,8 +308,15 @@ export class RecordSearchService {
   /** The search that is under way at each source. A new one gives the old one up. */
   readonly #underWay = new Map<string, AbortController>();
   readonly #links: readonly DeepLinkSource[] = deepLinkSources;
-  /** The results shown since the tree was opened, each with the person it was found for. */
-  readonly #shown = new Map<string, { personId: string; record: ExternalRecord; readAt: number }>();
+  /**
+   * The results shown since the tree was opened, by the person they were
+   * found for, their source and their key. One record can be found for two
+   * people, a father and a son of one name, and is then a result of each.
+   */
+  readonly #shown = new Map<
+    string,
+    { personId: string; sourceId: string; record: ExternalRecord; readAt: number }
+  >();
   /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
   #closed = 0;
   readonly #secrets: SecretStore | undefined;
@@ -555,8 +610,7 @@ export class RecordSearchService {
       const record = mark === null ? null : keptRecordOf(mark, connector);
       if (mark !== null && record !== null) at = { record, readAt: mark.readAt };
     } else if (connector !== undefined) {
-      const shown = this.#shown.get(shownKey(request.sourceId, request.key));
-      if (shown !== undefined && shown.personId === request.personId) at = shown;
+      at = this.#shown.get(shownKey(request.personId, request.sourceId, request.key)) ?? null;
     }
     if (connector === undefined || at === null) {
       return fail(
@@ -887,12 +941,11 @@ export class RecordSearchService {
     const all: Record<string, Record<string, RecordFitInfo>> = {};
     if (getPerson(tree, personId) === null) return all;
     const subject = subjectOf(tree, personId);
-    for (const [key, shown] of this.#shown) {
+    for (const shown of this.#shown.values()) {
       if (shown.personId !== personId) continue;
       const fit = scoreRecord(subject, shown.record);
       if (fit === null) continue;
-      const sourceId = key.slice(0, key.indexOf('\n'));
-      (all[sourceId] ??= {})[shown.record.key] = {
+      (all[shown.sourceId] ??= {})[shown.record.key] = {
         band: fit.band,
         reasons: fit.reasons,
         doubts: fit.doubts,
@@ -947,20 +1000,114 @@ export class RecordSearchService {
       sourceId,
       problem,
     });
+    const gate = this.#gate(tree, request.personId, sourceId, unfit, askOf);
+    if (!gate.ok) return fail(gate.problem);
+
+    this.#underWay.get(sourceId)?.abort();
+    const abort = new AbortController();
+    this.#underWay.set(sourceId, abort);
+    try {
+      return await this.#answer(tree, request, gate.ask, abort.signal, () =>
+        this.#refusal(tree, request.personId) === null ? null : GIVEN_UP,
+      );
+    } catch (error) {
+      return fail(problemOf(error));
+    } finally {
+      if (this.#underWay.get(sourceId) === abort) this.#underWay.delete(sourceId);
+    }
+  }
+
+  /**
+   * One question of a search for several people: one source is asked for one
+   * person, for its first results. The rules of a search hold as for any
+   * other. What is sent is the name and the years the tree has for the person
+   * now, and only while they are those the list before the run showed
+   * (`request.query`): a person who was edited since is not asked for. Only a
+   * source a run may ask is asked (`RECORD_RUN_SOURCE_IDS`).
+   *
+   * It stands beside the search of one person and takes no part in its
+   * bookkeeping: that search gives up the one before it at the same source,
+   * and all of them when its window closes; this one ends by `signal` alone.
+   */
+  async searchOnce(
+    tree: Tree,
+    request: { personId: string; sourceId: string; query: PersonQuery },
+    signal: AbortSignal,
+  ): Promise<RecordSearchResult> {
+    const { personId, sourceId, query } = request;
+    const fail = (problem: RecordSearchProblem): RecordSearchResult => ({
+      ok: false,
+      sourceId,
+      problem,
+    });
+    if (!RECORD_RUN_SOURCE_IDS.includes(sourceId)) {
+      return fail({
+        kind: 'source',
+        message: 'A search for several people does not ask this source.',
+        retryAt: null,
+      });
+    }
+    const gate = this.#gate(
+      tree,
+      personId,
+      sourceId,
+      isEmptyQuery(query) ? 'Give a name to search for.' : null,
+      (connector) => {
+        const ask = connector.searchPersons?.bind(connector);
+        return ask === undefined ? null : (page, options) => ask(query, page, options);
+      },
+    );
+    if (!gate.ok) return fail(gate.problem);
+    /** Why nothing may be sent for the person as the tree has them now. */
+    const look = (): RecordSearchProblem | null => {
+      if (!this.agreed) return NOT_AGREED;
+      return (
+        this.#refusal(tree, personId) ??
+        (sameQuery(queryOf(tree, personId), query)
+          ? null
+          : {
+              kind: 'changed',
+              message:
+                'The name or the years of this person are no longer as the list showed them, so nothing was sent for them.',
+              retryAt: null,
+            })
+      );
+    };
+    const changed = look();
+    if (changed !== null) return fail(changed);
+    if (signal.aborted) return fail(GIVEN_UP);
+    try {
+      return await this.#answer(tree, { personId, sourceId, offset: 0 }, gate.ask, signal, look);
+    } catch (error) {
+      return fail(problemOf(error));
+    }
+  }
+
+  /** The sources a search for several people may ask, in the order they are offered. */
+  runSources(): RecordSourceInfo[] {
+    return this.sources().filter((source) => RECORD_RUN_SOURCE_IDS.includes(source.id));
+  }
+
+  /**
+   * Whether a source may be asked for a person at all: the source and its
+   * search, or why not. `unfit` says why what is asked cannot be sent.
+   */
+  #gate(
+    tree: Tree,
+    personId: string,
+    sourceId: string,
+    unfit: string | null,
+    askOf: (connector: SourceConnector) => Ask | null,
+  ): { ok: true; ask: Ask } | { ok: false; problem: RecordSearchProblem } {
+    const fail = (problem: RecordSearchProblem) => ({ ok: false as const, problem });
     const connector = this.#connectors.find(({ manifest }) => manifest.id === sourceId);
     const ask = connector === undefined ? null : askOf(connector);
     if (connector === undefined || ask === null) {
       return fail({ kind: 'source', message: 'This source is not known.', retryAt: null });
     }
-    if (!this.agreed) {
-      return fail({
-        kind: 'notice',
-        message: 'Nothing is sent before you have agreed to what a search sends.',
-        retryAt: null,
-      });
-    }
+    if (!this.agreed) return fail(NOT_AGREED);
     // Looked at again at each search: the person may have been edited since the form opened.
-    const refusal = this.#refusal(tree, request.personId);
+    const refusal = this.#refusal(tree, personId);
     if (refusal !== null) return fail(refusal);
     if (unfit !== null) return fail({ kind: 'empty', message: unfit, retryAt: null });
     const key = this.#keyState(connector.manifest);
@@ -974,78 +1121,90 @@ export class RecordSearchService {
         retryAt: null,
       });
     }
+    return { ok: true, ask };
+  }
 
-    this.#underWay.get(sourceId)?.abort();
-    const abort = new AbortController();
-    this.#underWay.set(sourceId, abort);
+  /**
+   * Asks a source, and makes of its answer what the page is given: the
+   * results, each held against the person, with what the tree already has of
+   * them. `lastLook` is called when the request's turn has come, and says why
+   * it may no longer be sent. Throws what the client and the connector throw.
+   */
+  async #answer(
+    tree: Tree,
+    request: { personId: string; sourceId: string; offset: number },
+    ask: Ask,
+    signal: AbortSignal,
+    lastLook: () => RecordSearchProblem | null,
+  ): Promise<Extract<RecordSearchResult, { ok: true }>> {
+    const { sourceId } = request;
     const closed = this.#closed;
-    try {
-      const answer = await ask(
-        { offset: request.offset, limit: RECORD_SEARCH_PAGE },
-        {
-          signal: abort.signal,
-          // And once more when the request's turn has come: it can have waited
-          // for that, and the tree can have been edited or closed meanwhile.
-          beforeSend: () => {
-            if (abort.signal.aborted || this.#refusal(tree, request.personId) !== null) {
-              throw new HttpError('cancelled', 'The search was given up.');
-            }
-          },
+    /** What the last look found. Kept here, since the client reports whatever that look throws as a request given up. */
+    const last: { refused: RecordSearchProblem | null } = { refused: null };
+    const answer = await ask(
+      { offset: request.offset, limit: RECORD_SEARCH_PAGE },
+      {
+        signal,
+        // And once more when the request's turn has come: it can have waited
+        // for that, and the tree can have been edited or closed meanwhile.
+        beforeSend: () => {
+          last.refused = signal.aborted || closed !== this.#closed ? GIVEN_UP : lastLook();
+          if (last.refused !== null) throw new Refusal(last.refused);
         },
-      );
-      // The tree closed while the answer was on its way: it is for nobody now.
-      if (closed !== this.#closed) throw new HttpError('cancelled', 'The search was given up.');
-      // Remembered for attaching, with the person they were found for.
-      for (const record of answer.page.items) {
-        const key = shownKey(sourceId, record.key);
-        this.#shown.delete(key);
-        this.#shown.set(key, {
-          personId: request.personId,
-          record,
-          readAt: answer.fetchedAt,
-        });
-      }
-      for (const key of this.#shown.keys()) {
-        if (this.#shown.size <= SHOWN_LIMIT) break;
-        this.#shown.delete(key);
-      }
-      const cited = citedUrls(tree, request.personId);
-      // Each result is held against the person of the tree, as the tree has
-      // them now, whatever was typed into the form. Nothing is sent for it.
-      const subject = subjectOf(tree, request.personId);
-      const fits: Record<string, RecordFitInfo> = {};
-      for (const record of answer.page.items) {
-        const fit = scoreRecord(subject, record);
-        if (fit !== null) {
-          fits[record.key] = { band: fit.band, reasons: fit.reasons, doubts: fit.doubts };
-        }
-      }
-      // What the user kept for this person, and what they turned down for them.
-      const states = recordMarkStates(tree, request.personId, sourceId);
-      const marked = (state: 'kept' | 'declined') =>
-        answer.page.items
-          .filter((record) => states.get(record.key) === state)
-          .map((record) => record.key);
-      return {
-        ok: true,
+      },
+    ).catch((error: unknown) => {
+      throw last.refused === null ? error : new Refusal(last.refused);
+    });
+    // The tree closed while the answer was on its way, or the search was
+    // given up: the answer is for nobody now.
+    if (closed !== this.#closed || signal.aborted) throw new Refusal(GIVEN_UP);
+    // Remembered for attaching, with the person they were found for.
+    for (const record of answer.page.items) {
+      const key = shownKey(request.personId, sourceId, record.key);
+      this.#shown.delete(key);
+      this.#shown.set(key, {
+        personId: request.personId,
         sourceId,
-        fits,
-        marks: { kept: marked('kept'), declined: marked('declined') },
-        attached: answer.page.items
-          .filter((record) => cited.has(record.url))
-          .map((record) => record.key),
-        items: answer.page.items,
-        total: answer.page.total,
-        nextOffset: answer.page.next?.offset ?? null,
-        hidden: answer.page.hidden,
-        fetchedAt: answer.fetchedAt,
-        cached: answer.cached,
-      };
-    } catch (error) {
-      return fail(problemOf(error));
-    } finally {
-      if (this.#underWay.get(sourceId) === abort) this.#underWay.delete(sourceId);
+        record,
+        readAt: answer.fetchedAt,
+      });
     }
+    for (const key of this.#shown.keys()) {
+      if (this.#shown.size <= SHOWN_LIMIT) break;
+      this.#shown.delete(key);
+    }
+    const cited = citedUrls(tree, request.personId);
+    // Each result is held against the person of the tree, as the tree has
+    // them now, whatever was typed into the form. Nothing is sent for it.
+    const subject = subjectOf(tree, request.personId);
+    const fits: Record<string, RecordFitInfo> = {};
+    for (const record of answer.page.items) {
+      const fit = scoreRecord(subject, record);
+      if (fit !== null) {
+        fits[record.key] = { band: fit.band, reasons: fit.reasons, doubts: fit.doubts };
+      }
+    }
+    // What the user kept for this person, and what they turned down for them.
+    const states = recordMarkStates(tree, request.personId, sourceId);
+    const marked = (state: 'kept' | 'declined') =>
+      answer.page.items
+        .filter((record) => states.get(record.key) === state)
+        .map((record) => record.key);
+    return {
+      ok: true,
+      sourceId,
+      fits,
+      marks: { kept: marked('kept'), declined: marked('declined') },
+      attached: answer.page.items
+        .filter((record) => cited.has(record.url))
+        .map((record) => record.key),
+      items: answer.page.items,
+      total: answer.page.total,
+      nextOffset: answer.page.next?.offset ?? null,
+      hidden: answer.page.hidden,
+      fetchedAt: answer.fetchedAt,
+      cached: answer.cached,
+    };
   }
 
   /** Why nothing may be sent for a person; null when a search may be made. */
@@ -1078,8 +1237,17 @@ export class RecordSearchService {
   }
 }
 
-function shownKey(sourceId: string, key: string): string {
-  return `${sourceId}\n${key}`;
+function shownKey(personId: string, sourceId: string, key: string): string {
+  return `${personId}\n${sourceId}\n${key}`;
+}
+
+function sameQuery(a: PersonQuery, b: PersonQuery): boolean {
+  return (
+    a.given === b.given &&
+    a.surname === b.surname &&
+    a.birthYear === b.birthYear &&
+    a.deathYear === b.deathYear
+  );
 }
 
 /**
@@ -1212,7 +1380,7 @@ function subjectOf(tree: Tree, personId: string): MatchSubject {
 }
 
 /** The name and years of a person of the tree, as a search starts with them. */
-function queryOf(tree: Tree, personId: string): PersonQuery {
+export function queryOf(tree: Tree, personId: string): PersonQuery {
   const names = listNames(tree, personId);
   const name = names.find((entry) => entry.isPrimary) ?? names[0];
   const events = listPersonEvents(tree, personId);
@@ -1232,6 +1400,7 @@ function queryOf(tree: Tree, personId: string): PersonQuery {
 
 /** A failure in words for the user. Nothing of the error itself is passed on unless it is the app's own. */
 function problemOf(error: unknown): RecordSearchProblem {
+  if (error instanceof Refusal) return error.problem;
   if (error instanceof HttpError) {
     const kind =
       error.kind === 'paused' ||

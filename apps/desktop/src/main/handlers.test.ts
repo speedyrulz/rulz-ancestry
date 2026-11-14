@@ -2,7 +2,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BACKUP_DIR_NAME, getSetting, openAppDatabase, setSetting, type Db } from '@rulz/db';
+import {
+  BACKUP_DIR_NAME,
+  getSetting,
+  listNames,
+  openAppDatabase,
+  setSetting,
+  updateName,
+  updatePerson,
+  type Db,
+} from '@rulz/db';
 import {
   API_METHODS,
   type AppInfo,
@@ -30,6 +39,9 @@ import {
   type PlaceSuggestions,
   type RecordInboxPage,
   type RecordLinkResult,
+  type RecordRunPlan,
+  type RecordRunStartResult,
+  type RecordRunUpdate,
   type RecordSearchResult,
   type RecordSearchSetup,
   type RecordSourceKeyResult,
@@ -41,11 +53,13 @@ import {
   type TreeState,
 } from '../shared/ipc';
 import { GazetteerService } from './gazetteer';
+import { RECORD_RUN_GAP_MS, RecordRun } from './recordrun';
 import {
   RECORD_SEARCH_NOTICE_SETTING,
   RECORD_SEARCH_NOTICE_VERSION,
   RECORD_SEARCH_NOTICE_VERSION_SETTING,
   RecordSearchService,
+  queryOf,
   recordSearchHostSetting,
   recordSearchKeySetting,
   type SecretStore,
@@ -64,6 +78,11 @@ const QUERY = { given: 'Ada', surname: 'Test', birthYear: 1850, deathYear: null 
 const TEXT = { words: 'Ada Test', phrase: true, fromYear: 1850, toYear: 1911, state: '' };
 let gazetteer: GazetteerService;
 let records: RecordSearchService;
+let runs: RecordRun;
+/** How long a search for several people waited each time, in milliseconds. It does not wait in these tests. */
+let waits: number[];
+/** What a test does while such a search waits; it is told how many waits there were. */
+let whileWaiting: ((wait: number) => void | Promise<void>) | null;
 /** Every address the search for records asked for. */
 let askedOfSources: string[];
 /** What a source answers in these tests: one profile of someone made up. */
@@ -324,7 +343,16 @@ beforeEach(() => {
     },
     secrets,
   });
-  handlers = createHandlers(session, platform, gazetteer, records);
+  waits = [];
+  whileWaiting = null;
+  runs = new RecordRun(records, {
+    wait: async (ms, signal) => {
+      waits.push(ms);
+      await whileWaiting?.(waits.length);
+      if (signal.aborted) throw new Error('given up');
+    },
+  });
+  handlers = createHandlers(session, platform, gazetteer, records, runs);
   pickedFolder = null;
   pickedFile = null;
   savePath = null;
@@ -338,6 +366,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  runs.clear();
+  await runs.idle();
   gazetteer.close();
   await gazetteer.idle();
   session.shutdown();
@@ -4103,5 +4133,513 @@ describe('results kept for later, and results turned down', () => {
     // Taking one back makes room.
     expect(await unmark(ada, { sourceId: 'wikitree', key: 'K-1' })).toMatchObject({ ok: true });
     expect(await keep(ada)).toMatchObject({ ok: true, tree: { inbox: 1 } });
+  });
+});
+
+describe('a search for several people in one go', () => {
+  const planOf = async (personId: string, generations = 3) => {
+    const plan = await call<RecordRunPlan | null>('planRecordRun', { personId, generations });
+    if (plan === null) throw new Error('there is no plan');
+    return plan;
+  };
+  const begin = async (personId: string, sourceIds: string[] = ['wikitree'], generations = 3) =>
+    call<RecordRunStartResult>('startRecordRun', {
+      personId,
+      generations,
+      sourceIds,
+      stamp: (await planOf(personId, generations)).stamp,
+    });
+  const started = async (personId: string, sourceIds: string[] = ['wikitree']) => {
+    const result = await begin(personId, sourceIds);
+    if (!result.ok) throw new Error(result.problem.message);
+    return result.run;
+  };
+  const standing = async (runId: number, since = 0) => {
+    const update = await call<RecordRunUpdate | null>('getRecordRun', { runId, since });
+    if (update === null) throw new Error('there is no such run');
+    return update;
+  };
+  /** The run as it stands once it asks nothing more. */
+  const ended = async (runId: number) => {
+    await runs.idle();
+    return standing(runId);
+  };
+  const askedOf = (host: string) => askedOfSources.filter((url) => new URL(url).host === host);
+  const parent = async (childId: string, draft: object, familyId?: string) =>
+    (
+      await call<PersonChange>(
+        'addParent',
+        childId,
+        { create: draft },
+        familyId === undefined ? {} : { familyId },
+      )
+    ).personId;
+  /** Gives a person a father and a mother, in one family. */
+  const parentsOf = async (childId: string, father: object, mother: object) => {
+    const first = await parent(childId, father);
+    const page = await call<PersonPage>('getPersonPage', childId);
+    return [first, await parent(childId, mother, page.parentFamilies[0]?.familyId ?? '')] as const;
+  };
+  /** Ada, her father Bram and her mother Cora, and Bram's father Dirk. All of them died long ago. */
+  const family = async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const [bram, cora] = await parentsOf(
+      ada,
+      { given: 'Bram', surname: 'Test', sex: 'M', birthDate: '1820' },
+      { given: 'Cora', surname: 'Vale', sex: 'F', birthDate: '1825' },
+    );
+    const dirk = await parent(bram, {
+      given: 'Dirk',
+      surname: 'Test',
+      sex: 'M',
+      deathDate: '1860',
+    });
+    return { ada, bram, cora, dirk };
+  };
+  const marks = () =>
+    session.tree.db.prepare('SELECT count(*) FROM record_mark').pluck().get() as number;
+
+  it('lists who would be asked for and what would be sent, and sends nothing', async () => {
+    const { ada, bram, cora, dirk } = await family();
+    // Three who are left out: one who may be living, one without a given name, one without a year.
+    const [nameless, eve] = await parentsOf(
+      cora,
+      { surname: 'Vale', sex: 'M', birthDate: '1790' },
+      { given: 'Eve', surname: 'Vale', sex: 'F' },
+    );
+    const finn = await parent(dirk, { given: 'Finn', surname: 'Test', sex: 'M', living: false });
+
+    const plan = await planOf(ada);
+    expect(plan.agreed).toBe(true);
+    expect(plan.sources.map((source) => source.id)).toEqual(['wikitree', 'open-archives']);
+    expect(plan.ticked).toEqual(['wikitree']);
+    expect(plan.gapSeconds).toBe(RECORD_RUN_GAP_MS / 1000);
+    expect(plan.stamp).toMatch(/^[0-9a-f]{64}$/);
+    // The person, then the nearest ancestors first.
+    expect(plan.people.slice(0, 4)).toEqual([
+      {
+        personId: ada,
+        name: 'Ada Test',
+        generation: 0,
+        query: { given: 'Ada', surname: 'Test', birthYear: 1850, deathYear: 1910 },
+        leftOut: null,
+      },
+      {
+        personId: bram,
+        name: 'Bram Test',
+        generation: 1,
+        query: { given: 'Bram', surname: 'Test', birthYear: 1820, deathYear: null },
+        leftOut: null,
+      },
+      {
+        personId: cora,
+        name: 'Cora Vale',
+        generation: 1,
+        query: { given: 'Cora', surname: 'Vale', birthYear: 1825, deathYear: null },
+        leftOut: null,
+      },
+      {
+        personId: dirk,
+        name: 'Dirk Test',
+        generation: 2,
+        query: { given: 'Dirk', surname: 'Test', birthYear: null, deathYear: 1860 },
+        leftOut: null,
+      },
+    ]);
+    const of = (personId: string) => plan.people.find((person) => person.personId === personId);
+    expect(of(eve)).toEqual({
+      personId: eve,
+      name: 'Eve Vale',
+      generation: 2,
+      query: null,
+      leftOut: 'living',
+    });
+    expect(of(nameless)).toMatchObject({
+      name: 'Vale',
+      generation: 2,
+      query: null,
+      leftOut: 'name',
+    });
+    expect(of(finn)).toMatchObject({ generation: 3, query: null, leftOut: 'years' });
+    expect(plan.people).toHaveLength(7);
+
+    // No further back than was asked for, and the same list gives the same stamp.
+    expect((await planOf(ada, 1)).people.map((person) => person.personId)).toEqual([
+      ada,
+      bram,
+      cora,
+    ]);
+    expect((await planOf(ada)).stamp).toBe(plan.stamp);
+    expect((await planOf(ada, 1)).stamp).not.toBe(plan.stamp);
+
+    expect(await call('planRecordRun', { personId: MISSING, generations: 3 })).toBeNull();
+    for (const generations of [0, 6, 2.5]) {
+      expect((await errorOf('planRecordRun', { personId: ada, generations })).code).toBe('invalid');
+    }
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('lists someone once who stands twice among the ancestors', async () => {
+    const { ada, bram, cora, dirk } = await family();
+    // Cousins: the father of Bram is the father of Cora too.
+    await call('addParent', cora, { existingId: dirk }, {});
+    const plan = await planOf(ada);
+    expect(plan.people.map((person) => person.personId)).toEqual([ada, bram, cora, dirk]);
+
+    const run = await started(ada);
+    expect((await ended(run.runId)).items).toHaveLength(4);
+    expect(askedOfSources).toHaveLength(4);
+  });
+
+  it('does not start before the notice, from a list that is no longer true, or for another source', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    expect((await planOf(ada)).agreed).toBe(false);
+    expect(await begin(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    // An agreement to the wording before this part does not count: one press sends more now.
+    setSetting(appDb, RECORD_SEARCH_NOTICE_SETTING, '2026-11-13T12:00:00.000Z');
+    setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, '4');
+    expect((await planOf(ada)).agreed).toBe(false);
+    expect(await begin(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    await call('agreeToRecordSearch');
+
+    // The tree changed after the list was shown.
+    const shown = await planOf(ada);
+    await parent(ada, { given: 'Bram', surname: 'Test', birthDate: '1820' });
+    const stale = await call<RecordRunStartResult>('startRecordRun', {
+      personId: ada,
+      generations: 3,
+      sourceIds: ['wikitree'],
+      stamp: shown.stamp,
+    });
+    expect(stale).toMatchObject({ ok: false, problem: { kind: 'changed' } });
+    if (stale.ok) throw new Error('started');
+    // The list as it stands now comes with the refusal.
+    expect(stale.plan?.people).toHaveLength(2);
+
+    // Only the sources a run may ask.
+    for (const sourceId of ['wikidata', 'loc', 'internet-archive', 'nara-catalog']) {
+      expect(await begin(ada, [sourceId]), sourceId).toMatchObject({
+        ok: false,
+        problem: { kind: 'source' },
+      });
+      expect(await begin(ada, ['wikitree', sourceId]), sourceId).toMatchObject({
+        ok: false,
+        problem: { kind: 'source' },
+      });
+      // And the service refuses such a question itself, whoever asks.
+      expect(
+        await records.searchOnce(
+          session.tree,
+          { personId: ada, sourceId, query: { ...QUERY } },
+          new AbortController().signal,
+        ),
+        sourceId,
+      ).toMatchObject({ ok: false, problem: { kind: 'source' } });
+    }
+    expect((await errorOf('startRecordRun', { personId: ada, generations: 3 })).code).toBe(
+      'invalid',
+    );
+
+    // Nobody to ask for: someone who may be living, and has no ancestors.
+    const eve = await addPerson('Eve');
+    expect(await begin(eve)).toMatchObject({ ok: false, problem: { kind: 'empty' } });
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('asks each source once for each person, the nearest first, and writes nothing', async () => {
+    const { ada, bram, cora, dirk } = await family();
+    const before = session.state();
+
+    const run = await started(ada, ['wikitree', 'open-archives']);
+    expect(run.status).toBe('running');
+    expect(run.items).toHaveLength(8);
+    const end = await ended(run.runId);
+    expect(end).toMatchObject({ status: 'finished', ended: '', left: {} });
+    expect(end.items.map((item) => [item.personId, item.sourceId, item.state])).toEqual(
+      [ada, bram, cora, dirk].flatMap((personId) => [
+        [personId, 'wikitree', 'done'],
+        [personId, 'open-archives', 'done'],
+      ]),
+    );
+    // The answers are those of a search: results, each held against the person.
+    expect(end.items[0]?.result).toMatchObject({
+      ok: true,
+      sourceId: 'wikitree',
+      items: [{ key: 'Test-90001' }],
+      fits: { 'Test-90001': { band: 'strong' } },
+      marks: { kept: [], declined: [] },
+      cached: false,
+    });
+
+    // One request for each person at each source, and no other.
+    const given = (url: string) => new URL(url).searchParams.get('FirstName');
+    expect(askedOf('api.wikitree.com').map(given)).toEqual(['Ada', 'Bram', 'Cora', 'Dirk']);
+    expect(askedOf('api.openarchieven.nl')).toHaveLength(4);
+    expect(askedOfSources).toHaveLength(8);
+    // Between two requests to one source it waited: three times at each.
+    expect(waits).toHaveLength(6);
+    expect(Math.min(...waits)).toBeGreaterThan(RECORD_RUN_GAP_MS - 500);
+    expect(Math.max(...waits)).toBeLessThanOrEqual(RECORD_RUN_GAP_MS);
+
+    // Nothing of it is in the tree.
+    expect(marks()).toBe(0);
+    expect(session.state()).toEqual(before);
+
+    // Asked again for what changed since, there is nothing; and there is no other run.
+    expect((await standing(run.runId, end.revision)).items).toEqual([]);
+    expect(await call('getRecordRun', { runId: run.runId + 1, since: 0 })).toBeNull();
+  });
+
+  it('keeps a record that was found for two people as a result of each', async () => {
+    const { ada, bram, dirk } = await family();
+    // The source answers with the same profile, whoever it is asked for.
+    const run = await started(ada);
+    await ended(run.runId);
+    const ref = { sourceId: 'wikitree', key: 'Test-90001' };
+    // It was found for Dirk last, and can still be kept for Ada and for Bram.
+    for (const personId of [ada, bram]) {
+      expect(await call<MarkRecordResult>('keepRecord', { personId, ...ref })).toMatchObject({
+        ok: true,
+      });
+    }
+    expect(
+      await call<CompareRecordResult>('compareRecord', { personId: dirk, ...ref }),
+    ).toMatchObject({ ok: true });
+    const inbox = await call<RecordInboxPage>('listRecordInbox', {
+      state: 'kept',
+      personId: null,
+      offset: 0,
+      limit: 50,
+    });
+    expect(inbox.items.map((item) => item.personId).sort()).toEqual([ada, bram].sort());
+  });
+
+  it('looks at each person again just before asking for them', async () => {
+    const { ada, bram, cora, dirk } = await family();
+    whileWaiting = async (wait) => {
+      if (wait === 1) await call('deletePerson', bram);
+      if (wait === 2) {
+        const page = await call<PersonPage>('getPersonPage', cora);
+        await call('updateName', page.names[0]?.id, { given: 'Kora' });
+      }
+      if (wait === 3) {
+        // Without his death, nothing says that Dirk has died.
+        const page = await call<PersonPage>('getPersonPage', dirk);
+        await call('deleteEvent', page.events[0]?.id);
+      }
+    };
+    const run = await started(ada);
+    const end = await ended(run.runId);
+    expect(end.status).toBe('finished');
+    expect(end.items.map((item) => [item.personId, item.state])).toEqual([
+      [ada, 'done'],
+      [bram, 'skipped'],
+      [cora, 'skipped'],
+      [dirk, 'skipped'],
+    ]);
+    expect(end.items.map((item) => item.message)).toEqual([
+      '',
+      expect.stringContaining('no longer in the tree'),
+      expect.stringContaining('no longer as the list showed'),
+      expect.stringContaining('may be living'),
+    ]);
+    // Only Ada was asked for.
+    expect(askedOfSources).toHaveLength(1);
+  });
+
+  it('says why nothing was sent for a person who changed while their request waited its turn', async () => {
+    const { ada, bram, cora } = await family();
+    const tree = session.tree;
+    // The question is put, and waits for its turn at the source. What is done
+    // to the tree in the same breath is found by the look just before sending.
+    const ask = (personId: string) =>
+      records.searchOnce(
+        tree,
+        { personId, sourceId: 'wikitree', query: queryOf(tree, personId) },
+        new AbortController().signal,
+      );
+
+    const renamed = ask(ada);
+    updateName(tree, listNames(tree, ada)[0]?.id ?? '', { given: 'Ida' });
+    expect(await renamed).toMatchObject({
+      ok: false,
+      problem: {
+        kind: 'changed',
+        message: expect.stringContaining('no longer as the list showed'),
+      },
+    });
+
+    const nowLiving = ask(bram);
+    updatePerson(tree, bram, { living: true });
+    expect(await nowLiving).toMatchObject({ ok: false, problem: { kind: 'living' } });
+
+    const withdrawn = ask(cora);
+    setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, '4');
+    expect(await withdrawn).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('leaves a source alone that asks for it, and goes on with the other', async () => {
+    const { ada } = await family();
+    answerOf = (url) =>
+      new URL(url).host === 'api.openarchieven.nl'
+        ? new Response('slow down', { status: 429, headers: { 'retry-after': '600' } })
+        : usualAnswer(url);
+    const run = await started(ada, ['wikitree', 'open-archives']);
+    const end = await ended(run.runId);
+    expect(end.status).toBe('finished');
+    expect(Object.keys(end.left)).toEqual(['open-archives']);
+    expect(end.left['open-archives']?.retryAt).toBeGreaterThan(Date.now());
+    const states = (sourceId: string) =>
+      end.items.filter((item) => item.sourceId === sourceId).map((item) => item.state);
+    expect(states('wikitree')).toEqual(['done', 'done', 'done', 'done']);
+    expect(states('open-archives')).toEqual(['not-asked', 'not-asked', 'not-asked', 'not-asked']);
+    // Asked once, and not again.
+    expect(askedOf('api.openarchieven.nl')).toHaveLength(1);
+    expect(askedOf('api.wikitree.com')).toHaveLength(4);
+  });
+
+  it('asks a source no more that failed twice in a row, and never asks twice for one person', async () => {
+    const { ada } = await family();
+    answerOf = () => new Response('', { status: 500 });
+    const run = await started(ada);
+    const end = await ended(run.runId);
+    expect(end.status).toBe('finished');
+    expect(end.items.map((item) => item.state)).toEqual([
+      'failed',
+      'failed',
+      'not-asked',
+      'not-asked',
+    ]);
+    expect(end.left.wikitree?.message).toContain('2 times in a row');
+    expect(askedOfSources).toHaveLength(2);
+
+    // A failure between two answers is not two in a row.
+    askedOfSources.length = 0;
+    answerOf = (url) =>
+      askedOfSources.length % 2 === 1 ? new Response('', { status: 500 }) : usualAnswer(url);
+    const second = await started(ada);
+    const mixed = await ended(second.runId);
+    expect(mixed.items.map((item) => item.state)).toEqual(['failed', 'done', 'failed', 'done']);
+    expect(mixed.left).toEqual({});
+    expect(askedOfSources).toHaveLength(4);
+  });
+
+  it('ends when the internet cannot be reached', async () => {
+    const { ada } = await family();
+    answerOf = () => {
+      throw new TypeError('fetch failed');
+    };
+    const run = await started(ada, ['wikitree', 'open-archives']);
+    const end = await ended(run.runId);
+    expect(end.status).toBe('stopped');
+    expect(end.ended).toContain('could not be reached');
+    expect(end.items.some((item) => item.state === 'done')).toBe(false);
+    expect(end.items.filter((item) => item.state === 'failed').length).toBeGreaterThan(0);
+    // At most the first question of each source was tried.
+    expect(askedOfSources.length).toBeLessThanOrEqual(2);
+  });
+
+  it('stops when told to, and drops an answer that comes after', async () => {
+    const { ada, bram } = await family();
+    whileWaiting = async (wait) => {
+      if (wait === 1) await call('stopRecordRun');
+    };
+    const run = await started(ada);
+    const end = await ended(run.runId);
+    expect(end).toMatchObject({ status: 'stopped', ended: '' });
+    expect(end.items.map((item) => item.state)).toEqual([
+      'done',
+      'not-asked',
+      'not-asked',
+      'not-asked',
+    ]);
+    expect(askedOfSources).toHaveLength(1);
+
+    // Stopped while a source is being asked: its answer is for nobody.
+    whileWaiting = null;
+    askedOfSources.length = 0;
+    let answer: (response: Response) => void = () => undefined;
+    answerOf = (() =>
+      new Promise<Response>((resolve) => {
+        answer = resolve;
+      })) as unknown as typeof answerOf;
+    // Another person than before, so that the client has no answer at hand.
+    const second = await started(bram);
+    expect((await standing(second.runId)).items[0]?.state).toBe('asking');
+    await call('stopRecordRun');
+    expect((await standing(second.runId)).items[0]?.state).toBe('not-asked');
+    answer(usualAnswer('https://api.wikitree.com/api.php'));
+    const dropped = await ended(second.runId);
+    expect(dropped.status).toBe('stopped');
+    expect(dropped.items.every((item) => item.state === 'not-asked')).toBe(true);
+    expect(
+      await call<MarkRecordResult>('keepRecord', {
+        personId: bram,
+        sourceId: 'wikitree',
+        key: 'Test-90001',
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+
+  it('ends with its tree, and when another run starts', async () => {
+    const { ada, bram } = await family();
+    let answer: (response: Response) => void = () => undefined;
+    answerOf = (() =>
+      new Promise<Response>((resolve) => {
+        answer = resolve;
+      })) as unknown as typeof answerOf;
+    const first = await started(ada);
+    const pending = answer;
+    answerOf = usualAnswer;
+    // A second run takes the place of the first.
+    const second = await started(bram);
+    expect(await call('getRecordRun', { runId: first.runId, since: 0 })).toBeNull();
+    pending(usualAnswer('https://api.wikitree.com/api.php'));
+
+    let late: MarkRecordResult | null = null;
+    whileWaiting = async (wait) => {
+      if (wait !== 1) return;
+      // Long enough for the answer to the first run to have been dealt with.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      late = await call<MarkRecordResult>('keepRecord', {
+        personId: ada,
+        sourceId: 'wikitree',
+        key: 'Test-90001',
+      });
+      await call('closeTree');
+    };
+    await runs.idle();
+    // The answer to the first run came after it had ended: it is nobody's result.
+    expect(late).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    // The tree closed after the first answer: nothing more was asked, and the run is gone.
+    expect(await call('getRecordRun', { runId: second.runId, since: 0 })).toBeNull();
+    expect(askedOf('api.wikitree.com')).toHaveLength(2);
+  });
+
+  it('ends when a backup takes the place of its tree, and forgets what it found', async () => {
+    const { ada } = await family();
+    const backup = await call<{ created: { name: string } | null }>('backupNow');
+    whileWaiting = async (wait) => {
+      if (wait === 1) await call('restoreBackup', backup.created?.name ?? '');
+    };
+    const run = await started(ada);
+    await runs.idle();
+    // The tree was put back after the first answer: nothing more was asked, and the run is gone.
+    expect(await call('getRecordRun', { runId: run.runId, since: 0 })).toBeNull();
+    expect(askedOf('api.wikitree.com')).toHaveLength(1);
+    // Ada is in the tree that took its place; what was found for her before is no result there.
+    expect((await planOf(ada)).people[0]?.personId).toBe(ada);
+    expect(
+      await call<MarkRecordResult>('keepRecord', {
+        personId: ada,
+        sourceId: 'wikitree',
+        key: 'Test-90001',
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'record' } });
   });
 });
