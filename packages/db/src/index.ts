@@ -34,6 +34,22 @@ export {
   type RecentTree,
 } from './appdb';
 export {
+  AI_ACTIVITY_DETAIL_KEYS,
+  AI_ACTIVITY_KEEP_DAYS,
+  AI_ACTIVITY_KINDS,
+  AI_ACTIVITY_MAX_ROWS,
+  AI_ACTIVITY_TEXT_MAX,
+  clearAiActivity,
+  countAiActivity,
+  listAiActivity,
+  logAiActivity,
+  pruneAiActivity,
+  type AiActivityDetail,
+  type AiActivityEntry,
+  type AiActivityInput,
+  type AiActivityKind,
+} from './aiactivity';
+export {
   BACKUP_DIR_NAME,
   BackupError,
   DEFAULT_RETENTION,

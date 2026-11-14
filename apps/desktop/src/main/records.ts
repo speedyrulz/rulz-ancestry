@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { mayShareWithAi } from '@rulz/ai';
 import {
   ConnectorError,
   HttpClient,
@@ -145,6 +146,11 @@ import { keptFormOf, keptRecordOf, madeAddress, markTitle, whenOf } from './kept
  * person at one source at a time. The three rules hold for each of its
  * questions as they do for a search of one person, and it is sent the name
  * and the years the tree has, which the list before the run showed.
+ *
+ * A session of the optional AI assistant (`aisession.ts`) asks through
+ * `searchForAi`. The three rules hold for it too. Only a source whose terms
+ * let its results be passed on to an AI is asked, and what is sent is what
+ * the session let through of what the AI asked for.
  */
 
 /** The setting that holds the day the user agreed to the notice. */
@@ -233,6 +239,35 @@ const NOT_AGREED: RecordSearchProblem = {
   message: 'Nothing is sent before you have agreed to what a search sends.',
   retryAt: null,
 };
+
+/** The answer to one question of a session of the AI assistant; see `RecordSearchService.searchForAi`. */
+export type AiSearchResult =
+  | {
+      ok: true;
+      /** The source that answered, for the form its records are passed on in. */
+      manifest: ConnectorManifest;
+      /** The first results of the source, as its connector read them just now. */
+      records: ExternalRecord[];
+      /** How many results the source has in all; null when it does not say. */
+      total: number | null;
+      /** True when the source has more results than these. */
+      more: boolean;
+      /** How many results were left out: private profiles and living people. */
+      hidden: number;
+      fetchedAt: number;
+      /** True when the answer was kept from an earlier search and nothing was sent. */
+      cached: boolean;
+    }
+  | {
+      ok: false;
+      problem: RecordSearchProblem;
+      /**
+       * True when the request was let go to the source before it failed: its
+       * last look passed, which is the last thing before the client sends.
+       * False when nothing can have reached the source.
+       */
+      sent: boolean;
+    };
 
 /** What is needed to cite a result; see `RecordSearchService.attachment`. */
 export type RecordAttachment =
@@ -1087,6 +1122,106 @@ export class RecordSearchService {
   /** The sources a search for several people may ask, in the order they are offered. */
   runSources(): RecordSourceInfo[] {
     return this.sources().filter((source) => RECORD_RUN_SOURCE_IDS.includes(source.id));
+  }
+
+  /**
+   * The source a session of the AI assistant may ask, by its id; undefined
+   * when it may not be asked. It must keep people or records of people, and
+   * its terms must let its results be passed on to an AI (`mayShareWithAi`).
+   */
+  #aiSource(sourceId: string): SourceConnector | undefined {
+    return this.#connectors.find(
+      (connector) =>
+        connector.manifest.id === sourceId &&
+        connector.searchPersons !== undefined &&
+        mayShareWithAi(connector.manifest),
+    );
+  }
+
+  /** The sources a session of the AI assistant may ask, in the order they are offered. */
+  aiSources(): RecordSourceInfo[] {
+    return this.sources().filter((source) => this.#aiSource(source.id) !== undefined);
+  }
+
+  /**
+   * One question of a session of the AI assistant: one source is asked for
+   * one person, for its first results. The rules of a search hold as for any
+   * other: the notice, nobody who may be living, the source's own client.
+   *
+   * What is sent is `request.query`, which the session let through of what
+   * the AI asked for. `stillAllowed` is the session's own last look: it is
+   * called before anything is sent and again when the request's turn has
+   * come, and says why the question may no longer be sent. A failure says
+   * whether the request was let go to the source before it failed (`sent`),
+   * so that a session counts and logs a question that was given up on its
+   * way, and gives back one that never left.
+   *
+   * The results are records as the connector read them from the source just
+   * now. Only these may be passed on to an AI: a record kept in a tree and
+   * read back from its file is never given here.
+   */
+  async searchForAi(
+    tree: Tree,
+    request: { personId: string; sourceId: string; query: PersonQuery },
+    signal: AbortSignal,
+    stillAllowed: () => RecordSearchProblem | null,
+  ): Promise<AiSearchResult> {
+    const { personId, sourceId, query } = request;
+    /** True once the last look has passed: the client sends right after it. */
+    let sent = false;
+    const fail = (problem: RecordSearchProblem): AiSearchResult => ({ ok: false, problem, sent });
+    const connector = this.#aiSource(sourceId);
+    if (connector === undefined) {
+      return fail({
+        kind: 'source',
+        message: 'The results of this source are not passed on to an AI assistant.',
+        retryAt: null,
+      });
+    }
+    const gate = this.#gate(
+      tree,
+      personId,
+      sourceId,
+      isEmptyQuery(query) ? 'Give a name to search for.' : null,
+      (found) => {
+        const ask = found.searchPersons?.bind(found);
+        return ask === undefined ? null : (page, options) => ask(query, page, options);
+      },
+    );
+    if (!gate.ok) return fail(gate.problem);
+    /** Why nothing may be sent for the person as the tree and the session stand now. */
+    const look = (): RecordSearchProblem | null => {
+      if (!this.agreed) return NOT_AGREED;
+      return this.#refusal(tree, personId) ?? stillAllowed();
+    };
+    const refused = look();
+    if (refused !== null) return fail(refused);
+    if (signal.aborted) return fail(GIVEN_UP);
+    try {
+      const answer = await this.#answer(
+        tree,
+        { personId, sourceId, offset: 0 },
+        gate.ask,
+        signal,
+        () => {
+          const last = look();
+          sent = last === null;
+          return last;
+        },
+      );
+      return {
+        ok: true,
+        manifest: connector.manifest,
+        records: answer.items,
+        total: answer.total,
+        more: answer.nextOffset !== null,
+        hidden: answer.hidden,
+        fetchedAt: answer.fetchedAt,
+        cached: answer.cached,
+      };
+    } catch (error) {
+      return fail(problemOf(error));
+    }
   }
 
   /**

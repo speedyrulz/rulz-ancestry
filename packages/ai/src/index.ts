@@ -5,6 +5,7 @@ export {
   NOT_GIVEN,
   findPeople,
   readPerson,
+  readPersonLine,
   readRelatives,
   type ToolAnswer,
   type ToolCouple,
@@ -25,6 +26,25 @@ export {
   type SharedRecord,
 } from './record';
 export { QUOTE_MAX, QUOTE_PART_MIN, findQuote, type QuoteCheck, type QuoteProblem } from './quote';
+export {
+  GUESS_YEARS_AGO,
+  LONGEST_LIFE,
+  QUERY_YEAR_REACH,
+  askedQuerySchema,
+  checkQuery,
+  type CheckedQuery,
+  type QuerySubject,
+} from './query';
+export {
+  AI_TOOLS,
+  AI_TOOL_INPUTS,
+  AI_TOOL_NAMES,
+  RECORD_TEXT_NOTE,
+  type AiTool,
+  type AiToolName,
+  type AiToolRefusal,
+  type AiToolResult,
+} from './tools';
 export {
   PROPOSAL_CONFIDENCES,
   PROPOSAL_REASONS_MAX,

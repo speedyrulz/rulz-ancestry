@@ -2,6 +2,12 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  AI_ACTIVITY_KEEP_DAYS,
+  countAiActivity,
+  listAiActivity,
+  logAiActivity,
+} from './aiactivity';
+import {
   RECENT_TREE_LIMIT,
   appMigrations,
   forgetTree,
@@ -13,7 +19,7 @@ import {
   setSetting,
 } from './appdb';
 import { openDatabase, type Db } from './connection';
-import { schemaVersion } from './migrate';
+import { migrate, schemaVersion } from './migrate';
 import { cleanUpAfterEach, tempDir } from './testing';
 
 cleanUpAfterEach();
@@ -49,6 +55,26 @@ describe('openAppDatabase', () => {
     first.close();
 
     expect(getSetting(appDb(file), 'k')).toBe('v');
+  });
+});
+
+describe('migration 2: activity log of the AI assistant', () => {
+  it('upgrades an app.db at version 1 and keeps what it had', () => {
+    const file = join(tempDir(), 'app.db');
+    const old = openDatabase(file);
+    migrate(old, appMigrations.slice(0, 1));
+    expect(schemaVersion(old)).toBe(1);
+    setSetting(old, 'k', 'v');
+    rememberTree(old, { dir: 'C:\\T\\A', treeId: 'a', name: 'A', lastOpenedAt: 100 });
+    old.close();
+
+    const db = appDb(file);
+    expect(schemaVersion(db)).toBe(2);
+    expect(getSetting(db, 'k')).toBe('v');
+    expect(listRecentTrees(db)).toEqual([
+      { dir: 'C:\\T\\A', treeId: 'a', name: 'A', lastOpenedAt: 100 },
+    ]);
+    expect(db.prepare('SELECT count(*) FROM ai_activity').pluck().get()).toBe(0);
   });
 });
 
@@ -95,6 +121,27 @@ describe('openOrResetAppDatabase', () => {
     open.push(kept);
     expect(schemaVersion(kept)).toBe(appMigrations.length + 1);
     expect(schemaVersion(opening.db)).toBe(appMigrations.length);
+  });
+
+  it('removes what the activity log of the AI assistant has kept for too long', () => {
+    const file = join(tempDir(), 'app.db');
+    const day = 24 * 60 * 60 * 1000;
+    const now = Date.UTC(2026, 5, 1);
+    const first = appDb(file);
+    const entry = { sessionId: 's', treeId: 't', kind: 'person-read', detail: {} } as const;
+    // Written one after the other, the earlier first: writing prunes from the time of the entry.
+    logAiActivity(first, { ...entry, at: now - AI_ACTIVITY_KEEP_DAYS * day - 1 });
+    logAiActivity(first, { ...entry, at: now - AI_ACTIVITY_KEEP_DAYS * day });
+    expect(countAiActivity(first)).toBe(2);
+    first.close();
+
+    // Nothing writes to the log again; the next start of the app removes what is too old.
+    const opening = openOrResetAppDatabase(file, now);
+    open.push(opening.db);
+    expect(opening.setAside).toBeNull();
+    expect(listAiActivity(opening.db).map((row) => row.at)).toEqual([
+      now - AI_ACTIVITY_KEEP_DAYS * day,
+    ]);
   });
 });
 

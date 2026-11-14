@@ -56,7 +56,8 @@ export interface RecordRunOptions {
   gapMs?: number;
 }
 
-const defaultWait = (ms: number, signal: AbortSignal): Promise<void> =>
+/** Waits so long, and rejects when the signal aborts first. */
+export const defaultWait = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(new Error('given up'));

@@ -1,11 +1,13 @@
 import { renameSync, rmSync } from 'node:fs';
+import { pruneAiActivity } from './aiactivity';
 import { openDatabase, sql, type Db } from './connection';
 import { migrate, type Migration } from './migrate';
 
 /**
  * The application database (`app.db` in the profile folder). It holds what
  * belongs to this installation rather than to a tree: the list of recently
- * opened trees and the app's settings.
+ * opened trees, the app's settings, and the activity log of the optional AI
+ * assistant (`aiactivity.ts`).
  */
 
 export const appMigrations: readonly Migration[] = [
@@ -26,6 +28,24 @@ export const appMigrations: readonly Migration[] = [
           last_opened_at INTEGER NOT NULL
         );
         CREATE INDEX recent_tree_opened ON recent_tree(last_opened_at);
+      `);
+    },
+  },
+  {
+    version: 2,
+    name: 'activity log of the AI assistant',
+    up(db) {
+      db.exec(`
+        -- What the optional AI assistant asked and read, never the text of a record.
+        CREATE TABLE ai_activity (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          at         INTEGER NOT NULL,
+          session_id TEXT NOT NULL,
+          tree_id    TEXT NOT NULL,
+          kind       TEXT NOT NULL,
+          detail     TEXT NOT NULL
+        );
+        CREATE INDEX ai_activity_at ON ai_activity(at);
       `);
     },
   },
@@ -52,10 +72,25 @@ export interface AppDatabaseOpening {
 /**
  * Opens the application database, and starts a new one if the file cannot be
  * used (it is damaged, or a newer version of the app wrote it). The app must
- * still start in that case: the file holds only the recent list and settings,
- * never a tree. The unusable file is renamed, not deleted.
+ * still start in that case: the file holds the recent list, the settings and
+ * the activity log of the AI assistant, never a tree. The unusable file is
+ * renamed, not deleted.
  */
 export function openOrResetAppDatabase(file: string, now = Date.now()): AppDatabaseOpening {
+  const opening = openOrReset(file, now);
+  // The activity log is pruned whenever it is written to. This prunes it at
+  // each start as well, so that entries do not outlast their 90 days in an
+  // installation that no longer uses the assistant. The app starts all the same
+  // when it fails.
+  try {
+    pruneAiActivity(opening.db, now);
+  } catch {
+    // Nothing to do: the next entry that is written prunes again.
+  }
+  return opening;
+}
+
+function openOrReset(file: string, now: number): AppDatabaseOpening {
   try {
     return { db: openAppDatabase(file), setAside: null };
   } catch {

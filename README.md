@@ -311,7 +311,9 @@ Searching for records:
 An optional AI assistant is planned (Phase 4b). Claude proposes record matches
 for you to confirm, through your own Claude app or your own API key. It is off by
 default, and while it is on, details of the people being researched are sent to
-Anthropic. See section 7 of the plan.
+Anthropic. Its rules and its sessions are written and tested, but the app has
+no screen for it and no connection to Claude yet, so it cannot be used. See
+section 7 of the plan.
 
 The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
 architecture, data sources, development guide and changelog. It is updated after
@@ -349,7 +351,7 @@ apps/desktop          Electron app: main process, preload script, React UI, e2e 
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
 packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
-packages/ai           The rules of the optional AI assistant, which nothing uses yet: what it may read of a tree and of a record, and the check of what it proposes
+packages/ai           The rules of the optional AI assistant, which the app does not start yet: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
 docs/                 Plan and access checklist
 ```
 

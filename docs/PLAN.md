@@ -513,16 +513,17 @@ tokens.
 One set of tools serves all three routes. The tools live in `packages/ai` and
 run in the app's main process.
 
-| Tool                                         | What it does                                                                                                                       |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `search_tree`, `get_person`, `get_relatives` | Read the open tree                                                                                                                 |
-| `list_sources`                               | Lists the connectors and data packs the AI may use                                                                                 |
-| `search_records`                             | Runs a search through a connector or pack, under that source's rate limit and quota, and returns the stored `external_record` rows |
-| `get_record`                                 | Returns one stored record                                                                                                          |
-| `propose_match`                              | Files a hint for the user: the person, the record, a verdict, a confidence and reasons, each reason quoting the record             |
-| `suggest_link`                               | Suggests a Tier C link for the user to open in their own browser                                                                   |
+| Tool                                         | What it does                                                                                                                  |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `get_session`                                | Says who the session is for, which sources it may ask, and how many questions are left for each                               |
+| `search_tree`, `get_person`, `get_relatives` | Read the open tree                                                                                                            |
+| `list_sources`                               | Lists the sources the session may ask                                                                                         |
+| `search_records`                             | Asks one source for records of one person of the session, under that source's rate limit and the session's count of questions |
+| `get_record`                                 | Gives a record of an earlier answer of the session again                                                                      |
+| `propose_match`                              | Files a hint for the user: the person, the record, a verdict, a confidence and reasons, each reason quoting the record        |
+| `suggest_link`                               | Suggests a Tier C link for the user to open in their own browser (not built)                                                  |
 
-No tool edits the tree, reads a file, runs a command or fetches a URL.
+No tool edits the tree, reads a file, runs a command or fetches a URL. Since part 4b.2 the tools work only within a session the user started, and a record is known by a reference that holds within that session; no table of records is stored (see "Phase 4b.2 outcome").
 
 What this adds to the Phase 4 matching engine:
 
@@ -554,7 +555,7 @@ data in and return plain data, so these tools are thin wrappers around them.
 - **Each source must permit it.** A new manifest field, `mayShareWithAi`, says whether a source's record text may be sent to an AI service. It is absent, which means no, until that source's terms have been checked. Since part 4b.1 it is set for Open Archives, whose page for AI agents allows it in words, for Wikidata, whose structured data is in the public domain, and for WikiTree, whose pages say nothing on it (the project owner's decision of 2026-11-14).
 - **Living people are masked** in what the tools return, as "Living person" plus the relationship. Phase 4b has no way to switch this off for a tree (decided 2026-11-14). DNA data is never offered to the AI, and neither are notes, media or the text of citations.
 - **Record text is untrusted.** A record, a newspaper page or a community tree profile may contain text written as instructions. It is passed as data. Because the tools can only read and propose, the worst result is a bad proposal, which the user reviews.
-- **An activity log** lists each run's searches, the records read and what was sent. It is kept in the app database, not in the tree folder.
+- **An activity log** lists each run's searches, the records read and what was sent. It is kept in the app database, not in the tree folder. It never holds the text of a record or of a reason. It does hold the words an AI asked with (a name asked of a source, the words of a search of the tree), as they were sent and cut short, so an AI that copies words of a record into a question puts those words into the log.
 - **Usage is shown where the route reports it.** Routes B and C report tokens and an estimated cost for each run. Route A does not; that usage is visible in Claude's own app.
 - **Naming.** The feature is called "AI assistant". The app may say in plain text that it works with Claude. It uses no Anthropic name or logo in a product or feature name, and Anthropic's trademark guidelines are checked before release.
 
@@ -955,7 +956,7 @@ Planned on 2026-11-14 from two design views (a Claude Opus subagent and Codex) a
 | Part | Scope                                                                                                                                        | Status              |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 4b.1 | The rules, with no screen: what the tools read of a tree and of a record, the `mayShareWithAi` field, the check of a quote and of a proposal | **Done 2026-11-14** |
-| 4b.2 | An AI session the user starts, for chosen people and sources, with a count of requests and an end; proposals held in memory; an activity log | To do               |
+| 4b.2 | An AI session the user starts, for chosen people and sources, with a count of requests and an end; proposals held in memory; an activity log | **Done 2026-11-14** |
 | 4b.3 | The screens: the consent notice, the window that starts a session and shows what it does, with Stop, and the AI's proposals in the inbox     | To do               |
 | 4b.4 | Route A: the named pipe, the bridge program, the `.mcpb` file for Claude Desktop, and how Claude Code adds it                                | To do               |
 | 4b.5 | Measuring: the labelled cases of part 4.1 given to Claude offline, and the AI's figures beside the engine's                                  | To do               |
@@ -1028,6 +1029,69 @@ Decided by the project owner, after part 4b.1 was finished:
 Review: a Claude Opus subagent read the change (level 1). Taken from it: the two points above on names and places and on kept records, a test that goes through the connector (a living and a private profile are not passed on, a biography that came unasked is not read), and the wording on Wikidata, whose licence allows any use but does not name AI. Nothing was turned down.
 
 Tests: unit tests went from 1287 to 1288 (profiles of WikiTree, read by the connector, as they are passed on).
+
+### Phase 4b.2 outcome: a session of the AI assistant (2026-11-14)
+
+Delivered, in the app's main process and the packages. There is no screen for it and no connection to an AI yet, and nothing in the app starts a session:
+
+- **A session** (`apps/desktop/src/main/aisession.ts`) is the time during which an AI may use the tools.
+  - It starts only from a plan the user saw: the person, their ancestors up to three generations, who is left out as living, and the sources. Both notices must be agreed to (that of the assistant, and that of the search), and the tree must still be as the plan showed it.
+  - There is one session at a time, in memory. It ends when the user stops it, when no call came for 15 minutes, when the tree closes, when the assistant is turned off, when another session starts, after 500 calls, or when the activity log cannot be written.
+  - Outside a session no tool gives anything, and nothing is sent or logged.
+- **The tools** (`packages/ai/src/tools.ts`): `get_session`, `list_sources`, `search_tree`, `get_person`, `get_relatives`, `search_records`, `get_record` and `propose_match`, each with a description for an AI and a strict shape of what it takes. A call by another name, or with anything else in it, reads nothing and is counted.
+- **The limits on a question to a source** (`packages/ai/src/query.ts`). They are checked when the question is asked and again just before it is sent.
+  - A name needs a given name and a last name. Every word of it must be a word of a name the tree has for the person, or lie a letter or two from one: two letters for a word of five or more, one for a word of three or four, none for a shorter one. An accent counts as a letter.
+  - Nothing may be added to a name: no further word, no letters hung onto a word, no row of marks, no character that is not seen, no punctuation other than as names are written (one hyphen, apostrophe or full stop at a time between letters, one full stop after them). A part the tree writes in its own way is taken as the tree writes it.
+  - Another spelling is taken in Latin, Greek or Cyrillic letters, all of a word in one script. In any other script a name is asked for as the tree writes it, or not at all. A letter that is written out as two ("ü" as "ue", "ß" as "ss") is the same letter.
+  - An initial that is asked for stands for a word of the tree's name. An initial of the tree stands for itself only.
+  - A year must lie within 10 years of the year the tree has, and not beyond the other end of the life as the tree has it. A year the tree does not have must fit a life of 120 years at most, counted from the year the tree does have. Where the tree has no year at all, a year must lie at least 100 years back.
+- **Asking a source** (`searchForAi` in `records.ts`): a question goes through the app's own search, with the same notice, client and limits, and for nobody who may be living.
+  - A session has 10 questions for each source. They go to a source one after the other, a second apart.
+  - A question that was let go to the source counts, whatever became of it. One that never left is given back, and so is one the app still had the answer to.
+- **Records.** Only the results of a search of this session are passed on, from a source with `mayShareWithAi`, each under a reference (`r1`, `r2`) that holds within the session. A reference names one reading of a record for good: a record that reads otherwise later gets a new one. The session has no way to a record that was kept in a tree, so none is read back from a tree's file.
+- **Proposals** are checked with the check of part 4b.1, against the record as it was passed on. They are held in memory, the later of two about one record taking the earlier's place, and are forgotten when the tree closes or the assistant is turned off. Nothing is written to the tree.
+- **The activity log** (`packages/db/src/aiactivity.ts`; table `ai_activity` in app.db, added by its second migration).
+  - It has one entry for the start and the end of a session, and one for each call that reads the tree, asks a source, gives a record or makes a proposal: ids, what was asked, counts and outcomes.
+  - It keeps 90 days and 20,000 entries at most. It is pruned at each entry and at each start of the app, and can be cleared.
+  - A call that cannot be logged gives nothing, and ends the session.
+- **The notice of the assistant** has a version (1 now) and two settings of its own. An agreement to an earlier wording does not count.
+
+Decided while building, by the primary agent; the project owner can change any of them:
+
+- **During a session an AI may read every person of the open tree who is not living,** not only the people of the session, because judging a record needs the relatives. Questions to a source are for the people of the session only.
+- **The numbers that were not set before:** 500 calls in a session, an end after 15 minutes without a call, a second between two questions to one source.
+- **`get_session` does not say which generation a person is of.** A list that starts at the parents would say that the person the session was started from is in the tree and may be living.
+- **Where the tree has no year for a person, a year asked for lies at least 100 years back.** Nothing says when such a person lived, and a recent year would be a search among people who may be living.
+
+Reviews: this part was treated as level 3 (a Claude Opus subagent, Codex and Antigravity, each reading the change without the others' views). Every finding was checked against the code.
+
+- **Fixed, found by all three, each from another side:** the check of a name let an AI's own text through. Letters could be hung onto a word ("Martenxqzvwk"), because the likeness of two names counts their first letters for much (Opus). An initial in the tree stood for any word that began with it (Opus, Antigravity). Punctuation could be strung together (Codex, Opus), and a row of marks, accents and other forms of a letter went through as typed (Opus).
+- **Fixed, found by all three:** a question that was on its way when the session ended was shown as not sent, given back to the count and left out of the log. The search now says whether a request was let go to the source, and a question that was is counted and logged, also after the end. The same fix covers a question held back because a source asked to be left alone, which was counted though it never left (Opus, Antigravity).
+- **Fixed, found by Codex and Antigravity:** a question that waited could be sent after the session had run out of time, since only the session's own state was looked at. Every look now asks whether the session is still the one under way.
+- **Fixed, found by Antigravity:** when a person came to count as living while a source was being asked, the answer was still handed over.
+- **Fixed, found by Opus and Antigravity:** a year the tree does not have was held against the other year as it was asked for, not as the tree has it, so a life could be stretched by ten years at each end; and a birth could be asked for after the death the tree has.
+- **Fixed, found by Opus:** an error inside a question left it "asking" for good; `start` took the list of sources on trust; where the tree has no year, any year up to this one could be asked for.
+- **Fixed, found by Codex:** a reference kept its number when the record behind it read otherwise; ids and references an AI sent were written to the log as they came, which could be any text; a time read back from the log was not checked. Codex and Opus both found that entries older than 90 days stayed until the next entry was written.
+- **Fixed, found by a second reading by Opus** of the check of a name as it was written anew after the reviews: characters that are not seen (selectors of a variant, joiners, fillers) and letters of other scripts counted as one changed letter each, so a name could carry something hidden. Another spelling is now taken in Latin, Greek or Cyrillic letters only, with no mark that stands by itself. The same reading found requests wrongly refused, which are let through now: initials without a space ("J.P.", "J.-P."), and a letter written out as two ("Kuehn" for "Kühn").
+- **Taken in part:** a session started from a living person showed the generations of the others (Opus, Antigravity). The generations are no longer given. Such a start is not refused, as Antigravity proposed: starting from oneself is the usual case. The id of that person stays in the start entry of the log, which is the user's own.
+- **Turned down:**
+  - The page of the user keeps the name of someone who came to count as living during a session (Codex). It is the user's own page, which shows living people everywhere.
+  - A PC clock set far ahead empties the log (Opus). The app has no other clock to go by.
+  - "van der" alone passes for "van der Veldkamp" (Antigravity). It is the tree's own words and nothing an AI chose.
+  - The words an AI asked with are in the log (Codex, Opus). The project owner decided that the log holds what was asked; the rule in section 7 now says what follows from it.
+
+Tests: unit tests went from 1288 to 1401. The end-to-end tests (44) passed on a build with these changes.
+
+Not done:
+
+- **Nothing starts a session.** No channel from the page, no screen, no bridge to an AI: those are parts 4b.3 and 4b.4. Keeping a proposal with its reasons is part 4b.3 too.
+- **`suggest_link` is not built.**
+- **A little is left to the AI in a name:** which of the tree's words it leaves out, a letter or two in a word, and capital or small letters. The receiver is one of the three sources and no one else.
+- **A name in a script other than Latin, Greek or Cyrillic can be asked for only as the tree writes it.** No other spelling of it is let through.
+- **Some ways of writing a name are refused:** a given name cut short ("Joh.", "Wm."), a prefix cut short ("v.d. Berg"), two words written as one ("Delacour" for "de la Cour"), and an accent or a backtick in place of an apostrophe.
+- **The check of a name as it stands now was read by nobody but the primary agent.** Its tests hold every case the reviews gave.
+- **A question is logged when it has ended, not when it leaves.** If the app is ended by force while a question is on its way, that question is not in the log.
+- **The session was tried by tests only,** with made-up people and made-up answers of the sources. No AI has used it yet.
 
 ### Phase 3 breakdown
 

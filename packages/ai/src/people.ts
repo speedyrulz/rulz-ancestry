@@ -259,6 +259,20 @@ export function findPeople(
   })();
 }
 
+/** Reads a person of the tree in one line: their main name, and when and where they were born and died. */
+export function readPersonLine(
+  tree: Tree,
+  personId: string,
+  now: number = Date.now(),
+): ToolAnswer<ToolPersonLine> {
+  return tree.db.transaction((): ToolAnswer<ToolPersonLine> => {
+    const person = typeof personId === 'string' ? getPerson(tree, personId) : null;
+    if (person === null || presumedLivingIds(tree, now).has(person.id)) return NOT_GIVEN;
+    const line = lineOf(tree, person.id);
+    return line === null ? NOT_GIVEN : { ok: true, value: line };
+  })();
+}
+
 /** Reads a person of the tree with their names and their own events. */
 export function readPerson(
   tree: Tree,
