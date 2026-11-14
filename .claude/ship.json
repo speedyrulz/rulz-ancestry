@@ -1,0 +1,59 @@
+{
+  "configVersion": 1,
+  "name": "RulZ Ancestry",
+  "approval": {
+    "default": "auto",
+    "source": "Memory commit-and-push-after-every-update (2026-11-13): \"from now on always commit and push after an update\". Memory wiki-update-after-push (2026-11-11): \"after every push or merge i would like you to update the wiki with changes.\" Destructive git (force push, history rewrite) still needs asking."
+  },
+  "checks": [
+    { "run": "pnpm lint", "shell": "powershell" },
+    { "run": "pnpm typecheck", "shell": "powershell" },
+    { "run": "pnpm test", "shell": "powershell" }
+  ],
+  "neverStage": ["AGENTS.md", "CLAUDE.md"],
+  "delivery": {
+    "mode": "direct-push",
+    "base": "main",
+    "ci": "wait",
+    "commitStyle": "Plain sentence saying what the change does, phase in brackets when it is plan work, e.g. \"Search the US National Archives with a key of the user's own (Phase 3e)\"."
+  },
+  "version": { "source": "none" },
+  "tag": { "create": "none" },
+  "release": { "mode": "none" },
+  "wiki": {
+    "enabled": true,
+    "when": "every-ship",
+    "url": "https://github.com/speedyrulz/rulz-ancestry.wiki.git",
+    "branch": "master",
+    "clone": "scratchpad",
+    "public": true,
+    "changelog": {
+      "page": "Changelog.md",
+      "entry": "Date, link to the commit or PR, what changed."
+    },
+    "pages": [
+      { "paths": ["docs/PLAN.md"], "pages": ["Roadmap.md", "Home.md"] },
+      { "paths": ["packages/connectors/**", "docs/ACCESS.md"], "pages": ["Data-Sources.md"] },
+      { "paths": ["packages/**", "apps/**"], "pages": ["Architecture.md"] },
+      {
+        "paths": [
+          "package.json",
+          "pnpm-lock.yaml",
+          "pnpm-workspace.yaml",
+          "tools/**",
+          ".github/**",
+          "eslint.config.js",
+          "vitest*.ts",
+          "tsconfig.base.json"
+        ],
+        "pages": ["Development.md"]
+      }
+    ],
+    "review": ["Home.md", "_Sidebar.md", "Roadmap.md"],
+    "order": "after-merge",
+    "rules": "Home.md holds the status line; Roadmap.md the phase status, 'Waiting on outside parties' and decisions. New pages go in _Sidebar.md. Never use places or names from the owner's real Ancestry export as examples, in the wiki or anywhere else."
+  },
+  "pulls": { "mainCheckout": true },
+  "extraSteps": [],
+  "notes": "Stage changed files by name (never git add -A) and scan the diff for personal details before committing; say plainly in the report if a check failed. Watch the CI run on main after the push (ci.yml runs format, lint, typecheck, tests, e2e and the packaged-app test). pnpm format:check is left out of the local checks because Prettier flags the untracked AGENTS.md here; CI runs it. Run tools via package scripts: pnpm exec / pnpm vitest fail with \"'node' is not recognized\" on this PC. Run every wiki git command as git -C <wiki folder>. The project hook .claude/hooks/wiki-reminder.cjs reminds about the wiki after git push / gh pr merge and stays silent for pushes from a folder whose path contains 'wiki'. AGENTS.md and CLAUDE.md stay untracked: they were once pushed by mistake and erased from the public history."
+}
