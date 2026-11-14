@@ -47,7 +47,10 @@ signed in with your own Claude account.
   - The conditions and the contact link are on <https://code.claude.com/docs/en/legal-and-compliance>, under "Can customers offer Claude Code in their products?" and "Authentication and credential use".
   - Ask whether a free, open-source desktop app may start the user's own unmodified Claude Code, which the user installed and signed in to themselves, for each AI run.
   - Do not build route B before a written answer.
-- [ ] **Check each source's terms for AI use** before setting `mayShareWithAi` in its manifest. Start with WikiTree, the Library of Congress, Open Archives and NARA.
+- [ ] **Check each source's terms for AI use** before setting `mayShareWithAi` in its manifest.
+  - Done 2026-11-14: Open Archives (its page for AI agents invites them) and Wikidata (structured data is in the public domain). Both are set.
+  - **To do by the project owner: WikiTree.** Its policy pages refuse automated readers, so no tool could read them. Read <https://www.wikitree.com/wiki/Help:App_Policies> in a browser, or ask WikiTree, whether profile data from its API may be passed to an AI service the user chose.
+  - Left out for now: the Library of Congress and the Internet Archive (nothing clear in their terms, and their results are free text), and the US National Archives (their terms bar keeping what the API returns).
 - [ ] **Read Anthropic's trademark guidelines** before the feature is named or described in the app: <https://www.anthropic.com/legal/trademark-guidelines>
 
 ## Needed before Phase 5 (more connectors) — to confirm

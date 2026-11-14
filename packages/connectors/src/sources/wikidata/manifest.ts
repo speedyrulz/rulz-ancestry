@@ -12,6 +12,7 @@ export const wikidataManifest = defineManifest({
   pauseSeconds: 600,
   cacheTtlHours: 24,
   mayStoreImages: false,
+  mayShareWithAi: true,
   attribution: 'Wikidata (wikidata.org), in the public domain (CC0)',
   termsUrl: 'https://foundation.wikimedia.org/wiki/Policy:Terms_of_Use',
   docsUrl: 'https://www.mediawiki.org/wiki/Wikidata_Query_Service/User_Manual',
@@ -22,5 +23,6 @@ export const wikidataManifest = defineManifest({
     'Its own limits are a share of processing time per minute, not a number of requests. The number here is the project’s own.',
     'Wikidata has entries for people of some note only, and many of them are living. The app shows none who may be living.',
     'Structured data of Wikidata is in the public domain (CC0).',
+    'Use by an AI assistant, read on 2026-11-14: the page Wikidata:Licensing says that all structured data, the labels and descriptions of an entry among it, is released into the public domain under CC0, which sets no condition on passing it on. The terms of use bar automated use that is abusive or disruptive; a result is passed on from what a search of the user already fetched, and nothing more is asked of Wikidata for it.',
   ],
 });

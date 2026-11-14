@@ -8,6 +8,7 @@ import {
   deepLinkSources,
   internetArchiveConnector,
   internetArchiveManifest,
+  isOnSite,
   locConnector,
   locManifest,
   naraCatalogConnector,
@@ -1280,21 +1281,6 @@ function factsToTake(record: ExternalRecord): RecordFact[] {
     ...fact,
     place: fact.place.slice(0, PLACE_TEXT_MAX).trim(),
   }));
-}
-
-/** True when an address is HTTPS and on the site of a source, where its records' pages are. */
-function isOnSite(address: string, manifest: ConnectorManifest): boolean {
-  // An address with a gap or a control character in it is none: reading it
-  // as a URL would drop some of them without a word, and it would be handed
-  // on as it stands.
-  if (typeof address !== 'string' || /[\s\p{Cc}]/u.test(address)) return false;
-  try {
-    const url = new URL(address);
-    const site = new URL(manifest.siteUrl ?? manifest.baseUrl);
-    return url.protocol === 'https:' && url.origin === site.origin;
-  } catch {
-    return false;
-  }
 }
 
 /** A date of a record in the words the app uses for dates. */

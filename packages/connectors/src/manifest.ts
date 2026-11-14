@@ -63,6 +63,13 @@ export const connectorManifestSchema = z
      * identifier and its address, which the app makes itself. Absent means it may.
      */
     mayStoreText: z.boolean().optional(),
+    /**
+     * True when the source's own pages were read and allow that what it
+     * returns is passed on to an AI service, for the optional AI assistant.
+     * Absent means it may not: a source is shared only once someone has read
+     * its terms for this, and the notes say what was read and when.
+     */
+    mayShareWithAi: z.boolean().optional(),
     /** A hard cap per key over a longer period, when the source states one. */
     quota: z
       .object({
@@ -104,6 +111,21 @@ export const connectorManifestSchema = z
         message: 'a source with a key names the header it is sent in, and no other source does',
       });
     }
+    if (manifest.mayShareWithAi === true && manifest.tier === 'deeplink') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['mayShareWithAi'],
+        message: 'deep-link sources are never fetched by the app, so there is nothing to pass on',
+      });
+    }
+    if (manifest.mayShareWithAi === true && manifest.mayStoreText === false) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['mayShareWithAi'],
+        message:
+          'what an AI quotes of a record is kept with its proposal, which a source that bars keeping does not allow',
+      });
+    }
     if (manifest.auth !== 'none' && manifest.access === 'open') {
       ctx.addIssue({
         code: 'custom',
@@ -115,6 +137,24 @@ export const connectorManifestSchema = z
 
 export type ConnectorManifest = z.infer<typeof connectorManifestSchema>;
 export type ConnectorTier = ConnectorManifest['tier'];
+
+/** True when an address is HTTPS and on the site of a source, where its records' pages are. */
+export function isOnSite(
+  address: unknown,
+  manifest: Pick<ConnectorManifest, 'siteUrl' | 'baseUrl'>,
+): boolean {
+  // An address with a gap or a control character in it is none: reading it
+  // as a URL would drop some of them without a word, and it would be handed
+  // on as it stands.
+  if (typeof address !== 'string' || /[\s\p{Cc}]/u.test(address)) return false;
+  try {
+    const url = new URL(address);
+    const site = new URL(manifest.siteUrl ?? manifest.baseUrl);
+    return url.protocol === 'https:' && url.origin === site.origin;
+  } catch {
+    return false;
+  }
+}
 
 /** Validates a manifest when its module loads, so a bad manifest fails at startup. */
 export function defineManifest(manifest: ConnectorManifest): ConnectorManifest {
