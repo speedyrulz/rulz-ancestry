@@ -424,6 +424,24 @@ describe('HttpClient', () => {
     expect((await failure(client.getJson('a'))).kind).toBe('timeout');
   });
 
+  it('gives a source that is known to be slow the time its manifest names', async () => {
+    // An answer that takes its time, and is given up when the request is.
+    const slow = (_url: string, init: Parameters<HttpFetch>[1]) =>
+      new Promise<Response>((resolve, reject) => {
+        const late = setTimeout(() => resolve(json({ late: true })), 80);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(late);
+          reject(new Error('aborted'));
+        });
+      });
+    // The client's own time is over long before the answer comes.
+    const hasty = setup(slow, { timeoutMs: 20 });
+    expect((await failure(hasty.client.getJson('a'))).kind).toBe('timeout');
+    // The manifest's time is not.
+    const patient = setup(slow, { timeoutMs: 20 }, { ...source, timeoutSeconds: 2 });
+    expect((await patient.client.getJson('a')).data).toEqual({ late: true });
+  });
+
   it('asks without following an answer that points elsewhere', async () => {
     const { client, asked } = setup((_url, init) => {
       expect(init.redirect).toBe('error');

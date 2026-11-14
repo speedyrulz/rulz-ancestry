@@ -47,6 +47,11 @@ export const connectorManifestSchema = z
      * of an answer. The client's own pause when absent.
      */
     pauseSeconds: z.number().int().positive().optional(),
+    /**
+     * How long the source is given to answer, in seconds, when it is known to
+     * take longer than most. The client's own time when absent.
+     */
+    timeoutSeconds: z.number().int().positive().max(180).optional(),
     /** The request header a key is sent in, for a source that needs one. A key is never put into an address. */
     keyHeader: z
       .string()

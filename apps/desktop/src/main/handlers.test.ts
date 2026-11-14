@@ -1783,6 +1783,15 @@ describe('the search for records', () => {
       ['internet-archive', 'text'],
       ['nara-catalog', 'text'],
     ]);
+    // The Library of Congress is known to be slow, and is given more time than the others.
+    expect(setup.sources.map((source) => source.slowSeconds)).toEqual([
+      null,
+      null,
+      null,
+      90,
+      null,
+      null,
+    ]);
     // Only the National Archives need a key, and count what they are asked.
     expect(setup.sources.map((source) => source.key)).toEqual([
       'none',

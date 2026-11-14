@@ -493,10 +493,13 @@ export class HttpClient {
       // while the request waited. Then the request is counted, and goes out.
       const key = this.#key(manifest);
       this.#spend(manifest);
+      // A source that is known to be slow is given the time its manifest names.
+      const patience =
+        manifest.timeoutSeconds === undefined ? this.#timeoutMs : manifest.timeoutSeconds * 1000;
       timer = setTimeout(() => {
         timedOut = true;
         abort.abort();
-      }, this.#timeoutMs);
+      }, patience);
       let response: Response;
       try {
         response = await this.#fetch(url.href, {

@@ -554,6 +554,8 @@ export interface RecordSourceInfo {
   searches: 'person' | 'text';
   /** What of the search form is sent to the source, in words for the user. */
   asks: string;
+  /** How long the source is given to answer, in seconds, when that is longer than most; null otherwise. */
+  slowSeconds: number | null;
   /**
    * Where the source stands with the user's own key:
    * - "none": it needs no key;

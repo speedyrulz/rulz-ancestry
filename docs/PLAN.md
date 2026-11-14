@@ -788,7 +788,9 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Turned down from the design views: sending the years as a limit of the search (Opus; what the catalog's dates mean for a search was not tried), a kind of record of its own for an archive's description (Codex; a text with a few words on what kind of thing it is serves), and a key in an environment variable for a check on the owner's PC (the owner types it into the app instead).
 
-Tests: unit tests went from 1036 to 1070, end-to-end tests from 38 to 39.
+Tried by the owner on 2026-11-13, with their own key, in the app. The key was saved and three requests went out to the Archives, by the app's count. What the Archives' section of the window showed was not yet reported when this was written. In the same trial the Library of Congress did not answer within 20 seconds; it is now given 90 (`timeoutSeconds` in its manifest), and the window says so while it waits.
+
+Tests: unit tests went from 1037 to 1071, end-to-end tests from 38 to 39.
 
 Not done:
 
@@ -835,7 +837,7 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Turned down from the design views: showing only death records of Open Archives (Codex; it would hide the birth and marriage records the search is for, and the 110 years serve the same end), a limit of 100 years in place of the tree's 110 (Opus), and asking Wikidata through the wiki's own API in two requests (both; see above for the measurement).
 
-Tests: unit tests went from 1005 to 1036, end-to-end tests stayed at 38 (the first of them now covers all three services). The five checks against the services themselves passed.
+Tests: unit tests went from 1005 to 1037, end-to-end tests stayed at 38 (the first of them now covers all three services). The five checks against the services themselves passed.
 
 Not done:
 

@@ -256,7 +256,13 @@ function SourceResults({
           {problemWords(found.problem)}
         </p>
       )}
-      {found.busy && <p className="muted">Searching…</p>}
+      {found.busy && (
+        <p className="muted" data-testid="record-busy">
+          Searching…
+          {source.slowSeconds !== null &&
+            ` This service can take a while; the app waits up to ${source.slowSeconds} seconds.`}
+        </p>
+      )}
       {found.nextOffset !== null && !found.busy && (
         <button type="button" onClick={onMore} data-testid="record-more">
           More results

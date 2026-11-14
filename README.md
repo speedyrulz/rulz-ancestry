@@ -186,7 +186,8 @@ Searching for records:
   the person's name as a phrase, printed between the year of their birth and
   the year after their death, and you can add a state.
   [Chronicling America](https://www.loc.gov/collections/chronicling-america/)
-  at the Library of Congress is searched in the text of its newspaper pages.
+  at the Library of Congress is searched in the text of its newspaper pages;
+  it can take a minute and more to answer, and the app waits up to 90 seconds.
   The [Internet Archive](https://archive.org/) is searched in the titles,
   authors and descriptions of its books, not inside them, and is sent the
   words only. The form says which service is sent what.

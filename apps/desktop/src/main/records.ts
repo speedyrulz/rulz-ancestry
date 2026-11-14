@@ -272,6 +272,7 @@ export class RecordSearchService {
       name: connector.manifest.name,
       searches: connector.searchPersons === undefined ? 'text' : 'person',
       asks: ASKS[connector.manifest.id] ?? '',
+      slowSeconds: connector.manifest.timeoutSeconds ?? null,
       key: this.#keyState(connector.manifest),
       quota: this.#quotaOf(connector.manifest),
       attribution: connector.manifest.attribution,
