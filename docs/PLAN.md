@@ -933,9 +933,11 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Tests: unit tests went from 1217 to 1230, end-to-end tests from 41 to 44.
 
+Tried against WikiTree itself, once, later on 2026-11-14 with the project owner's go-ahead: the built app, a tree of three people of public history who died more than 150 years ago (a person and both parents), WikiTree alone. The window announced three requests and three were sent, 1.3 and 1.2 seconds apart, each answered with status 200. Every person had a result labelled "Fits well" with the right dates and places; one had four more results ("May fit", "Does not fit"), and one profile was counted as not shown. Seen in this: the results of a person stand in the order WikiTree gives them, so one that fits well can stand below one that may fit. The search for one person does the same.
+
 Not done:
 
-- **The run was not tried against WikiTree or Open Archives themselves.** The tests answer in their place. The terms of both were not read again for this part; the limits are those recorded when their connectors were written.
+- **The run was not tried against Open Archives itself, and against WikiTree once only.** The tests answer in their place. A service that answers "too many requests" or not at all was seen in the tests only. The terms of both were not read again for this part; the limits are those recorded when their connectors were written.
 - **No source of texts, and not Wikidata.** They stay with the search for one person.
 - **Direct ancestors only.** No descendants, no brothers and sisters, and no way to untick one person of the list.
 - **The first 20 results of each service, and no "More results"** in this window. The search for one person has it.
