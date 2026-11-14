@@ -551,7 +551,7 @@ data in and return plain data, so these tools are thin wrappers around them.
 - **The AI proposes and the user decides.** AI tools cannot write to the tree. A change happens only when the user accepts a proposal, through `Tree.transact` like any other edit.
 - **Every reason quotes the record.** The app checks each quote against the record as it was passed on and drops a reason whose quote is not there. A proposal left with no reason is not shown. This guards against invented evidence. What counts as a quote is in "Phase 4b.1 outcome".
 - **The source rules still apply.** AI searches go through the connectors and the shared HTTP client, with the same rate limits, quotas and attribution. No scraping. Tier C stays link-only. Each run has a search budget per source, which matters for sources with a monthly quota such as NARA.
-- **Each source must permit it.** A new manifest field, `mayShareWithAi`, says whether a source's record text may be sent to an AI service. It is absent, which means no, until that source's terms have been checked. Since part 4b.1 it is set for Open Archives and Wikidata.
+- **Each source must permit it.** A new manifest field, `mayShareWithAi`, says whether a source's record text may be sent to an AI service. It is absent, which means no, until that source's terms have been checked. Since part 4b.1 it is set for Open Archives, whose page for AI agents allows it in words, for Wikidata, whose structured data is in the public domain, and for WikiTree, whose pages say nothing on it (the project owner's decision of 2026-11-14).
 - **Living people are masked** in what the tools return, as "Living person" plus the relationship. Phase 4b has no way to switch this off for a tree (decided 2026-11-14). DNA data is never offered to the AI, and neither are notes, media or the text of citations.
 - **Record text is untrusted.** A record, a newspaper page or a community tree profile may contain text written as instructions. It is passed as data. Because the tools can only read and propose, the worst result is a bad proposal, which the user reviews.
 - **An activity log** lists each run's searches, the records read and what was sent. It is kept in the app database, not in the tree folder.
@@ -965,12 +965,12 @@ What the checks of facts found:
 
 - **A `.mcpb` file the user opens is the documented way** to give Claude Desktop a local tool server, and Claude Desktop brings its own Node.js. No documented way lets it reach a server on this PC by an address, so the bridge program of route A is needed. Claude Code adds the same bridge with `claude mcp add`. This is a helper's reading of Anthropic's documentation on 2026-11-14; the pages are to be read again when part 4b.4 is built.
 - **Open Archives invites use by AI assistants** (its page for them was read by the primary agent), and **the structured data of Wikidata is in the public domain** (its licensing page was read by the primary agent). Both are noted in their manifests.
-- **WikiTree's rules could not be read by any tool:** its policy pages refuse automated readers. WikiTree stays out of the AI feature until the project owner has read its app policies or asked WikiTree.
+- **WikiTree's rules could not be read by any tool:** its policy pages refuse automated readers. The project owner read its app policies in a browser later the same day and found no rule on use by an AI, for it or against it (see "WikiTree is passed on too" below).
 - **The Library of Congress and the Internet Archive say nothing clear** about it, and their results are free text of newspapers and books, which can name living people. They stay out at first. **The US National Archives** bar keeping what they return, and a quote of a record is kept, so they stay out.
 
 Decided by the project owner on 2026-11-14, by going ahead with what the plan recommended:
 
-- **Sources at first:** Open Archives and Wikidata.
+- **Sources at first:** Open Archives and Wikidata. WikiTree was added later the same day (see "WikiTree is passed on too" below).
 - **Who starts a search:** the user, by starting a session in the app for one person or up to three generations, with 10 requests per source (30 at most), Stop, and an end when nothing happens for a while.
 - **Search words:** the AI may choose them within limits (a name must be like one the tree has for the person, years within about 10), and every question is shown as it is asked.
 - **Proposals** stay in memory until the user keeps one; a kept one stores the AI's reasons with it.
@@ -988,7 +988,7 @@ Delivered, as a new package `packages/ai` that nothing calls yet:
   - No free text of the user is given: no note, no description of an event. A date is written anew by the app in the wording of a GEDCOM file, from what it reads in the text; a date it cannot read gives nothing. Names and places are given as they stand, cleaned to one line.
   - An event of a couple is not given while the other partner may be living.
 - **A record as it is passed on** (`record.ts`): its texts under their names ("title", "role", "birth date"), with the source's name, credit line and the address of the record. Only for a source that allows it, and only when the record names that source and its address is on the source's site.
-- **`mayShareWithAi`** in the manifest of a source: absent means no. The schema refuses it for a source the app never fetches and for one that bars keeping what it returns. Set for Open Archives and Wikidata, each with a note of what was read.
+- **`mayShareWithAi`** in the manifest of a source: absent means no. The schema refuses it for a source the app never fetches and for one that bars keeping what it returns. Set for Open Archives and Wikidata, each with a note of what was read; WikiTree followed later the same day.
 - **The check of a quote** (`quote.ts`): a quote counts when it is the whole of one text of the record, or whole words of it of at least 4 characters. Capitals, the forms of one letter, runs of white space and the curly and straight forms of a mark count as the same; a letter with an accent and one without do not. A quote cannot run from one text into the next. Where the check cannot be sure it says no: a character that stands for several ("½") is quoted whole or not at all, and a word where a text was cut ("1850…") is not a whole word.
 - **The check of a proposal** (`proposal.ts`): a verdict ("fits", "may fit", "does not fit"), a confidence, and 1 to 12 reasons, each for or against, each with a quote. A reason whose quote is not found is dropped and handed back with why. A proposal with no reason left is refused, and so is a verdict that no kept reason stands behind.
 - **The check that an address is on a source's site** moved from the app to the connectors package, unchanged, so that both use one.
@@ -1001,17 +1001,33 @@ Reviews: this part was treated as level 2 (a Claude Opus subagent and Codex, eac
 - **Fixed, found by Codex:** two answers, "not in the tree" and "may be living", told of an id that a living person has it. There is one answer now.
 - **Fixed, found by Opus:** a word at the place where a text was cut counted as a whole word; the acute accent and the double prime were not taken as the marks they are used for; the place of a living brother or sister in a list told about when they were born; every text of a record was made plain again for every reason (now once for each record); half of a character could be left where a text was cut.
 - **Turned down:** the order of the matches of a search is worked out over all names of the tree, those of living people among them, which could shift the order of the others by a little (Opus). Nothing of a living person can be read from it in practice, and the search of the tree is not changed for it. A capital I with a dot is not found by a quote with a plain i (Opus): the check says no where it is not sure.
-- **Left for part 4b.2:** the check of a record does not look whether it is of someone living (Opus). A connector leaves such records out when it reads an answer, so the session may pass on only what a search of the app gave; this is written at the function.
+- **Left for part 4b.2:** the check of a record does not look whether it is of someone living (Opus). A connector leaves such records out when it reads an answer, so the session may pass on only what a search of the app gave, and no record read back from a tree's file; this is written at the function.
 
 Tests: unit tests went from 1231 to 1287. The end-to-end tests (44) passed on the build made before the fixes of the reviews; those fixes are in the new package only, which the app does not load yet.
 
 Not done:
 
 - **Nothing calls the new package.** No session, no screen, no connection to Claude: those are parts 4b.2 to 4b.4.
-- **WikiTree's rules on use by an AI are unread.** It is the source that matters most for ancestors in the United States.
+- **WikiTree's rules on use by an AI were unread** when this part was finished. It is the source that matters most for ancestors in the United States. Settled later the same day: see below.
 - **The terms of Open Archives differ per archive.** Its page for AI agents says most data is CC0 and some CC BY-SA; the archive and the address of a record go with every record that is passed on, and nothing more was checked per archive.
 - **Places and names are given as the user typed them.** A place field that holds a remark would be passed on.
 - **The rules were tried by tests only,** with made-up people. No AI has used them yet.
+
+### WikiTree is passed on too (2026-11-14)
+
+Decided by the project owner, after part 4b.1 was finished:
+
+- **What was read:** the project owner read WikiTree's app policies in a browser (<https://www.wikitree.com/wiki/Help:App_Policies>; the pages refuse automated readers, so no tool read them) and found no rule on use by an AI, for it or against it.
+- **What was decided:** to allow it on that reading. `mayShareWithAi` is set in WikiTree's manifest, with a note that says so. This is a third case beside the two of part 4b.1: the page of Open Archives for AI agents allows it in words, the structured data of Wikidata is in the public domain, and WikiTree's pages are silent. The comment at the field in `manifest.ts` names the case of a source whose pages allow it and that of one whose pages are silent.
+- **What is passed on of a profile:** its name, its sex, and the dates and places of its birth and death, with the credit line and the address of the profile. The connector asks WikiTree for no biography, and shows only a profile that WikiTree calls public or open and not living. Nothing more is asked of WikiTree for the AI than a search of the user already fetched.
+- **Names and places are as members of WikiTree typed them.** A date is written anew by the app, the sex is one of two letters and the address is made from the profile's id, so none of those can carry other text. A name or a place can: a remark typed into one of them goes along, as it does for the user's own tree (see "Not done" of part 4b.1). The rule that the text of a record is untrusted covers it.
+- **What is not known:** WikiTree itself was not asked. If it states a rule against it, the setting is taken out again. The primary agent's advice was to ask WikiTree first; the project owner chose to allow it now.
+- **A field to watch:** if the connector ever asks WikiTree for a biography or any other long free text, this decision is to be looked at again, because such a text is written by members and can name living people.
+- **For part 4b.2:** only a result of a search may be passed on, never a record that was kept in a tree and read back from its file. A kept record is not checked again for a living person, and its "about" text is whatever the file holds, so through it a text could go along that the connector never made. `sharedRecordOf` does not tell the two apart; the session has to.
+
+Review: a Claude Opus subagent read the change (level 1). Taken from it: the two points above on names and places and on kept records, a test that goes through the connector (a living and a private profile are not passed on, a biography that came unasked is not read), and the wording on Wikidata, whose licence allows any use but does not name AI. Nothing was turned down.
+
+Tests: unit tests went from 1287 to 1288 (profiles of WikiTree, read by the connector, as they are passed on).
 
 ### Phase 3 breakdown
 

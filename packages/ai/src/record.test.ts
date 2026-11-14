@@ -7,6 +7,7 @@ import {
   manifests,
   naraCatalogManifest,
   openArchivesManifest,
+  parseWikitreeSearch,
   wikidataManifest,
   wikitreeManifest,
   type ConnectorManifest,
@@ -45,6 +46,7 @@ describe('which sources may be passed on to an AI assistant', () => {
   it('are those whose terms were read for it, and no others', () => {
     // A source is added here only with a note in its manifest of what was read, and when.
     expect(manifests.filter(mayShareWithAi).map((manifest) => manifest.id)).toEqual([
+      'wikitree',
       'wikidata',
       'open-archives',
     ]);
@@ -95,6 +97,88 @@ describe('a record as an AI assistant gets it', () => {
       { name: 'birth place', value: 'Zwolle' },
       { name: 'death date', value: 'ABT 1921' },
     ]);
+  });
+
+  it('is the name, the sex, the birth and the death of a profile of WikiTree, and nothing more', () => {
+    // Through the connector, as a search gives it. The people are made up, and
+    // WikiTree is not asked for a biography: one that came all the same is not read.
+    const profile = {
+      Id: 1,
+      Name: 'Veldkamp-90001',
+      FirstName: 'Marten',
+      MiddleName: '',
+      RealName: 'Marten',
+      LastNameAtBirth: 'Veldkamp',
+      LastNameCurrent: 'Veldkamp',
+      Suffix: '',
+      BirthDate: '1850-03-01',
+      DeathDate: '1921-00-00',
+      BirthLocation: 'Zwolle',
+      DeathLocation: '',
+      Gender: 'Male',
+      IsLiving: 0,
+      Privacy: 60,
+      DataStatus: { BirthDate: 'certain', DeathDate: 'guess' },
+      Bio: 'A biography that a member wrote.',
+    };
+    const found = parseWikitreeSearch(
+      [
+        {
+          status: 0,
+          total: 4,
+          matches: [
+            profile,
+            { ...profile, Name: 'Veldkamp-90002', IsLiving: 1 },
+            { ...profile, Name: 'Veldkamp-90003', Privacy: 40 },
+            {
+              ...profile,
+              Name: 'Zandstra-90004',
+              FirstName: 'Jikke',
+              RealName: 'Jikke',
+              LastNameAtBirth: 'Zandstra',
+              Gender: 'Female',
+            },
+          ],
+        },
+      ],
+      { offset: 0, limit: 10 },
+    );
+
+    const shared = found.items.map((record) => sharedRecordOf(record, wikitreeManifest));
+
+    const fields = [
+      { name: 'birth date', value: '1 MAR 1850' },
+      { name: 'birth place', value: 'Zwolle' },
+      { name: 'death date', value: 'ABT 1921' },
+    ];
+    const common = {
+      sourceId: 'wikitree',
+      sourceName: 'WikiTree',
+      attribution: wikitreeManifest.attribution,
+      kind: 'person',
+    };
+    // The living one and the private one are not among them.
+    expect(shared).toEqual([
+      {
+        ok: true,
+        record: {
+          ...common,
+          sex: 'M',
+          url: 'https://www.wikitree.com/wiki/Veldkamp-90001',
+          fields: [{ name: 'title', value: 'Marten Veldkamp' }, ...fields],
+        },
+      },
+      {
+        ok: true,
+        record: {
+          ...common,
+          sex: 'F',
+          url: 'https://www.wikitree.com/wiki/Zandstra-90004',
+          fields: [{ name: 'title', value: 'Jikke Veldkamp (born Zandstra)' }, ...fields],
+        },
+      },
+    ]);
+    expect(JSON.stringify(shared)).not.toContain('biography');
   });
 
   it('numbers a second birth or death of one record', () => {
@@ -172,12 +256,7 @@ describe('a record as an AI assistant gets it', () => {
   });
 
   it('is not given for a source whose terms were not read for it', () => {
-    for (const manifest of [
-      wikitreeManifest,
-      locManifest,
-      internetArchiveManifest,
-      naraCatalogManifest,
-    ]) {
+    for (const manifest of [locManifest, internetArchiveManifest, naraCatalogManifest]) {
       const record = {
         ...painter,
         connectorId: manifest.id,

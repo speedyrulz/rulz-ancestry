@@ -17,7 +17,9 @@ import type { ExternalRecord } from '@rulz/core';
  *
  * Whether a record is of someone who may be living is not looked at here. A
  * connector leaves such records out when it reads an answer of its source,
- * so only what a search of the app gave may be passed on through this.
+ * so only what a search of the app gave may be passed on through this. A
+ * record that was kept in a tree and read back from its file is not such a
+ * result: nothing looked at it again, and its texts are what the file holds.
  */
 
 /** One text of a record, under the name of what it is. */

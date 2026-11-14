@@ -64,10 +64,12 @@ export const connectorManifestSchema = z
      */
     mayStoreText: z.boolean().optional(),
     /**
-     * True when the source's own pages were read and allow that what it
-     * returns is passed on to an AI service, for the optional AI assistant.
-     * Absent means it may not: a source is shared only once someone has read
-     * its terms for this, and the notes say what was read and when.
+     * True when what the source returns may be passed on to an AI service,
+     * for the optional AI assistant: its own pages were read and allow it, or
+     * they were read, say nothing on it, and the project owner decided to
+     * allow it. Absent means it may not: a source is shared only once someone
+     * has read its terms for this, and the notes say what was read, when, and
+     * which of the two it is.
      */
     mayShareWithAi: z.boolean().optional(),
     /** A hard cap per key over a longer period, when the source states one. */
