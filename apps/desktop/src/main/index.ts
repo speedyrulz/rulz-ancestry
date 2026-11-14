@@ -88,12 +88,25 @@ function defaultTreesDir(): string {
   return join(app.getPath('documents'), app.isPackaged ? 'RulZ Ancestry' : 'RulZ Ancestry (dev)');
 }
 
+/**
+ * The switch the end-to-end tests start the app with, so that a test run does
+ * not get in the way of whoever is working at the PC: the window opens beyond
+ * the edge of the screen, takes no focus and has no button on the taskbar.
+ * It is drawn and behaves as any window, which a hidden one would not.
+ */
+const BACKGROUND_SWITCH = 'background-window';
+
+/** Far enough to the left and above to be on no screen. */
+const OFF_SCREEN = -20_000;
+
 function createMainWindow(): BrowserWindow {
+  const background = app.commandLine.hasSwitch(BACKGROUND_SWITCH);
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 600,
+    ...(background ? { x: OFF_SCREEN, y: OFF_SCREEN, skipTaskbar: true } : {}),
     show: false,
     title: 'RulZ Ancestry',
     autoHideMenuBar: true,
@@ -104,10 +117,15 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // A window nobody looks at would be slowed down; a test must not be.
+      ...(background ? { backgroundThrottling: false } : {}),
     },
   });
 
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    if (background) window.showInactive();
+    else window.show();
+  });
 
   // Links to outside sites open in the user's browser; the app never opens
   // a second window or navigates its own window away from the app page.

@@ -30,10 +30,13 @@ import {
   describeDate,
   isEmptyQuery,
   isEmptyTextQuery,
+  jdnToCalendar,
+  scoreRecord,
   parseDate,
   queryYear,
   textQueryProblem,
   type ExternalRecord,
+  type MatchSubject,
   type PageRequest,
   type PersonQuery,
   type TextQuery,
@@ -58,6 +61,7 @@ import type {
   RecordSearchProblem,
   RecordSearchRequest,
   RecordSearchResult,
+  RecordFitInfo,
   RecordSearchSetup,
   RecordSourceInfo,
   RecordSourceKeyResult,
@@ -586,9 +590,20 @@ export class RecordSearchService {
         this.#shown.delete(key);
       }
       const cited = citedUrls(tree, request.personId);
+      // Each result is held against the person of the tree, as the tree has
+      // them now, whatever was typed into the form. Nothing is sent for it.
+      const subject = subjectOf(tree, request.personId);
+      const fits: Record<string, RecordFitInfo> = {};
+      for (const record of answer.page.items) {
+        const fit = scoreRecord(subject, record);
+        if (fit !== null) {
+          fits[record.key] = { band: fit.band, reasons: fit.reasons, doubts: fit.doubts };
+        }
+      }
       return {
         ok: true,
         sourceId,
+        fits,
         attached: answer.page.items
           .filter((record) => cited.has(record.url))
           .map((record) => record.key),
@@ -720,6 +735,37 @@ export function localDay(at: number): string {
   const date = new Date(at);
   const two = (value: number) => String(value).padStart(2, '0');
   return `${String(date.getFullYear()).padStart(4, '0')}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+}
+
+/**
+ * What of a person of the tree a result is held against: every name, the sex,
+ * the years the birth and the death can lie in, and every place the tree
+ * names for them.
+ */
+function subjectOf(tree: Tree, personId: string): MatchSubject {
+  const person = getPerson(tree, personId);
+  const events = listPersonEvents(tree, personId);
+  const yearOf = (jdn: number) => jdnToCalendar('gregorian', jdn).year;
+  const of = (type: string) => events.find((event) => event.type === type);
+  const span = (type: string) => {
+    const event = of(type);
+    // A date that is open to one side ("before 1850") gives no span of years.
+    return event === undefined || event.dateMinJdn === null || event.dateMaxJdn === null
+      ? null
+      : { min: yearOf(event.dateMinJdn), max: yearOf(event.dateMaxJdn) };
+  };
+  const names = listNames(tree, personId);
+  return {
+    sex: person?.sex ?? 'U',
+    names: [...names]
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+      .map((name) => ({ given: name.given, surname: name.surname })),
+    birth: span('birth'),
+    death: span('death'),
+    birthPlace: of('birth')?.placeText ?? '',
+    deathPlace: of('death')?.placeText ?? '',
+    places: [...new Set(events.map((event) => event.placeText).filter((place) => place !== ''))],
+  };
 }
 
 /** The name and years of a person of the tree, as a search starts with them. */

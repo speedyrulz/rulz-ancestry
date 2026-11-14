@@ -1719,6 +1719,19 @@ ul.media-grid,
   margin: 0.25rem 0;
 }
 
+.fit-strong {
+  background: #cfe8d5;
+  color: #14401f;
+}
+
+.fit-weak,
+.fit-unlikely {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: inherit;
+  opacity: 0.8;
+}
+
 .record-key {
   margin: 0.75rem 0;
   padding: 0.6rem 0.75rem;

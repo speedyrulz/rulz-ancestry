@@ -11,6 +11,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import type {
   PersonCitationInfo,
+  RecordFitInfo,
   RecordLinkInfo,
   RecordSearchProblem,
   RecordSearchSetup,
@@ -72,6 +73,8 @@ type Asked = { kind: 'person'; query: PersonQuery } | { kind: 'text'; query: Tex
 /** What one source has answered so far. */
 interface Found {
   items: ExternalRecord[];
+  /** How well each result fits the person of the tree, by its key. */
+  fits: Record<string, RecordFitInfo>;
   total: number | null;
   nextOffset: number | null;
   hidden: number;
@@ -81,6 +84,7 @@ interface Found {
 
 const NOTHING: Found = {
   items: [],
+  fits: {},
   total: null,
   nextOffset: null,
   hidden: 0,
@@ -120,14 +124,28 @@ function problemWords(problem: RecordSearchProblem): string {
     : problem.message;
 }
 
+/**
+ * The words for how well a result fits. They say what agrees, not who a
+ * record is of: that is for the user to judge. A result that scores low with
+ * nothing against it has little to go by, which is not a conflict.
+ */
+function fitWords(fit: RecordFitInfo): string {
+  if (fit.band === 'strong') return 'Fits well';
+  if (fit.band === 'possible') return 'May fit';
+  if (fit.band === 'unlikely') return 'Does not fit';
+  return fit.doubts.length === 0 ? 'Little to go by' : 'Some details conflict';
+}
+
 interface ResultProps {
   record: ExternalRecord;
+  /** How well the result fits the person; undefined for a text, which is not held against them. */
+  fit: RecordFitInfo | undefined;
   attached: boolean;
   busy: boolean;
   onAttach: () => void;
 }
 
-function Result({ record, attached, busy, onAttach }: ResultProps) {
+function Result({ record, fit, attached, busy, onAttach }: ResultProps) {
   return (
     <li data-testid="record-result">
       <span className="record-attach">
@@ -144,8 +162,24 @@ function Result({ record, attached, busy, onAttach }: ResultProps) {
       <a href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
         {record.title}
       </a>
+      {fit !== undefined && (
+        <span className={`badge fit fit-${fit.band}`} data-testid="record-fit">
+          {fitWords(fit)}
+        </span>
+      )}
       {record.kind === 'person' && record.sex !== null && (
         <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
+      )}
+      {fit !== undefined && (fit.reasons.length > 0 || fit.doubts.length > 0) && (
+        <div className="record-fact muted" data-testid="record-fit-why">
+          {[
+            fit.reasons.join('. '),
+            fit.doubts.length === 0 ? '' : `Against it: ${fit.doubts.join('; ').toLowerCase()}`,
+          ]
+            .filter((part) => part !== '')
+            .join('. ')}
+          .
+        </div>
       )}
       {record.kind === 'person' && record.about !== '' && (
         <div className="record-fact" data-testid="record-about">
@@ -232,6 +266,7 @@ function SourceResults({
             <Result
               key={record.key}
               record={record}
+              fit={found.fits[record.key]}
               attached={attached.has(record.key)}
               busy={attaching !== null}
               onAttach={() => onAttach(record)}
@@ -240,6 +275,12 @@ function SourceResults({
         </ol>
       )}
       {found.total === 0 && <p className="muted">Nothing found.</p>}
+      {source.searches === 'person' && found.items.length > 0 && (
+        <p className="hint" data-testid="record-fit-hint">
+          The labels hold each result against this person in your tree: the name, the years and the
+          places. They help with reading and prove nothing; open a record to judge it.
+        </p>
+      )}
       {source.searches === 'text' && found.items.length > 0 && (
         <p className="hint">
           Found by the words alone. Whether a text is about this person is for you to read.
@@ -576,6 +617,8 @@ export function RecordSearchDialog({
             ...all,
             [source.id]: {
               items: [...before.items, ...result.items.filter((record) => !known.has(record.key))],
+              // A result that was shown before keeps the label it was shown with.
+              fits: { ...result.fits, ...before.fits },
               total: result.total,
               nextOffset: result.nextOffset,
               hidden: before.hidden + result.hidden,

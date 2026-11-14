@@ -146,7 +146,7 @@ export interface MatchScore {
 /** The lowest score at which a pair is listed as a possible duplicate. */
 export const DUPLICATE_THRESHOLD = 50;
 
-interface NameScore {
+export interface NameScore {
   /** 0 to 1. */
   value: number;
   exact: boolean;
@@ -171,7 +171,7 @@ function surnameSimilarity(a: string, b: string): number {
   return soundex(a) === soundex(b) ? Math.max(similarity, 0.88) : similarity;
 }
 
-function compareNames(a: MatchName, b: MatchName): NameScore | null {
+export function compareNames(a: MatchName, b: MatchName): NameScore | null {
   const givenA = normalizeName(a.given);
   const givenB = normalizeName(b.given);
   const surnameA = normalizeName(a.surname);
@@ -198,7 +198,7 @@ function bestName(a: MatchCandidate, b: MatchCandidate): NameScore | null {
   return best;
 }
 
-function placesAgree(a: string, b: string): boolean | null {
+export function placesAgree(a: string, b: string): boolean | null {
   const wordsA = normalizeName(a).split(' ').filter(Boolean);
   const wordsB = new Set(normalizeName(b).split(' ').filter(Boolean));
   if (wordsA.length === 0 || wordsB.size === 0) return null;

@@ -26,7 +26,8 @@ click. It searches the newspapers of the Library of Congress, the books of
 the Internet Archive and the catalog of the US National Archives for words,
 such as the person's name; the National Archives need a free key of your own. It opens a search at
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
-a source when you paste its address. See
+a source when you paste its address. Phase 4 has started: each result that is a
+person or a record of a person says how well it fits the person of your tree. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -178,6 +179,16 @@ Searching for records:
     the bride or a witness of a marriage.
   - [Wikidata](https://www.wikidata.org/) has entries for people of some note
     only. It is sent the name, not the years.
+- **How well a result fits.** Each result that is a person, or a record that
+  names one, carries a label: "Fits well", "May fit", "Little to go by", "Some
+  details conflict" or "Does not fit", with what agrees and what speaks
+  against it. The app
+  holds the result against the person in your tree: every name you recorded,
+  the years of birth and death, the places, the sex. It does this on your PC;
+  nothing is sent for it. A label helps you read a long list and proves
+  nothing: two people of one name, born in one year in one town, both "fit
+  well". Newspapers, books and archive descriptions get no label, because
+  they are found by their words.
 - **What is sent** is what the form shows, when you press "Search". Nothing
   else of your tree, nothing while you type, nothing in the background. The
   app says before the first search which service is sent what, and asks you
@@ -361,6 +372,10 @@ docs/                 Plan and access checklist
   `%APPDATA%\RulZ Ancestry (dev)` and makes new trees in
   `Documents\RulZ Ancestry (dev)`, not in the installed app's folders. The
   end-to-end tests keep everything inside a temporary profile folder.
+- **The end-to-end tests do not get in the way.** They start the app with
+  `--background-window`, which opens its window beyond the edge of the screen,
+  without focus and without a button on the taskbar. Set `RULZ_E2E_SHOW=1` to
+  watch a run.
 - **A test that measures time runs apart.** A test file with a time limit is
   listed under `TIMED` in `vitest.config.ts`. `pnpm test` runs those files
   after all the others, one at a time, so that the limit measures the code and

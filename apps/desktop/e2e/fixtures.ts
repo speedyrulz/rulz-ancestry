@@ -31,12 +31,19 @@ interface AppFixtures {
 const desktopDir = resolve(import.meta.dirname, '..');
 const packagedExe = join(desktopDir, 'release', 'win-unpacked', 'RulZ Ancestry.exe');
 
+/**
+ * The tests open the app's window beyond the edge of the screen, without
+ * focus, so that a run does not interrupt work at the PC. Set RULZ_E2E_SHOW=1
+ * to watch a run.
+ */
+const windowArgs = process.env['RULZ_E2E_SHOW'] === '1' ? [] : ['--background-window'];
+
 /** Starts the app with the given profile folder. Tests that restart the app call this again. */
 export function launchApp(appTarget: AppTarget, userDataDir: string): Promise<ElectronApplication> {
   const userData = `--user-data-dir=${userDataDir}`;
   return appTarget === 'packaged'
-    ? electron.launch({ executablePath: packagedExe, args: [userData] })
-    : electron.launch({ args: [desktopDir, userData], cwd: desktopDir });
+    ? electron.launch({ executablePath: packagedExe, args: [userData, ...windowArgs] })
+    : electron.launch({ args: [desktopDir, userData, ...windowArgs], cwd: desktopDir });
 }
 
 export const test = base.extend<AppOptions & AppFixtures>({

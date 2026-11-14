@@ -280,6 +280,17 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
     ].sort(),
   );
 
+  // Each result is held against the person of the tree, and says what agrees.
+  await expect(one.getByTestId('record-fit')).toHaveText('Fits well');
+  await expect(one.getByTestId('record-fit-why')).toHaveText(
+    'Same name. Born in the same year. Died in about the same year.',
+  );
+  // The second has another name, whatever its dates say.
+  const two = results.getByTestId('record-result').nth(1);
+  await expect(two.getByTestId('record-fit')).toHaveText('Does not fit');
+  await expect(two.getByTestId('record-fit-why')).toHaveText('Against it: another name.');
+  await expect(results.getByTestId('record-fit-hint')).toContainText('prove nothing');
+
   // More results are added to the list.
   await results.getByTestId('record-more').click();
   await expect(results.getByTestId('record-result')).toHaveCount(3);
@@ -295,6 +306,8 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
   );
   await expect(archive).toContainText('Civil registration marriages, Example Municipal Archive');
   await expect(archive.getByTestId('record-hidden')).toContainText('1 result is not shown');
+  // A marriage in the years the person lived in fits, and is no more than that.
+  await expect(archive.getByTestId('record-fit')).toHaveText('May fit');
   await expect(archive.getByTestId('record-link')).toHaveAttribute(
     'href',
     'https://www.openarchieven.nl/exa:REC-1/en',
@@ -303,6 +316,7 @@ test('searches WikiTree for a person, after saying what is sent', async ({ app, 
   const entries = window.getByTestId('records-wikidata');
   await expect(entries.getByTestId('record-result')).toHaveCount(1);
   await expect(entries.getByTestId('record-about')).toHaveText('surveyor');
+  await expect(entries.getByTestId('record-fit')).toHaveText('Fits well');
   await expect(entries).toContainText('Died 1912');
   await expect(entries.getByTestId('record-hidden')).toContainText('1 result is not shown');
 
@@ -504,6 +518,9 @@ test('searches newspapers and books for words, and attaches a page of a newspape
     'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
   );
   await expect(books.getByTestId('record-result')).toHaveCount(1);
+  // A text was found by its words: it gets no label of how well it fits.
+  await expect(newspapers.getByTestId('record-fit')).toHaveCount(0);
+  await expect(books.getByTestId('record-fit')).toHaveCount(0);
   await expect(books.getByTestId('record-print')).toHaveText('Fenwick, Henrietta., published 1930');
 
   // Two requests: one to each, and none to the source that keeps people.

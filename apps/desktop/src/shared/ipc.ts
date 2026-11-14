@@ -13,6 +13,7 @@ import type {
   DescendantNode,
   ExternalRecord,
   GedcomVersion,
+  MatchBand,
   NameType,
   Pedigree,
   PersonQuery,
@@ -648,6 +649,19 @@ export interface RecordSearchProblem {
   retryAt: number | null;
 }
 
+/**
+ * How well a result fits the person it was searched for, as the app reads it
+ * from the tree and from what the source sent. A help for the eye: it proves
+ * nothing, and nothing is done on the strength of it.
+ */
+export interface RecordFitInfo {
+  band: MatchBand;
+  /** What speaks for the result being of the person, in words. */
+  reasons: string[];
+  /** What speaks against it. */
+  doubts: string[];
+}
+
 /** A key of the user's own for a source that needs one. It goes to the main process and never comes back. */
 export interface RecordSourceKeyRequest {
   sourceId: string;
@@ -671,6 +685,11 @@ export type RecordSearchResult =
       hidden: number;
       /** The keys of the results that the person's page already cites. */
       attached: string[];
+      /**
+       * How well each result fits the person of the tree, by its key. A result
+       * that is a text has none: it was found by its words.
+       */
+      fits: Record<string, RecordFitInfo>;
       /** When the source gave this answer, in Unix milliseconds. */
       fetchedAt: number;
       /** True when the answer was kept from an earlier search and nothing was sent. */

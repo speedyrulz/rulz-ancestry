@@ -2791,3 +2791,78 @@ describe('the National Archives, and the key of the user', () => {
     expect(askedOfSources).toEqual([]);
   });
 });
+
+describe('how well a result fits the person', () => {
+  const search = (personId: string, sourceId: string, query: object = QUERY) =>
+    call<RecordSearchResult>('searchRecords', { personId, sourceId, query, offset: 0 });
+  const fitsOf = async (personId: string, sourceId: string, query: object = QUERY) => {
+    const found = await search(personId, sourceId, query);
+    if (!found.ok) throw new Error(found.problem.message);
+    return found.fits;
+  };
+
+  it('holds each result against the person of the tree, and says why', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850', deathDate: '1910' });
+    // A profile with the same name, born in the same year.
+    expect(await fitsOf(ada, 'wikitree')).toEqual({
+      'Test-90001': {
+        band: 'strong',
+        reasons: ['Same name', 'Born in the same year'],
+        doubts: [],
+      },
+    });
+    // An entry with the same name and both dates.
+    expect(await fitsOf(ada, 'wikidata')).toEqual({
+      Q90001: {
+        band: 'strong',
+        reasons: ['Same name', 'Born in the same year', 'Died in the same year'],
+        doubts: [],
+      },
+    });
+    // A marriage record names her as the bride, in the years she lived in:
+    // that fits, and proves little.
+    expect(await fitsOf(ada, 'open-archives')).toEqual({
+      'exa:REC-1/Person1': {
+        band: 'possible',
+        reasons: ['Same name', 'From the years the person lived in'],
+        doubts: [],
+      },
+    });
+    // Only what is shown is held against her: the results left out have no label.
+    expect(Object.keys(await fitsOf(ada, 'wikidata'))).not.toContain('Q90002');
+  });
+
+  it('goes by the tree, not by what was typed into the form', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const typed = { given: 'Zebedee', surname: 'Other', birthYear: 1700, deathYear: null };
+    expect((await fitsOf(ada, 'wikitree', typed))['Test-90001']?.band).toBe('strong');
+    // And by the tree as it is now: after the birth is moved, the same result fits less.
+    const page = await call<PersonPage>('getPersonPage', ada);
+    const birth = page.events.find((event) => event.type === 'birth');
+    if (birth === undefined) throw new Error('no birth');
+    await call('updateEvent', birth.id, { type: 'birth', date: '1890' });
+    expect((await fitsOf(ada, 'wikitree', typed))['Test-90001']).toMatchObject({
+      band: 'unlikely',
+      doubts: ['Born 40 years apart'],
+    });
+  });
+
+  it('gives a text no label: it was found by its words', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const found = await call<RecordSearchResult>('searchRecordTexts', {
+      personId: ada,
+      sourceId: 'loc',
+      query: TEXT,
+      offset: 0,
+    });
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items).toHaveLength(1);
+    expect(found.fits).toEqual({});
+  });
+});

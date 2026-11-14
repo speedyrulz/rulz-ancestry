@@ -733,6 +733,69 @@ Not done, and why:
 - **The charts were checked by eye in light colours only,** and at one window size. Dragging was not tried on a touch screen.
 - **The unexplained crash of part 1c happened again, once.** In one of about twelve full runs of the unit tests in this part, the worker running the 10,000-person GEDCOM test stopped before reporting its three tests. Eight further full runs in a row passed. It is the same test file as before, which this part did not change. The cause is still unknown; the next step is to capture a crash dump. Until then a run of the unit tests, locally or in CI, can fail for this reason and pass when repeated.
 
+### Phase 4 breakdown
+
+The parts of Phase 4 are numbered 4.1 to 4.4, because "4b" in the table above is the AI assistant.
+
+| Part | Scope                                                                                                                                                | Status              |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| 4.1  | A score for how well a search result fits the person of the tree, shown in the search window, and measured on a labelled set of made-up cases        | **Done 2026-11-14** |
+| 4.2  | A view that sets a result beside the person, and takes facts of the result over into the tree, each with its citation                                | Planned             |
+| 4.3  | An inbox: results kept to look at later, and results turned down that do not come back                                                               | Planned             |
+| 4.4  | A search for several people in one go, started by the user: direct ancestors first, within every source's limits, with a count of what will be asked | Needs a decision    |
+
+Part 4.4 is where the plan and a rule of Phase 3 pull apart. The plan has jobs in the background that ask the sources for each person. The rule is that the app asks nothing of the internet unless the user presses a button for it. Three views were asked for on the split (the primary, an Opus helper and a Codex helper), and they agree on a way to keep the rule: one press starts a run that is bounded and can be seen and stopped, names the sources and how many requests it will send, looks again at each person just before each request, and never starts by itself. Whether one press may cover many people is for the project owner to decide, and so is which sources such a run may ask: the Library of Congress shuts a client out for an hour, and the National Archives count every request against the user's own key. Part 4.3 has a decision of its own: until now results are kept in memory only, and some sources' terms bar keeping what they return.
+
+### Phase 4.1 outcome: how well a result fits (2026-11-14)
+
+Delivered:
+
+- **A label on each result that is a person or a record of one:** "Fits well", "May fit", "Little to go by", "Some details conflict" or "Does not fit", with what agrees and what speaks against it under the name. No number is shown.
+- **The scoring** (`scoreRecord` in `packages/core/src/recordmatch.ts`). A sum of points set by hand, as the scoring of people entered twice is (`scoreDuplicate`), whose comparison of names it uses: up to 50 for the name; points for a year of birth or of death that agrees, the more the more exactly both sides know it, and against one that lies apart, the more the further; a few for the same town; against the other sex.
+- **Names as sources write them.** A source gives a name as one line and the tree in two parts; the line is cut where the tree's surname would begin. A title before a name and a suffix after it are taken off, and so are the small words of a surname ("van", "de"). WikiTree's name at birth in brackets is tried as the surname too.
+- **Dates as spans.** A date is read as the years it can mean: "about 1835", "before 1840", "between 1800 and 1810". A date that is open to one side can speak against a fit and never for it.
+- **A record of an event is read by the part the person has in it.** The child of a birth dates the birth, and the one who died dates the death. A bride or a groom was an adult of that sex in the years the person lived in. Anyone else a record names (a witness, the father of a bride) was an adult alive then, and a child it names was alive. Only the record of a person's own birth or death can be a strong fit: any other says that someone of that name lived then, and many of one name did.
+- **A measurement on labelled cases** (`recordmatch.labelled.ts`, used by the test only): a generator makes people who do not exist, and for each of them results that are theirs, as a source words and misspells them, and results of namesakes, brothers and sisters, and people of other centuries. Two sets are measured: one of 1,624 cases, which was looked at while the points were set, and one of 3,246 cases drawn from other names and places. On the second, 846 results are shown as a strong fit and 840 of them are right (99.3%); the six that are wrong are pairs that nothing in a record tells apart, two of one name born in one year in one town. All 1,680 results that are of the person are shown as a possible fit at least, and nothing that cannot be of the person is shown as fitting. The test fails when a strong fit is wrong although something in the record could have told.
+
+Decided while building:
+
+- **What either side does not say counts neither for nor against.** A result with the name and nothing else "may fit".
+- **The labels say what agrees, not who a record is of.** Both design views asked for wording that does not claim a match; a line under the results says that the labels prove nothing.
+- **The source's own order is kept.** Sorting best-first would move results about with every "More results", and would rank only the pages that were fetched.
+- **The tree is what a result is held against, not the form.** The user may have changed the name in the form to search more widely; the label still speaks of the person as the tree has them now.
+- **Worked out in the main process,** where the tree is. Nothing is stored, and nothing is sent to anyone for it.
+- **A text gets no label.** A page of a newspaper or a book was found by its words, and nothing in the result says whom it is about.
+- **Points set by hand, not weights worked out from data.** The plan names Fellegi-Sunter weights. They need to know how often a feature agrees for pairs that match and for pairs that do not, and there is no real labelled data to learn that from; made-up cases would only give back what was put in.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code; Opus ran the scoring on its own counter-examples. The scoring's reading of names, dates and places was rewritten after the reviews.
+
+- **A date a source gives as "before" or "after" a year was read as that year** (both). "Born before 1840" earned the points of "born in 1840". A date is now read as the span of years it can mean, and one that is open to one side can speak against a fit and never for it.
+- **A date of the tree that spans many years counted as the same year** (both). "Born between 1800 and 1900" agreed with any year of a century at full points. The points now fall with the width of the span, and the words say "within the years the tree gives".
+- **A reckoned end of a life was worded as one the tree knows** (Codex). For a person without a death in the tree, a late record was "from after the death". It is now "more than 105 years after the birth".
+- **A middle name that begins like the surname passed for the surname** (Opus). "Josiah Marshall Brackett" was a strong fit for a Josiah Marsh. A name is now cut where the surname begins and compared part by part; nothing is tried against the whole rest of the line.
+- **A suffix or a title made a name another name** (Opus): "Josiah Marsh Jr", "Dr. Josiah Marsh". Both are taken off before a name is compared, and so are the small words of a surname ("van", "de"), which one source writes and another leaves out.
+- **A name at birth of several words lost the given name** (Codex): "Etta Fenwick (born van Marsh)". Fixed.
+- **Another town of the same county was "the same place"** (Opus). Only the same town is now, and another town of the county speaks neither for nor against.
+- **A child that a record names was held to be an adult** (Opus), as a marriage record that names the children of the pair does. A child need only have been alive.
+- **Two births of one result were both counted** (Opus). One of each kind is.
+- **"Some details conflict" stood where nothing conflicted** (Opus), for a result with little to compare. It now reads "Little to go by".
+- **A result shown before could take the label of a later one with the same key** (Codex). It keeps the label it was shown with.
+- **The measurement proved less than it said** (both). The test let a wrong strong fit pass as long as some case was marked as undecidable; it now counts the wrong strong fits that something in the record could have told apart, and that count must be nought. The second set was called "unseen" and came from the same names; it is now drawn from other names and places, and is called a second draw. The kinds of case the reviews found missing are in the generator, and each counter-example is a test of its own.
+- **Found by the measurement itself:** an initial "T." was taken for the small word of a Dutch surname and dropped, so that "T. Marsh" had no given name. The rewritten scoring missed 17 such cases of 1,680 until that was put right.
+- **Left:** a label is not worked out again when the tree is changed while the window is open (Opus). The window lies over the person's page, and nothing of the person can be edited meanwhile.
+
+Tests: unit tests went from 1071 to 1101, end-to-end tests stayed at 39.
+
+What the measurement cannot show: how often the labels are right for real records. Who wrote the generator also wrote the scoring, and both sets hold the same kinds of case, so the figures say that the scoring keeps apart what it was built to keep apart, and that a later change that makes that worse fails the test. The reviews showed how little that is: every one of their counter-examples passed the first measurement. How common a name is, how each source words its records, and how many of a real list of results are the person at all are not in it. Real figures need real results labelled by the owner, outside this repository.
+
+Not done:
+
+- **Relatives.** A result carries no parents or partners yet, so none are compared. They are the strongest sign there is.
+- **Places as a hierarchy.** Places are compared by the town, as it is written before the first comma; a county alone, or a town written two ways, does not agree.
+- **How common a name is.** A rare name that agrees says more than a common one; the scoring does not know either.
+- **Sorting by fit,** and a filter that hides what does not fit.
+- **Weights from data.** See above.
+
 ### Phase 3 breakdown
 
 | Part | Scope                                                                                                                                                       | Status              |

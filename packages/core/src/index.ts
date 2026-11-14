@@ -51,7 +51,21 @@ export {
   type MatchCandidate,
   type MatchName,
   type MatchScore,
+  compareNames,
+  placesAgree,
 } from './match';
+export {
+  MATCH_POSSIBLE,
+  MATCH_STRONG,
+  MATCH_WEAK,
+  matchBand,
+  scoreRecord,
+  yearOfDate,
+  type MatchBand,
+  type MatchSubject,
+  type RecordMatch,
+  type YearSpan,
+} from './recordmatch';
 export {
   distanceKm,
   frameOf,
