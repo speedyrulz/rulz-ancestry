@@ -10,6 +10,7 @@ import { MediaLibraryDialog } from './media';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
 import { PlacesDialog } from './places';
+import { RecordInboxDialog } from './recordinbox';
 import { SourcesDialog } from './sources';
 
 interface Notice {
@@ -48,6 +49,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     | 'duplicates'
     | 'export'
     | 'import-report'
+    | 'inbox'
     | 'media'
     | 'sources'
     | 'places'
@@ -216,6 +218,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            title="Results of searches for records that you kept to look at later"
+            onClick={() => setDialog('inbox')}
+            data-testid="open-inbox"
+          >
+            {tree.inbox === 0 ? 'Inbox' : `Inbox (${tree.inbox.toLocaleString()})`}
+          </button>
+          <button
+            type="button"
             title="The places in this tree, and the list of the world's places"
             onClick={() => setDialog('places')}
             data-testid="open-places"
@@ -374,6 +384,19 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           onSelect={(personId) => {
             setSelectedId(personId);
             setView('person');
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'inbox' && (
+        <RecordInboxDialog
+          tree={tree}
+          personId={selectedId}
+          onTree={onTree}
+          onSelect={(personId) => {
+            setSelectedId(personId);
+            setView('person');
+            setDialog(null);
           }}
           onClose={() => setDialog(null)}
         />

@@ -28,7 +28,8 @@ such as the person's name; the National Archives need a free key of your own. It
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
 a source when you paste its address. Phase 4 has started: each result that is a
 person or a record of a person says how well it fits the person of your tree, and
-can be set beside that person, to take over the dates and places you tick. See
+can be set beside that person, to take over the dates and places you tick. A
+result can be kept in an inbox to look at later, or turned down for a person. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
 [docs/ACCESS.md](docs/ACCESS.md) for the API keys and applications that only
 the project owner can request.
@@ -206,6 +207,23 @@ Searching for records:
     places by their words: it cannot tell "Ashford, VT" from another Ashford,
     so it says only that the two begin alike.
   - Nothing is sent to the internet for any of this.
+- **Keep for later, or turn down.** Each result has two more buttons.
+  - "Keep for later" puts the result into the **Inbox**, which a button in the
+    bar at the top opens. It is still there after you close the tree or the
+    app. From the inbox you can compare it with the person, attach it as a
+    source, turn it down or remove it.
+  - "Not this person" turns the result down for the person you searched for.
+    Later searches for that person leave it out and say how many were left
+    out; "Show" brings them back into view, and "Allow again" takes the
+    turning-down back. For another person the same record is shown as before.
+  - Both are saved in your tree's file, so they are in its backups and go
+    where its folder goes. Each is one step that Undo takes back. Nothing is
+    sent to the internet for either, and nothing of it is written to a GEDCOM
+    file.
+  - A kept result is the record as its source had it on the day you kept it;
+    the inbox says which day. The source may say something else by now.
+  - Of a result of the US National Archives only the identifier and the
+    address are kept, because their terms do not allow keeping more.
 - **What is sent** is what the form shows, when you press "Search". Nothing
   else of your tree, nothing while you type, nothing in the background. The
   app says before the first search which service is sent what, and asks you

@@ -741,10 +741,10 @@ The parts of Phase 4 are numbered 4.1 to 4.4, because "4b" in the table above is
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 4.1  | A score for how well a search result fits the person of the tree, shown in the search window, and measured on a labelled set of made-up cases        | **Done 2026-11-14** |
 | 4.2  | A view that sets a result beside the person, and takes facts of the result over into the tree, each with its citation                                | **Done 2026-11-14** |
-| 4.3  | An inbox: results kept to look at later, and results turned down that do not come back                                                               | Planned             |
+| 4.3  | An inbox: results kept to look at later, and results turned down that do not come back                                                               | **Done 2026-11-14** |
 | 4.4  | A search for several people in one go, started by the user: direct ancestors first, within every source's limits, with a count of what will be asked | Needs a decision    |
 
-Part 4.4 is where the plan and a rule of Phase 3 pull apart. The plan has jobs in the background that ask the sources for each person. The rule is that the app asks nothing of the internet unless the user presses a button for it. Three views were asked for on the split (the primary, an Opus helper and a Codex helper), and they agree on a way to keep the rule: one press starts a run that is bounded and can be seen and stopped, names the sources and how many requests it will send, looks again at each person just before each request, and never starts by itself. Whether one press may cover many people is for the project owner to decide, and so is which sources such a run may ask: the Library of Congress shuts a client out for an hour, and the National Archives count every request against the user's own key. Part 4.3 has a decision of its own: until now results are kept in memory only, and some sources' terms bar keeping what they return.
+Part 4.4 is where the plan and a rule of Phase 3 pull apart. The plan has jobs in the background that ask the sources for each person. The rule is that the app asks nothing of the internet unless the user presses a button for it. Three views were asked for on the split (the primary, an Opus helper and a Codex helper), and they agree on a way to keep the rule: one press starts a run that is bounded and can be seen and stopped, names the sources and how many requests it will send, looks again at each person just before each request, and never starts by itself. Whether one press may cover many people is for the project owner to decide, and so is which sources such a run may ask: the Library of Congress shuts a client out for an hour, and the National Archives count every request against the user's own key. Part 4.3 had a decision of its own: until then results were kept in memory only, and some sources' terms bar keeping what they return. The project owner decided on 2026-11-14 that results may be stored on disk; the outcome is below.
 
 ### Phase 4.1 outcome: how well a result fits (2026-11-14)
 
@@ -841,6 +841,57 @@ Not done:
 - **A second event of a type cannot be added** where the tree has one already; the record's value replaces the tree's or is left.
 - **Names, the sex, and marriages.** A marriage needs the family and the other partner.
 - **A source that bars keeping its results** has no test of its own here: none of the sources of people does.
+
+### Phase 4.3 outcome: an inbox of results kept, and results turned down (2026-11-14)
+
+Delivered:
+
+- **"Keep for later" on every result of a search.** The result is written into the tree's file for the person it was found for, and a button "Inbox" in the bar at the top says how many are kept.
+- **"Not this person" on every result** ("Not about this person" for a text). The result is turned down for that person. A later search for them still gets it from the source, and the window leaves it out and says how many it left out; "Show" lists them, and "Allow again" takes the turning-down back.
+- **The inbox:** what is kept, the latest first, for everyone or for the person whose page is open, and a second list of what was turned down. A kept result shows what the record says, the day it was read, the person it is for, and how well it fits that person as the tree has them now. It can be set beside the person (the window of part 4.2), attached as a source, turned down or removed.
+- **One table** (`record_mark`, migration 10, `packages/db/src/recordmarks.ts`): one row for a result and a person, kept or turned down. A kept row holds the record as the app read it and when; a row for a result that was turned down holds its title and address only.
+- **Each of these is one step in the tree** and one Undo.
+
+Decided while building:
+
+- **The project owner decided that results may be stored on disk.** They are stored only when the user presses a button for one result.
+- **In the tree's database, and part of the change log** (both design views). Person ids mean something only inside one tree, and the tree's folder is what is carried to another PC. Tracking was decided by what an untracked table would lose: a tree in which only marks changed would not be backed up on closing, and a deleted person's marks would not come back with the person. The price is that keeping a result clears what could be redone, as any edit does.
+- **A mark is for one person.** A record that is not of this person may be of their brother.
+- **What is kept is the record as a connector made it,** not the answer of the source, with the day it was read. A citation made from a kept copy carries that day, not the day of attaching.
+- **What is read back from a tree's file is not trusted.** A tree's folder can come from anywhere. A kept record must have the shape of a record and name the source and the key of its row; every text of it is cleaned again; its address must be https and on the site of its source; the moment it was read must be one. What fails can only be removed. This makes a kept record safe to show and to compare; it does not make it true, and whoever can write the file could have written the tree.
+- **The page still names a result and never supplies one.** A request says which copy is meant, the one a search showed or the one the tree keeps, and the main process reads that copy itself. A result is kept only from what a search showed for that person.
+- **A source whose terms bar keeping what it returns** (the US National Archives) has only the identifier and the address of a record kept, as its citations have. The inbox shows "Identifier" and the number. The terms as the app knows them now decide, not what a file holds.
+- **A person who has since become "may be living"** keeps their kept results, with a line that says so. Nothing is sent from the inbox for anyone.
+- **When two people are merged,** the marks of the one who goes move to the one who stays. Where both have a mark of the same result, that of the one who stays counts, except that a result kept for the one who goes is not lost to a turning-down of the one who stays.
+- **The notice was reworded and not shown again.** It said that results stay in memory and that nothing is added to a tree unless a result is attached; it now names keeping and turning down, and that both are saved in the tree's file. The two design views differed on showing it again to everyone. It is shown again when more is sent or to someone else, and neither is the case; the search window says the same in a line above the results.
+- **A tree holds 5,000 marks at most,** and a kept record 16,384 characters, so that the file and its backups do not swell.
+- **Nothing of this goes into a GEDCOM file.**
+- **The buttons of a result stand in a row under it,** in the search window and the inbox. Four buttons beside a result left its title two words wide.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code. Neither found a way for the page to supply what a record says, a way for something of the National Archives' answer to reach the disk, a request sent from the inbox, or a write that is not one step. Their findings were in what is believed of a row of a tree's file, and in how the two lists keep up.
+
+- **The line a result was shown under could name another record than the one that was cited** (both). The inbox showed the title of the row, and comparing and attaching used the record kept beside it. A crafted file could show one name and hold another. The line is now the title of the checked record; the row's own title is shown only where no record can be read, and never for a source whose terms bar keeping one.
+- **An address of the National Archives was believed from the file** (Codex). For such a record the row holds an identifier and an address, and the address could be that of another record of the Archives: the citation would name one identifier and lead to another. A connector can now make the address of a record from its identifier (`recordUrl`), the connector of the Archives does, and the address in the file is not used. An identifier that is none has no address, and the result cannot be cited.
+- **A moment that is none could stop the inbox from being shown** (both). A file can hold any number, or a text, where a row says when a record was read. Formatting such a moment throws. A moment is now checked when a row is read: a kept record without a day it was read is one that cannot be used, and the window leaves out a day it does not have.
+- **A mark of a crafted file could be listed with "It can only be removed" and not be removable** (Opus). The request to remove one accepted only a source id as the app writes them and a key of 200 characters; a file can hold others, and 5,000 such rows would fill the tree for good. Removing now takes what the inbox listed.
+- **A result that came again with a later page was shown as it came first and acted on as it came last** (Codex). The window kept the first copy and the main process the latest. The window now shows the latest too, with its label.
+- **"More results" in the inbox could land in the wrong list** (both). An answer on its way while the other list was opened, or while the tree changed, was added to what was then on screen. Such an answer is now dropped. After a change the list is read again as long as it was shown, up to 500, and no longer falls back to its first 50.
+- **A merge could lose a kept record without a word** (Opus). Where the person who stays had turned a result down and the one who goes had kept it, what was kept went with the person. It is now kept; in every other case the mark of the one who stays counts, as before.
+- **An address with a line break or a tab in it passed as one of the site** (Opus), since reading it as a URL drops them. It is now no address.
+- **"It can only be removed" beside a button "Allow again"** (Opus). The sentence is shown for kept results only.
+- **Turned down:** the labels of the search window are not put right when keeping is undone (Opus). The search window is modal: Undo cannot be reached until it is closed, and it reads the marks anew with each search.
+- **Not settled:** whether the notice should be shown again to everyone (Codex's design view: yes, it now says something is saved; Opus's: no, nothing more is sent). It was reworded and is not shown again. The project owner can overrule this by raising its version.
+
+Tests: unit tests went from 1185 to 1217, end-to-end tests from 40 to 41.
+
+Not done:
+
+- **A kept result is not read again from its source.** It says what the source said on the day it was kept. Reading one record again by its key needs a call each connector does not have yet.
+- **Nothing puts a result into the inbox but the user.** A search for several people in one go is part 4.4, and needs the owner's decision.
+- **Turning down is for one person,** not for the whole tree, and there is no way to turn down or remove several at once.
+- **The inbox is not sorted by fit,** and has no search of its own.
+- **A person's page does not say how many results are kept for them.** The inbox can be narrowed to the person whose page is open.
+- **Whether a source's terms allow keeping a record for good** was read from each source's terms when its connector was written, as a yes or no (`mayStoreText`). The manifests also carry how long an answer is cached (`cacheTtlHours`), which is about freshness; its comment in `manifest.ts` reads as if it were a limit on keeping, and should be reworded or settled per source.
 
 ### Phase 3 breakdown
 

@@ -30,6 +30,9 @@ import { naraCatalogManifest } from './manifest';
 /** Where a description's page is, for the user's browser. */
 export const NARA_RECORD_URL = 'https://catalog.archives.gov/id/';
 
+/** A National Archives Identifier: a whole number. */
+const NARA_ID = /^[1-9]\d{0,14}$/;
+
 /** How many results are asked for at a time at most. The API allows 1,000. */
 export const NARA_PAGE_LIMIT = 100;
 
@@ -104,7 +107,7 @@ function recordOf(hit: unknown): TextRecord | null {
   const record = isObject(source) ? source['record'] : null;
   if (!isObject(record)) return null;
   const id = typeof record['naId'] === 'number' ? String(record['naId']) : record['naId'];
-  if (typeof id !== 'string' || !/^[1-9]\d{0,14}$/.test(id)) return null;
+  if (typeof id !== 'string' || !NARA_ID.test(id)) return null;
   const level = record['levelOfDescription'];
   return {
     connectorId: naraCatalogManifest.id,
@@ -219,6 +222,8 @@ export function naraCatalogConnector(client: SourceClient): TextConnector {
   }
   return {
     manifest: naraCatalogManifest,
+    recordUrl: (key) =>
+      typeof key === 'string' && NARA_ID.test(key) ? NARA_RECORD_URL + key : null,
     async searchTexts(query, page, options = {}) {
       if (naraWords(query) === '') {
         throw new ConnectorError('refused', 'Give words to search for.');

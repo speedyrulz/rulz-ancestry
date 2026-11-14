@@ -71,6 +71,8 @@ export interface TreeState {
   revision: number;
   /** When the newest backup was made (Unix milliseconds), or null when there is none. */
   lastBackupAt: number | null;
+  /** How many results of a search the tree keeps to look at later. */
+  inbox: number;
 }
 
 export interface RecentTreeInfo {
@@ -639,7 +641,7 @@ export interface RecordSearchProblem {
     | 'gone' /* the person is no longer in the tree */
     | 'empty' /* the query names nobody, or cannot be sent as it is */
     | 'source' /* the source is not known */
-    | 'record' /* the record is not one the search showed for this person */
+    | 'record' /* the record is not one the search showed for this person, or the tree keeps for them */
     | 'changed' /* the tree or the record is no longer as the comparison showed it */
     | 'choice' /* what was chosen to take over is not on offer */
     | 'paused' /* the source must be left alone until `retryAt` */
@@ -691,6 +693,12 @@ export type RecordSearchResult =
       /** The keys of the results that the person's page already cites. */
       attached: string[];
       /**
+       * The keys of the results the tree keeps for this person to look at
+       * later, and of those the user turned down for them. The page leaves
+       * the second kind out unless it is asked to show them.
+       */
+      marks: { kept: string[]; declined: string[] };
+      /**
        * How well each result fits the person of the tree, by its key. A result
        * that is a text has none: it was found by its words.
        */
@@ -702,12 +710,78 @@ export type RecordSearchResult =
     }
   | { ok: false; sourceId: string; problem: RecordSearchProblem };
 
-/** Which result of a search to attach to the person it was found for. */
+/**
+ * Which copy of a result is meant: the one a search showed since the tree was
+ * opened, or the one the tree keeps for the person. They can differ, when the
+ * source says something else now than on the day the result was kept.
+ */
+export type RecordCopy = 'search' | 'inbox';
+
+/** Which result to attach to the person it was found for. */
 export interface AttachRecordRequest {
   personId: string;
   sourceId: string;
   /** The key of a result the search showed for this person. Nothing else of it is passed. */
   key: string;
+  /** Left out for a result of a search. 'inbox' for the copy the tree keeps: the key is then of a kept result. */
+  from?: RecordCopy | undefined;
+}
+
+/** A result that is kept, turned down, or neither any more; or why that was not done. */
+export type MarkRecordResult =
+  { ok: true; tree: TreeState } | { ok: false; problem: RecordSearchProblem };
+
+/** How many results of the inbox are handed over in one go at most. */
+export const RECORD_INBOX_MAX = 500;
+
+/** Which results the tree holds to list: those kept, or those turned down. */
+export interface RecordInboxRequest {
+  state: 'kept' | 'declined';
+  /** Only those of this person; null for those of everyone. */
+  personId: string | null;
+  offset: number;
+  limit: number;
+}
+
+/** A result the tree keeps for a person, or one that was turned down for them. */
+export interface RecordInboxItem {
+  personId: string;
+  /** The person's name as the tree has it now; empty when they have none. */
+  personName: string;
+  sourceId: string;
+  /** The name of the source; its id when the app no longer knows the source. */
+  sourceName: string;
+  key: string;
+  /** The line the result is shown under. For a source whose terms bar keeping a title: "Identifier" and the key. */
+  title: string;
+  /** The record's page at its source; empty when the address kept does not lead there. */
+  url: string;
+  /**
+   * The record as it was read on the day it was kept, checked again by the
+   * main process. Null for one that was turned down, for a source whose terms
+   * bar keeping what it returns, and when what the tree holds cannot be used.
+   */
+  record: ExternalRecord | null;
+  /** How well it fits the person as the tree has them now; null for a text and where there is no record. */
+  fit: RecordFitInfo | null;
+  /** True when the person's page cites the record. */
+  attached: boolean;
+  /** True when the record can be cited: its source is known and its address leads to that source. */
+  canAttach: boolean;
+  /** True when the person may be living as the tree has them now. Nothing is sent for them. */
+  mayBeLiving: boolean;
+  /** When the record was read from the source, in Unix milliseconds; null when the tree's file does not say. */
+  readAt: number | null;
+  /** When it was kept or turned down; null when the tree's file does not say. */
+  markedAt: number | null;
+  /** Why what was kept cannot be used, in words; empty when it can. Such a result can only be removed. */
+  problem: string;
+}
+
+export interface RecordInboxPage {
+  items: RecordInboxItem[];
+  /** How many there are of the kind and for the person that was asked for. */
+  total: number;
 }
 
 export type AttachRecordResult =
@@ -1135,6 +1209,25 @@ export interface RulzApi {
    */
   compareRecord(request: AttachRecordRequest): Promise<CompareRecordResult>;
   /**
+   * Keeps a result of a search for the person it was found for, to look at
+   * later. It is written into the tree's file, as one step that can be
+   * undone. Nothing is sent.
+   */
+  keepRecord(request: AttachRecordRequest): Promise<MarkRecordResult>;
+  /**
+   * Turns a result down for a person: it is not of them. Later searches for
+   * that person leave it out. One step in the tree; nothing is sent.
+   */
+  declineRecord(request: AttachRecordRequest): Promise<MarkRecordResult>;
+  /** Takes the mark of a result away: it is no longer kept, or may be shown again. */
+  unmarkRecord(request: {
+    personId: string;
+    sourceId: string;
+    key: string;
+  }): Promise<MarkRecordResult>;
+  /** The results the tree keeps, or those that were turned down, the latest first. */
+  listRecordInbox(request: RecordInboxRequest): Promise<RecordInboxPage>;
+  /**
    * Takes dates and places of a result over into the tree, as chosen in a
    * comparison, and cites the record for the person and for each event it
    * touched. One step, and one Undo. Refused when the tree is no longer as
@@ -1320,6 +1413,10 @@ export const API_METHODS = [
   'cancelRecordSearch',
   'attachRecord',
   'compareRecord',
+  'keepRecord',
+  'declineRecord',
+  'unmarkRecord',
+  'listRecordInbox',
   'takeRecordFacts',
   'openRecordLink',
   'setRecordSourceKey',

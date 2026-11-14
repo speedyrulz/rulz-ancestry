@@ -718,3 +718,94 @@ test('sets a result beside the person, takes over what is ticked, and undoes it 
   await expect(undo).toHaveAttribute('title', 'Undo Add person (Ctrl+Z)');
   await expect(window.getByText('Ashford, Vermont')).toHaveCount(0);
 });
+
+test('keeps a result for later, finds it in the inbox after the tree was closed, and turns one down', async ({
+  app,
+  window,
+}) => {
+  await answerSearches(app, 5);
+  await createTree(window, 'Inbox');
+  await addPerson(window, { given: 'Josiah', surname: 'Marsh', birthDate: '1850' });
+  await expect(window.getByTestId('open-inbox')).toHaveText('Inbox');
+  await window.getByTestId('open-records').click();
+  await window.getByTestId('record-agree').click();
+  await window.getByTestId('record-search-go').click();
+  const results = window.getByTestId('records-wikitree');
+  await expect(results.getByTestId('record-result')).toHaveCount(2);
+  await expect(window.getByTestId('record-mark-hint')).toContainText("saved in your tree's file");
+
+  // The first is kept for later.
+  const one = results.getByTestId('record-result').first();
+  await one.getByTestId('record-keep').click();
+  await expect(one.getByTestId('record-kept')).toHaveText('Kept for later');
+  await expect(one.getByTestId('record-keep')).toHaveCount(0);
+
+  // The second is not this person: it leaves the list, and the list says so.
+  await results.getByTestId('record-result').nth(1).getByTestId('record-decline').click();
+  await expect(results.getByTestId('record-result')).toHaveCount(1);
+  await expect(results.getByTestId('record-declined-count')).toContainText(
+    '1 result you turned down for this person is not shown.',
+  );
+  await results.getByTestId('record-declined-show').click();
+  await expect(results.getByTestId('record-result')).toHaveCount(2);
+  await expect(results.getByTestId('record-declined')).toHaveText('Turned down');
+  await results.getByTestId('record-declined-show').click();
+  await expect(results.getByTestId('record-result')).toHaveCount(1);
+  const asked = (await askedOfInternet(app)).length;
+  await window.getByTestId('record-search-close').click();
+  await expect(window.getByTestId('open-inbox')).toHaveText('Inbox (1)');
+
+  // What was kept is in the tree's file: it is there after the tree was closed and opened again.
+  await window.getByTestId('close-tree').click();
+  await window.getByTestId('recent-tree').getByTestId('open-recent').click();
+  await expect(window.getByTestId('open-inbox')).toHaveText('Inbox (1)');
+  await window.getByTestId('open-inbox').click();
+  const inbox = window.getByTestId('record-inbox');
+  const item = inbox.getByTestId('inbox-item');
+  await expect(item).toHaveCount(1);
+  await expect(item.getByTestId('inbox-title')).toHaveText('Josiah Marsh');
+  await expect(item.getByTestId('inbox-title')).toHaveAttribute(
+    'href',
+    'https://www.wikitree.com/wiki/Marsh-90001',
+  );
+  await expect(item.getByTestId('inbox-fit')).toHaveText('Fits well');
+  await expect(item.getByTestId('inbox-person')).toHaveText('Josiah Marsh');
+  await expect(item).toContainText('Born 12 March 1850, Ashford, Vermont');
+  await expect(item.getByTestId('inbox-when')).toContainText('As the source had it on');
+
+  // It is set beside the person from here, and a date of it taken over.
+  await item.getByTestId('inbox-compare').click();
+  const compare = window.getByTestId('record-compare');
+  const birthDate = compare.getByTestId('compare-birth-date');
+  await expect(birthDate.getByTestId('compare-stands')).toHaveText('The record is more exact');
+  await birthDate.getByTestId('compare-take').check();
+  await compare.getByTestId('compare-go').click();
+  await expect(compare.getByTestId('compare-done')).toContainText('Taken over');
+  await compare.getByTestId('compare-close').click();
+  await expect(compare).toHaveCount(0);
+  await expect(item.getByTestId('inbox-attached')).toHaveText('Attached as a source');
+
+  // What was turned down is listed too, and can be allowed again.
+  await inbox.getByTestId('inbox-tab-declined').click();
+  await expect(inbox.getByTestId('inbox-item')).toHaveCount(1);
+  await expect(inbox.getByTestId('inbox-item').getByTestId('inbox-title')).toHaveAttribute(
+    'href',
+    'https://www.wikitree.com/wiki/Marsh-90002',
+  );
+  await inbox.getByTestId('inbox-allow').click();
+  await expect(inbox.getByTestId('inbox-empty')).toHaveText('Nothing was turned down.');
+
+  // A kept result stays until it is removed.
+  await inbox.getByTestId('inbox-tab-kept').click();
+  await inbox.getByTestId('inbox-remove').click();
+  await expect(inbox.getByTestId('inbox-empty')).toContainText('Nothing is kept.');
+  await inbox.getByTestId('record-inbox-close').click();
+  await expect(window.getByTestId('open-inbox')).toHaveText('Inbox');
+  // Nothing was asked of the internet after the search.
+  expect(await askedOfInternet(app)).toHaveLength(asked);
+  // Each of these was a step of the tree.
+  await expect(window.getByTestId('undo')).toHaveAttribute(
+    'title',
+    'Undo Remove a kept record (Ctrl+Z)',
+  );
+});

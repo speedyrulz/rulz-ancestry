@@ -50,6 +50,7 @@ const TREE_TABLES = [
   'media',
   'media_link',
   'place',
+  'record_mark',
 ] as const;
 
 /**
@@ -361,8 +362,8 @@ export function undoDepth(tree: Tree): number {
 }
 
 /**
- * Runs `fn` on a tree of an older schema version with the columns today's
- * code reads and that version lacked, and takes them away again. The tests of
+ * Runs `fn` on a tree of an older schema version with the columns and the
+ * table today's code reads and that version lacked, and takes them away again. The tests of
  * a migration use it to edit a tree as an older build did, before upgrading it.
  */
 export function withLaterColumns(tree: Tree, fn: () => void): void {
@@ -384,9 +385,18 @@ export function withLaterColumns(tree: Tree, fn: () => void): void {
   for (const [table, column, type] of added) {
     tree.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
+  // A table today's code reads and that version lacked. It stays empty.
+  const lacksMarks =
+    tree.db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'record_mark'").get() === undefined;
+  if (lacksMarks) {
+    tree.db.exec(
+      'CREATE TABLE record_mark (id TEXT PRIMARY KEY, person_id TEXT, source_id TEXT, record_key TEXT, state TEXT)',
+    );
+  }
   try {
     fn();
   } finally {
+    if (lacksMarks) tree.db.exec('DROP TABLE record_mark');
     for (const [table, column] of added) {
       tree.db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
     }

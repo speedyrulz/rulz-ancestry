@@ -9,6 +9,7 @@ import {
 import { useEffect, useState } from 'react';
 import type {
   RecordComparison,
+  RecordCopy,
   RecordFactTarget,
   RecordFieldInfo,
   RecordFitInfo,
@@ -266,8 +267,10 @@ interface RecordCompareDialogProps {
   /** The person's name, for the title. */
   name: string;
   sourceId: string;
-  /** The key of a result the search showed for this person. */
+  /** The key of a result the search showed for this person, or of one the tree keeps for them. */
   recordKey: string;
+  /** Which copy is compared; left out for the one the search showed. */
+  from?: RecordCopy | undefined;
   /** Called after facts were taken over, with the tree as it stands then. */
   onTaken: (result: Extract<TakeRecordFactsResult, { ok: true }>) => void;
   onClose: () => void;
@@ -278,6 +281,7 @@ export function RecordCompareDialog({
   name,
   sourceId,
   recordKey,
+  from,
   onTaken,
   onClose,
 }: RecordCompareDialogProps) {
@@ -293,7 +297,7 @@ export function RecordCompareDialog({
 
   useEffect(() => {
     let current = true;
-    api.compareRecord({ personId, sourceId, key: recordKey }).then(
+    api.compareRecord({ personId, sourceId, key: recordKey, from }).then(
       (result) => {
         if (!current) return;
         if (result.ok) setComparison(result.comparison);
@@ -306,7 +310,7 @@ export function RecordCompareDialog({
     return () => {
       current = false;
     };
-  }, [personId, sourceId, recordKey]);
+  }, [personId, sourceId, recordKey, from]);
 
   const choose = (type: TakeType, target: RecordFactTarget, patch: Partial<Choice>) => {
     setDone(null);
@@ -342,7 +346,14 @@ export function RecordCompareDialog({
     setProblem(null);
     setDone(null);
     api
-      .takeRecordFacts({ personId, sourceId, key: recordKey, stamp: comparison.stamp, takes })
+      .takeRecordFacts({
+        personId,
+        sourceId,
+        key: recordKey,
+        from,
+        stamp: comparison.stamp,
+        takes,
+      })
       .then(
         (result) => {
           // Whatever happened, the ticks were for the comparison as it was.

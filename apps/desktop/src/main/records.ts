@@ -52,18 +52,24 @@ import {
   type TextQuery,
 } from '@rulz/core';
 import {
+  RECORD_MARK_LIMIT,
   citedUrls,
+  countRecordMarks,
   getPerson,
+  getRecordMark,
   getSetting,
   listCitations,
   listNames,
   listPersonEvents,
+  listRecordMarks,
   presumedLivingIds,
+  recordMarkStates,
   setSetting,
   type CitationInput,
   type ConnectorSource,
   type Db,
   type RecordFactsPlan,
+  type RecordMarkInput,
   type Tree,
   type TreeEvent,
 } from '@rulz/db';
@@ -72,6 +78,9 @@ import type {
   CompareRecordResult,
   RecordComparison,
   RecordFactTarget,
+  RecordInboxItem,
+  RecordInboxPage,
+  RecordInboxRequest,
   RecordLinkInfo,
   RecordLinkRequest,
   RecordSearchProblem,
@@ -84,6 +93,7 @@ import type {
   TakeRecordFactsRequest,
   TextSearchRequest,
 } from '../shared/ipc';
+import { keptFormOf, keptRecordOf, madeAddress, markTitle, whenOf } from './keptrecord';
 
 /**
  * The search for records outside the tree. This is the one place where
@@ -101,8 +111,11 @@ import type {
  * - a source is reached through its own client only (`@rulz/connectors`),
  *   which keeps to its address and its limits.
  *
- * Results are kept in memory by that client for a while and are never written
- * to disk. Nothing here uses Electron; the function that fetches is handed in.
+ * Results are kept in memory by that client for a while. Nothing of them is
+ * written to disk unless the user says so, result by result: one that is
+ * attached becomes a citation, and one that is kept for later or turned down
+ * becomes a mark in the tree (see `keptrecord.ts`). Nothing here uses
+ * Electron; the function that fetches is handed in.
  *
  * What the user types into the form is theirs to send: the second rule looks
  * at the person the search was opened for, not at the words. The form is
@@ -121,6 +134,11 @@ import type {
  * taken over. The page says which, by the type of an event and the event of
  * the tree; the values are this service's own. What the page chose is taken
  * only while the tree is still as the comparison showed it.
+ *
+ * A result that is kept can be attached, compared and taken from later, from
+ * the copy the tree holds. The page still names it by its key only, and says
+ * which copy it means; that copy is read from the tree and checked again
+ * here, since a tree's file can come from anywhere.
  */
 
 /** The setting that holds the day the user agreed to the notice. */
@@ -171,6 +189,10 @@ const SHOWN_LIMIT = 2000;
 export type RecordAttachment =
   | { ok: true; connector: ConnectorSource; citation: CitationInput & { url: string } }
   | { ok: false; problem: RecordSearchProblem };
+
+/** What keeping a result or turning it down writes into the tree; see `RecordSearchService.keeping`. */
+export type RecordMarking =
+  { ok: true; mark: RecordMarkInput } | { ok: false; problem: RecordSearchProblem };
 
 /** What taking facts of a result over writes into the tree; see `RecordSearchService.take`. */
 export type RecordTake =
@@ -239,7 +261,7 @@ export class RecordSearchService {
   readonly #underWay = new Map<string, AbortController>();
   readonly #links: readonly DeepLinkSource[] = deepLinkSources;
   /** The results shown since the tree was opened, each with the person it was found for. */
-  readonly #shown = new Map<string, { personId: string; record: ExternalRecord }>();
+  readonly #shown = new Map<string, { personId: string; record: ExternalRecord; readAt: number }>();
   /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
   #closed = 0;
   readonly #secrets: SecretStore | undefined;
@@ -457,13 +479,15 @@ export class RecordSearchService {
 
   /**
    * What citing a result of a search writes into the tree. The result must be
-   * one this service showed for this person since the tree was opened: the
-   * page passes its key, never its contents.
+   * one this service showed for this person since the tree was opened, or one
+   * the tree keeps for them: the page passes its key, never its contents.
    */
   attachment(tree: Tree, request: AttachRecordRequest): RecordAttachment {
     const found = this.#shownFor(tree, request);
     if (!found.ok) return found;
     const { connector, record } = found;
+    // A kept copy says what the source said on the day it was read, not today.
+    const accessedAt = localDay(found.kept ? found.readAt : this.#now());
     // A source whose terms bar keeping what it returns is cited by the
     // record's identifier and address alone; the app made both itself.
     if (connector.manifest.mayStoreText === false) {
@@ -474,7 +498,7 @@ export class RecordSearchService {
           page: cleanText(`Identifier ${record.key}`, CITATION_LIMITS.page),
           text: '',
           url: record.url,
-          accessedAt: localDay(this.#now()),
+          accessedAt,
         },
       };
     }
@@ -490,21 +514,30 @@ export class RecordSearchService {
               ? eventText(record)
               : printText(record),
         url: record.url,
-        accessedAt: localDay(this.#now()),
+        accessedAt,
       },
     };
   }
 
   /**
    * The result a request names, with its source. It must be one this service
-   * showed for this person since the tree was opened, and lead to the site of
-   * its source.
+   * showed for this person since the tree was opened, or, when the request
+   * says so, the copy the tree keeps for them, and it must lead to the site
+   * of its source.
    */
   #shownFor(
     tree: Tree,
     request: AttachRecordRequest,
   ):
-    | { ok: true; connector: SourceConnector; record: ExternalRecord }
+    | {
+        ok: true;
+        connector: SourceConnector;
+        record: ExternalRecord;
+        /** When the record was read from its source. */
+        readAt: number;
+        /** True for the copy the tree keeps. */
+        kept: boolean;
+      }
     | { ok: false; problem: RecordSearchProblem } {
     const fail = (kind: RecordSearchProblem['kind'], message: string) => ({
       ok: false as const,
@@ -514,17 +547,177 @@ export class RecordSearchService {
       return fail('gone', 'This person is no longer in the tree.');
     }
     const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
-    const shown = this.#shown.get(shownKey(request.sourceId, request.key));
-    if (connector === undefined || shown === undefined || shown.personId !== request.personId) {
-      return fail('record', 'This result is no longer at hand. Search again, then attach it.');
+    const kept = request.from === 'inbox';
+    let at: { record: ExternalRecord; readAt: number } | null = null;
+    if (connector !== undefined && kept) {
+      // Read from the tree's file, and checked: the file can come from anywhere.
+      const mark = getRecordMark(tree, request.personId, request.sourceId, request.key);
+      const record = mark === null ? null : keptRecordOf(mark, connector);
+      if (mark !== null && record !== null) at = { record, readAt: mark.readAt };
+    } else if (connector !== undefined) {
+      const shown = this.#shown.get(shownKey(request.sourceId, request.key));
+      if (shown !== undefined && shown.personId === request.personId) at = shown;
     }
-    if (!isOnSite(shown.record.url, connector.manifest)) {
+    if (connector === undefined || at === null) {
+      return fail(
+        'record',
+        kept
+          ? 'This result is no longer kept, or what the tree holds of it cannot be read.'
+          : 'This result is no longer at hand. Search again, then attach it.',
+      );
+    }
+    if (!isOnSite(at.record.url, connector.manifest)) {
       return fail(
         'record',
         'This result does not lead to the site of its source, so it is not attached.',
       );
     }
-    return { ok: true, connector, record: shown.record };
+    return { ok: true, connector, record: at.record, readAt: at.readAt, kept };
+  }
+
+  /** Why the tree takes no further mark; null when it does, or when the result has one already. */
+  #full(tree: Tree, request: AttachRecordRequest): RecordSearchProblem | null {
+    return getRecordMark(tree, request.personId, request.sourceId, request.key) === null &&
+      countRecordMarks(tree) >= RECORD_MARK_LIMIT
+      ? {
+          kind: 'failed',
+          message: `The tree holds ${RECORD_MARK_LIMIT.toLocaleString('en-US')} results that were kept or turned down, and takes no more. Remove some of them first.`,
+          retryAt: null,
+        }
+      : null;
+  }
+
+  /**
+   * What keeping a result for later writes into the tree: the record as this
+   * service read it from the source, and when. Only a result a search showed
+   * for this person can be kept; the page passes its key. Of a source whose
+   * terms bar keeping what it returns, the identifier and the address are kept.
+   */
+  keeping(tree: Tree, request: AttachRecordRequest): RecordMarking {
+    const found = this.#shownFor(tree, { ...request, from: 'search' });
+    if (!found.ok) return found;
+    const full = this.#full(tree, request);
+    if (full !== null) return { ok: false, problem: full };
+    const form = keptFormOf(found.record, found.connector.manifest);
+    if (form === null) {
+      return {
+        ok: false,
+        problem: {
+          kind: 'record',
+          message: 'This result is too long to keep. It can be attached as a source.',
+          retryAt: null,
+        },
+      };
+    }
+    return {
+      ok: true,
+      mark: {
+        sourceId: request.sourceId,
+        key: request.key,
+        ...form,
+        url: found.record.url,
+        readAt: found.readAt,
+        markedAt: this.#now(),
+      },
+    };
+  }
+
+  /**
+   * What turning a result down for a person writes into the tree: which
+   * result, with its title and address to show what was turned down. The
+   * result is one a search showed, or one the tree keeps.
+   */
+  declining(tree: Tree, request: AttachRecordRequest): RecordMarking {
+    const found = this.#shownFor(tree, request);
+    if (!found.ok) return found;
+    const full = this.#full(tree, request);
+    if (full !== null) return { ok: false, problem: full };
+    return {
+      ok: true,
+      mark: {
+        sourceId: request.sourceId,
+        key: request.key,
+        title:
+          found.connector.manifest.mayStoreText === false ? '' : cleanText(found.record.title, 500),
+        url: found.record.url,
+        readAt: found.readAt,
+        markedAt: this.#now(),
+      },
+    };
+  }
+
+  /**
+   * The results the tree keeps to look at later, or those that were turned
+   * down, the latest first. Each kept record is read from the tree's file and
+   * checked again; one that cannot be used says why, and can only be removed.
+   * How well a record fits is worked out against the person as the tree has
+   * them now. Nothing is sent.
+   */
+  inbox(tree: Tree, request: RecordInboxRequest): RecordInboxPage {
+    const living = presumedLivingIds(tree, this.#now());
+    const people = new Map<string, { name: string; subject: MatchSubject; cited: Set<string> }>();
+    const personOf = (personId: string) => {
+      let person = people.get(personId);
+      if (person === undefined) {
+        const names = listNames(tree, personId);
+        const name = names.find((entry) => entry.isPrimary) ?? names[0];
+        person = {
+          name: name === undefined ? '' : `${name.given} ${name.surname}`.trim(),
+          subject: subjectOf(tree, personId),
+          cited: citedUrls(tree, personId),
+        };
+        people.set(personId, person);
+      }
+      return person;
+    };
+    const items = listRecordMarks(tree, request).map((mark): RecordInboxItem => {
+      const person = personOf(mark.personId);
+      const connector = this.#connectors.find((entry) => entry.manifest.id === mark.sourceId);
+      const manifest = connector?.manifest;
+      const kept = mark.state === 'kept';
+      const record = connector === undefined || !kept ? null : keptRecordOf(mark, connector);
+      // Of a source whose terms bar keeping, the address is made from the
+      // identifier, whatever the file gives as one.
+      const url =
+        record?.url ??
+        (connector !== undefined && manifest?.mayStoreText === false
+          ? (madeAddress(connector, mark.key) ?? '')
+          : mark.url);
+      const onSite = manifest !== undefined && isOnSite(url, manifest);
+      const usable = record !== null && onSite;
+      const problem =
+        manifest === undefined
+          ? 'The app does not know the source of this result any more.'
+          : !kept
+            ? ''
+            : record === null
+              ? 'What the tree holds of this result cannot be read.'
+              : !onSite
+                ? 'The address kept with this result does not lead to the site of its source.'
+                : '';
+      // Of a source whose terms bar keeping, there is no record to show.
+      const shown = usable && manifest.mayStoreText !== false ? record : null;
+      const fit = shown === null ? null : scoreRecord(person.subject, shown);
+      return {
+        personId: mark.personId,
+        personName: person.name,
+        sourceId: mark.sourceId,
+        sourceName: manifest?.name ?? cleanText(mark.sourceId, 100),
+        key: mark.key,
+        // The line of the record that is compared and cited, not one the file gives beside it.
+        title: markTitle(mark, record, manifest),
+        url: onSite ? url : '',
+        record: shown,
+        fit: fit === null ? null : { band: fit.band, reasons: fit.reasons, doubts: fit.doubts },
+        attached: person.cited.has(url),
+        canAttach: usable,
+        mayBeLiving: living.has(mark.personId),
+        readAt: whenOf(mark.readAt),
+        markedAt: whenOf(mark.markedAt),
+        problem,
+      };
+    });
+    return { items, total: countRecordMarks(tree, request.state, request.personId) };
   }
 
   /**
@@ -806,7 +999,11 @@ export class RecordSearchService {
       for (const record of answer.page.items) {
         const key = shownKey(sourceId, record.key);
         this.#shown.delete(key);
-        this.#shown.set(key, { personId: request.personId, record });
+        this.#shown.set(key, {
+          personId: request.personId,
+          record,
+          readAt: answer.fetchedAt,
+        });
       }
       for (const key of this.#shown.keys()) {
         if (this.#shown.size <= SHOWN_LIMIT) break;
@@ -823,10 +1020,17 @@ export class RecordSearchService {
           fits[record.key] = { band: fit.band, reasons: fit.reasons, doubts: fit.doubts };
         }
       }
+      // What the user kept for this person, and what they turned down for them.
+      const states = recordMarkStates(tree, request.personId, sourceId);
+      const marked = (state: 'kept' | 'declined') =>
+        answer.page.items
+          .filter((record) => states.get(record.key) === state)
+          .map((record) => record.key);
       return {
         ok: true,
         sourceId,
         fits,
+        marks: { kept: marked('kept'), declined: marked('declined') },
         attached: answer.page.items
           .filter((record) => cited.has(record.url))
           .map((record) => record.key),
@@ -892,6 +1096,10 @@ function factsToTake(record: ExternalRecord): RecordFact[] {
 
 /** True when an address is HTTPS and on the site of a source, where its records' pages are. */
 function isOnSite(address: string, manifest: ConnectorManifest): boolean {
+  // An address with a gap or a control character in it is none: reading it
+  // as a URL would drop some of them without a word, and it would be handed
+  // on as it stands.
+  if (typeof address !== 'string' || /[\s\p{Cc}]/u.test(address)) return false;
   try {
     const url = new URL(address);
     const site = new URL(manifest.siteUrl ?? manifest.baseUrl);

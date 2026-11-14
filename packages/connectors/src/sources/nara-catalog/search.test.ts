@@ -270,6 +270,16 @@ describe('naraCatalogConnector', () => {
     }
   });
 
+  it('makes the address of a record from its identifier, and of nothing else', () => {
+    const { connector, asked } = setup(answer([file]));
+    expect(connector.recordUrl?.('90000001')).toBe('https://catalog.archives.gov/id/90000001');
+    for (const key of ['', '0', '007', '12x', '1/../2', '12 ', '-5', '1'.repeat(16), '1?q=2']) {
+      expect(connector.recordUrl?.(key)).toBeNull();
+    }
+    expect(connector.recordUrl?.(7 as unknown as string)).toBeNull();
+    expect(asked).toHaveLength(0);
+  });
+
   it('sends nothing for no words, and needs the client of its own source', async () => {
     const { connector, asked, http } = setup(answer([]));
     await expect(connector.searchTexts(query({ words: '"*"' }), page)).rejects.toThrow(

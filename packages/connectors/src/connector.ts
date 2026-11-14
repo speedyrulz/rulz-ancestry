@@ -27,6 +27,13 @@ export interface SourceConnector {
   ): Promise<SearchAnswer>;
   /** Looks for texts that have some words. Rejects with an `HttpError` or a `ConnectorError`. */
   searchTexts?(query: TextQuery, page: PageRequest, options?: SearchOptions): Promise<SearchAnswer>;
+  /**
+   * The address of a record's page, made from what the source calls the
+   * record; null when that is no name of a record of this source. A source
+   * offers it when the app makes its records' addresses itself, so that an
+   * address need not be believed from anywhere else.
+   */
+  recordUrl?(key: string): string | null;
 }
 
 /**

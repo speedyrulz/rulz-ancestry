@@ -407,8 +407,13 @@ textarea {
   min-width: 160px;
 }
 
+/* The buttons go to a second row in a narrow window; a label is never broken. */
 .topbar .actions {
-  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.topbar .actions button {
+  white-space: nowrap;
 }
 
 .notice-bar {
@@ -1805,9 +1810,40 @@ ul.media-grid,
   font-size: 0.9rem;
 }
 
-.record-attach {
-  float: right;
-  margin-left: 1rem;
+/* What can be done with a result, in a row under what it says. */
+.record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0.3rem;
+}
+
+.record-actions button {
+  padding: 3px 10px;
+  font-size: 13px;
+}
+
+.record-actions .badge {
+  margin-left: 0;
+}
+
+.inbox-tabs {
+  margin-bottom: 0.5rem;
+}
+
+.inbox-tabs button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.inbox-list {
+  margin-top: 0.75rem;
+}
+
+.inbox-list li {
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .record-links {

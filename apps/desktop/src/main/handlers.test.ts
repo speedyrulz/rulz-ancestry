@@ -15,6 +15,7 @@ import {
   type GedcomExportInfo,
   type GedcomImportResult,
   type IpcError,
+  type MarkRecordResult,
   type MediaAddResult,
   type MediaDetails,
   type MediaFindResult,
@@ -27,6 +28,7 @@ import {
   type PersonPage,
   type PlaceListPage,
   type PlaceSuggestions,
+  type RecordInboxPage,
   type RecordLinkResult,
   type RecordSearchResult,
   type RecordSearchSetup,
@@ -3505,5 +3507,598 @@ describe('a result set beside the person, and its facts taken over', () => {
     expect(
       await call<TakeRecordFactsResult>('takeRecordFacts', { ...ref, stamp: STAMP, takes: [TAKE] }),
     ).toMatchObject({ ok: false, problem: { kind: 'record' }, comparison: null });
+  });
+});
+
+describe('results kept for later, and results turned down', () => {
+  /** What WikiTree answers here: one profile of someone made up. */
+  const profile = () =>
+    new Response(
+      JSON.stringify([
+        {
+          status: 0,
+          matches: [
+            {
+              Id: 1,
+              Name: 'Test-90001',
+              FirstName: 'Ada',
+              LastNameAtBirth: 'Test',
+              LastNameCurrent: 'Test',
+              BirthDate: '1850-03-12',
+              DeathDate: '1910-00-00',
+              BirthLocation: 'Ashford, Vermont',
+              Gender: 'Female',
+              IsLiving: 0,
+              Privacy: 60,
+            },
+          ],
+          total: 1,
+        },
+      ]),
+    );
+  const REF = { sourceId: 'wikitree', key: 'Test-90001' };
+  const KEPT = { ...REF, from: 'inbox' };
+  const URL_OF_RECORD = 'https://www.wikitree.com/wiki/Test-90001';
+  const search = async (personId: string) => {
+    const found = await call<RecordSearchResult>('searchRecords', {
+      personId,
+      sourceId: 'wikitree',
+      query: QUERY,
+      offset: 0,
+    });
+    if (!found.ok) throw new Error(found.problem.message);
+    return found;
+  };
+  const keep = (personId: string, ref: object = REF) =>
+    call<MarkRecordResult>('keepRecord', { personId, ...ref });
+  const decline = (personId: string, ref: object = REF) =>
+    call<MarkRecordResult>('declineRecord', { personId, ...ref });
+  const unmark = (personId: string, ref: object = REF) =>
+    call<MarkRecordResult>('unmarkRecord', { personId, ...ref });
+  const inbox = (state: 'kept' | 'declined' = 'kept', personId: string | null = null) =>
+    call<RecordInboxPage>('listRecordInbox', { state, personId, offset: 0, limit: 50 });
+  const compare = (personId: string, ref: object) =>
+    call<CompareRecordResult>('compareRecord', { personId, ...ref });
+  const attach = (personId: string, ref: object) =>
+    call<AttachRecordResult>('attachRecord', { personId, ...ref });
+  const pageOf = (personId: string) => call<PersonPage>('getPersonPage', personId);
+  /** Writes into the tree's file as another program could, past everything the app checks. */
+  const tamper = (statement: string, ...values: (string | number | null)[]) => {
+    const db = session.tree.db;
+    db.exec("UPDATE change_state SET mode = 'replay'");
+    try {
+      db.prepare(statement).run(...values);
+    } finally {
+      db.exec("UPDATE change_state SET mode = 'idle'");
+    }
+  };
+  /** The record the tree keeps, as the app wrote it. */
+  const keptJson = () =>
+    JSON.parse(
+      session.tree.db.prepare('SELECT record_json FROM record_mark').pluck().get() as string,
+    ) as Record<string, unknown>;
+  const start = async () => {
+    const tree = await openNewTree();
+    await call('agreeToRecordSearch');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    return { tree, ada };
+  };
+
+  it('keeps a result in the tree, and lists it in the inbox as it was read', async () => {
+    const { ada } = await start();
+    const found = await search(ada);
+    expect(found.marks).toEqual({ kept: [], declined: [] });
+    const asked = askedOfSources.length;
+    const before = Date.now();
+
+    const kept = await keep(ada);
+    if (!kept.ok) throw new Error(kept.problem.message);
+    expect(kept.tree).toMatchObject({ inbox: 1, undo: 'Keep a record for later' });
+    // A later search says that it is kept.
+    expect((await search(ada)).marks).toEqual({ kept: ['Test-90001'], declined: [] });
+
+    const listed = await inbox();
+    expect(listed.total).toBe(1);
+    expect(listed.items).toEqual([
+      {
+        personId: ada,
+        personName: 'Ada Test',
+        sourceId: 'wikitree',
+        sourceName: 'WikiTree',
+        key: 'Test-90001',
+        title: 'Ada Test',
+        url: URL_OF_RECORD,
+        record: found.items[0],
+        fit: { band: 'strong', reasons: ['Same name', 'Born in the same year'], doubts: [] },
+        attached: false,
+        canAttach: true,
+        mayBeLiving: false,
+        readAt: found.fetchedAt,
+        markedAt: expect.any(Number),
+        problem: '',
+      },
+    ]);
+    expect(listed.items[0]?.markedAt).toBeGreaterThanOrEqual(before);
+    // Keeping and listing sent nothing.
+    expect(askedOfSources).toHaveLength(asked);
+
+    // One Undo takes it out of the tree again, and Redo puts it back.
+    expect((await call<TreeState>('undo')).inbox).toBe(0);
+    expect((await inbox()).items).toEqual([]);
+    expect((await call<TreeState>('redo')).inbox).toBe(1);
+  });
+
+  it('finds a kept result again after the tree was closed, and compares and takes from it', async () => {
+    const { tree, ada } = await start();
+    await search(ada);
+    await keep(ada);
+    const asked = askedOfSources.length;
+
+    expect(await call('closeTree')).toEqual({ backupError: null });
+    pickedFolder = tree.dir;
+    expect(await call<TreeState>('openTreeFromDialog')).toMatchObject({ inbox: 1 });
+
+    // What the search showed is gone with the tree that was closed.
+    expect(await compare(ada, REF)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await attach(ada, REF)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    // What the tree keeps is still there.
+    const compared = await compare(ada, KEPT);
+    if (!compared.ok) throw new Error(compared.problem.message);
+    expect(compared.comparison).toMatchObject({
+      title: 'Ada Test',
+      url: URL_OF_RECORD,
+      fit: { band: 'strong' },
+      facts: [
+        {
+          type: 'birth',
+          targets: [
+            {
+              date: { tree: '1850', record: '12 MAR 1850', relation: 'more-exact', canTake: true },
+            },
+          ],
+        },
+        { type: 'death', targets: [{ eventId: null }] },
+      ],
+    });
+
+    const birth = (await pageOf(ada)).events[0];
+    const taken = await call<TakeRecordFactsResult>('takeRecordFacts', {
+      personId: ada,
+      ...KEPT,
+      stamp: compared.comparison.stamp,
+      takes: [{ type: 'birth', eventId: birth?.id, date: true, place: true }],
+    });
+    if (!taken.ok) throw new Error(taken.problem.message);
+    const page = await pageOf(ada);
+    expect(page.events[0]).toMatchObject({
+      dateText: '12 MAR 1850',
+      placeText: 'Ashford, Vermont',
+    });
+    expect(page.citations).toMatchObject([{ sourceTitle: 'WikiTree', url: URL_OF_RECORD }]);
+    // It stays in the inbox, marked as attached, until the user removes it.
+    expect((await inbox()).items).toMatchObject([{ attached: true }]);
+    // None of this asked a source for anything.
+    expect(askedOfSources).toHaveLength(asked);
+  });
+
+  it('cites a kept result with the day it was read, not the day it is attached', async () => {
+    const { ada } = await start();
+    await search(ada);
+    await keep(ada);
+    tamper('UPDATE record_mark SET read_at = ?', Date.UTC(2020, 5, 15, 12));
+
+    const attached = await attach(ada, KEPT);
+    if (!attached.ok) throw new Error(attached.problem.message);
+    expect(attached.added).toBe(true);
+    expect((await pageOf(ada)).citations).toMatchObject([
+      {
+        page: 'Ada Test (Test-90001)',
+        url: URL_OF_RECORD,
+        accessedAt: '2020-06-15',
+        uses: [{ type: 'person', id: ada }],
+      },
+    ]);
+    expect((await inbox()).items).toMatchObject([
+      { attached: true, readAt: Date.UTC(2020, 5, 15, 12) },
+    ]);
+  });
+
+  it('keeps only what a search showed for that person, named by its key alone', async () => {
+    const { ada } = await start();
+    const bea = await addPerson('Bea', { birthDate: '1850' });
+    // Nothing was searched for yet.
+    expect(await keep(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await decline(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    await search(ada);
+    // It was shown for Ada, not for Bea.
+    expect(await keep(bea)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await keep(ada, { sourceId: 'wikitree', key: 'Other-1' })).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    expect(await keep(ada, { sourceId: 'no-such-site', key: 'Test-90001' })).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    // The page cannot hand in what a record says.
+    for (const extra of [{ title: 'Mine' }, { record: {} }, { recordJson: '{}' }, { url: 'x' }]) {
+      expect((await errorOf('keepRecord', { personId: ada, ...REF, ...extra })).code).toBe(
+        'invalid',
+      );
+    }
+    expect((await errorOf('keepRecord', { personId: ada, ...REF, from: 'page' })).code).toBe(
+      'invalid',
+    );
+    expect(session.state().inbox).toBe(0);
+    // A copy the tree does not keep cannot be asked for as if it did.
+    expect(await compare(ada, KEPT)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await attach(ada, KEPT)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(await decline(ada, KEPT)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+
+  it('turns a result down for one person, says so at the next search, and takes it back', async () => {
+    const { ada } = await start();
+    const bea = await addPerson('Bea', { birthDate: '1850' });
+    await search(ada);
+    const asked = askedOfSources.length;
+
+    const declined = await decline(ada);
+    if (!declined.ok) throw new Error(declined.problem.message);
+    expect(declined.tree).toMatchObject({ inbox: 0, undo: 'Turn a record down' });
+    // The result still comes with the answer; the page leaves it out.
+    const again = await search(ada);
+    expect(again.items).toHaveLength(1);
+    expect(again.marks).toEqual({ kept: [], declined: ['Test-90001'] });
+    // For another person it was not turned down.
+    expect((await search(bea)).marks).toEqual({ kept: [], declined: [] });
+
+    expect((await inbox('kept')).items).toEqual([]);
+    expect((await inbox('declined')).items).toEqual([
+      {
+        personId: ada,
+        personName: 'Ada Test',
+        sourceId: 'wikitree',
+        sourceName: 'WikiTree',
+        key: 'Test-90001',
+        title: 'Ada Test',
+        url: URL_OF_RECORD,
+        // Nothing of the record is held for one that was turned down.
+        record: null,
+        fit: null,
+        attached: false,
+        canAttach: false,
+        mayBeLiving: false,
+        readAt: expect.any(Number),
+        markedAt: expect.any(Number),
+        problem: '',
+      },
+    ]);
+    expect(session.tree.db.prepare('SELECT record_json FROM record_mark').pluck().get()).toBeNull();
+
+    const allowed = await unmark(ada);
+    if (!allowed.ok) throw new Error(allowed.problem.message);
+    expect(allowed.tree.undo).toBe('Allow a record again');
+    await search(ada);
+    expect((await search(ada)).marks).toEqual({ kept: [], declined: [] });
+    // There is nothing left to take back.
+    expect(await unmark(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    expect(askedOfSources.length).toBeGreaterThanOrEqual(asked);
+  });
+
+  it('turns a kept result down from the inbox, and drops what was kept of it', async () => {
+    const { ada } = await start();
+    await search(ada);
+    await keep(ada);
+    expect(keptJson()).toMatchObject({ key: 'Test-90001', title: 'Ada Test' });
+
+    const declined = await decline(ada, KEPT);
+    if (!declined.ok) throw new Error(declined.problem.message);
+    expect(declined.tree.inbox).toBe(0);
+    expect((await inbox('declined')).items).toMatchObject([{ title: 'Ada Test', record: null }]);
+    expect(session.tree.db.prepare('SELECT record_json FROM record_mark').pluck().get()).toBeNull();
+    // It is no kept result any more.
+    expect(await compare(ada, KEPT)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+
+  it('does not trust what the file of a tree holds for a kept record', async () => {
+    const { ada } = await start();
+    await search(ada);
+    await keep(ada);
+    const good = keptJson();
+    const asWritten = (record: unknown) =>
+      tamper('UPDATE record_mark SET record_json = ?', JSON.stringify(record));
+    const unusable = async (problem: string) => {
+      const [item] = (await inbox()).items;
+      expect(item).toMatchObject({ record: null, fit: null, canAttach: false, problem });
+      for (const result of [
+        await compare(ada, KEPT),
+        await attach(ada, KEPT),
+        await decline(ada, KEPT),
+      ]) {
+        expect(result).toMatchObject({ ok: false, problem: { kind: 'record' } });
+      }
+      return item;
+    };
+    const UNREADABLE = 'What the tree holds of this result cannot be read.';
+    const OFF_SITE = 'The address kept with this result does not lead to the site of its source.';
+
+    // Not JSON at all, no record, a record of another key or source, a field too many, a wrong kind.
+    tamper("UPDATE record_mark SET record_json = 'not json'");
+    await unusable(UNREADABLE);
+    for (const record of [
+      null,
+      [],
+      { ...good, key: 'Other-1' },
+      { ...good, connectorId: 'wikidata' },
+      { ...good, script: 'alert(1)' },
+      { ...good, kind: 'person2' },
+      { ...good, sex: 'X' },
+      { ...good, facts: [{ type: 'burial', date: '1850', place: '' }] },
+      { ...good, facts: 'none' },
+      { ...good, title: 7 },
+    ]) {
+      asWritten(record);
+      await unusable(UNREADABLE);
+    }
+    // A record that leads somewhere else than to its source.
+    for (const url of [
+      'https://evil.example/wiki/Test-90001',
+      'http://www.wikitree.com/wiki/Test-90001',
+      'javascript:alert(1)',
+      'https://www.wikitree.com.evil.example/x',
+      // Reading these as a URL would drop the line break and the tab without a word.
+      'https://www.wikitree.com/wiki/Test-90001\n',
+      'https://www.wiki\ttree.com/wiki/Test-90001',
+      'https://www.wikitree.com/wiki/Test 90001',
+    ]) {
+      asWritten({ ...good, url });
+      expect((await unusable(OFF_SITE))?.url).toBe('');
+    }
+    expect((await pageOf(ada)).citations).toEqual([]);
+
+    // Texts are cleaned again as a connector cleans them: one line, no control characters.
+    asWritten({ ...good, title: 'Ada\t Test\nof   Ashford' + String.fromCharCode(0, 0x202e) });
+    // The line a result is shown under is the one of the record that is
+    // compared and cited: a row cannot show one name and hold another.
+    tamper("UPDATE record_mark SET title = 'Someone' || char(10) || 'Else'");
+    const [cleaned] = (await inbox()).items;
+    expect(cleaned).toMatchObject({ title: 'Ada Test of Ashford', problem: '', canAttach: true });
+    expect(cleaned?.record?.title).toBe('Ada Test of Ashford');
+    expect(await compare(ada, KEPT)).toMatchObject({
+      ok: true,
+      comparison: { title: 'Ada Test of Ashford' },
+    });
+    // Where the record cannot be read, the row's own line says what there was, cleaned.
+    tamper("UPDATE record_mark SET record_json = 'not json'");
+    expect((await unusable(UNREADABLE))?.title).toBe('Someone Else');
+    asWritten(good);
+
+    // A moment that is none: the result is listed, and no day is made up for it.
+    for (const when of [9_000_000_000_000_000, -1, 1.5, 'soon', 253_402_300_800_000]) {
+      tamper('UPDATE record_mark SET read_at = ?', when);
+      expect((await unusable(UNREADABLE))?.readAt).toBeNull();
+    }
+    tamper('UPDATE record_mark SET read_at = 1000, marked_at = ?', 9_000_000_000_000_000);
+    expect((await inbox()).items).toMatchObject([
+      { readAt: 1000, markedAt: null, problem: '', canAttach: true },
+    ]);
+    tamper('UPDATE record_mark SET marked_at = 2000');
+
+    // A source the app does not know, named as the app names none, and a key
+    // longer than any source gives: the result can only be removed, and can be.
+    const longKey = String.fromCodePoint(0x1f600).repeat(150);
+    expect(longKey.length).toBe(300);
+    tamper("UPDATE record_mark SET source_id = 'Gone_Site', record_key = ?", longKey);
+    expect((await inbox()).items).toMatchObject([
+      {
+        sourceId: 'Gone_Site',
+        sourceName: 'Gone_Site',
+        key: longKey,
+        record: null,
+        url: '',
+        canAttach: false,
+        problem: 'The app does not know the source of this result any more.',
+      },
+    ]);
+    const removed = await unmark(ada, { sourceId: 'Gone_Site', key: longKey });
+    if (!removed.ok) throw new Error(removed.problem.message);
+    expect(removed.tree).toMatchObject({ inbox: 0, undo: 'Remove a kept record' });
+  });
+
+  it('keeps nothing of a record of the National Archives but its identifier and address', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await call<RecordSourceKeyResult>('setRecordSourceKey', {
+      sourceId: 'nara-catalog',
+      key: CANARY,
+    });
+    const found = await call<RecordSearchResult>('searchRecordTexts', {
+      personId: ada,
+      sourceId: 'nara-catalog',
+      query: TEXT,
+      offset: 0,
+    });
+    if (!found.ok) throw new Error(found.problem.message);
+    const ref = { sourceId: 'nara-catalog', key: '90000001' };
+    const row = () =>
+      session.tree.db.prepare('SELECT state, title, url, record_json FROM record_mark').get();
+    const address = 'https://catalog.archives.gov/id/90000001';
+
+    expect(await keep(ada, ref)).toMatchObject({ ok: true });
+    expect(row()).toEqual({ state: 'kept', title: '', url: address, record_json: null });
+    // The file of the tree holds nothing the Archives said: no title, no description.
+    const held = JSON.stringify(session.tree.db.prepare('SELECT * FROM record_mark').all());
+    expect(held).not.toContain('Pension');
+    expect(held).not.toContain('File unit');
+    expect(held).not.toContain(CANARY);
+
+    const item = {
+      sourceName: 'US National Archives Catalog',
+      title: 'Identifier 90000001',
+      url: address,
+      record: null,
+      fit: null,
+      canAttach: true,
+      problem: '',
+    };
+    expect((await inbox()).items).toMatchObject([item]);
+    // Should a file hold a text for such a record all the same, it is not used.
+    tamper(
+      'UPDATE record_mark SET record_json = ?, title = ?',
+      JSON.stringify({ ...found.items[0] }),
+      'Pension file of Ada Test',
+    );
+    expect((await inbox()).items).toMatchObject([item]);
+    // Nor is an address the file gives: it could be that of another record of
+    // the Archives. The app makes the address from the identifier again.
+    tamper(
+      "UPDATE record_mark SET record_json = NULL, title = '', url = 'https://catalog.archives.gov/id/123'",
+    );
+    expect((await inbox()).items).toMatchObject([item]);
+    // An identifier that is none has no address, and the result cannot be cited.
+    tamper("UPDATE record_mark SET record_key = '90000001/../123'");
+    expect((await inbox()).items).toMatchObject([
+      {
+        title: 'Identifier 90000001/../123',
+        url: '',
+        canAttach: false,
+        problem: 'What the tree holds of this result cannot be read.',
+      },
+    ]);
+    expect(
+      await attach(ada, { sourceId: 'nara-catalog', key: '90000001/../123', from: 'inbox' }),
+    ).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    tamper("UPDATE record_mark SET record_key = '90000001'");
+
+    // A text is not set beside a person; it can be cited, by its identifier and address.
+    expect(await compare(ada, { ...ref, from: 'inbox' })).toMatchObject({
+      ok: false,
+      problem: { kind: 'record' },
+    });
+    const attached = await attach(ada, { ...ref, from: 'inbox' });
+    if (!attached.ok) throw new Error(attached.problem.message);
+    expect((await pageOf(ada)).citations).toMatchObject([
+      { page: 'Identifier 90000001', text: '', url: address },
+    ]);
+
+    expect(await decline(ada, { ...ref, from: 'inbox' })).toMatchObject({ ok: true });
+    expect(row()).toEqual({ state: 'declined', title: '', url: address, record_json: null });
+    expect((await inbox('declined')).items).toMatchObject([{ title: 'Identifier 90000001' }]);
+  });
+
+  it('holds a kept result against the person as the tree has them now, and says who may be living', async () => {
+    const { ada } = await start();
+    await search(ada);
+    await keep(ada);
+    expect((await inbox()).items).toMatchObject([{ fit: { band: 'strong' }, mayBeLiving: false }]);
+
+    const birth = (await pageOf(ada)).events[0];
+    await call('updateEvent', birth?.id, { type: 'birth', date: '1700', place: '' });
+    const [earlier] = (await inbox()).items;
+    expect(earlier?.fit?.band).not.toBe('strong');
+    expect(earlier?.fit?.doubts.length).toBeGreaterThan(0);
+
+    // Someone born within the last 110 years may be living. What is kept stays, and can be read.
+    await call('updateEvent', birth?.id, { type: 'birth', date: '1990', place: '' });
+    const asked = askedOfSources.length;
+    expect((await inbox()).items).toMatchObject([{ mayBeLiving: true, canAttach: true }]);
+    expect(await compare(ada, KEPT)).toMatchObject({ ok: true });
+    // Nothing is sent for them, here or by a search.
+    expect(
+      await call<RecordSearchResult>('searchRecords', {
+        personId: ada,
+        sourceId: 'wikitree',
+        query: QUERY,
+        offset: 0,
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'living' } });
+    expect(askedOfSources).toHaveLength(asked);
+  });
+
+  it('lists what is kept for everyone or for one person, a page at a time', async () => {
+    const { ada } = await start();
+    const bea = await addPerson('Bea', { birthDate: '1850' });
+    await search(ada);
+    await keep(ada);
+    await search(bea);
+    await keep(bea);
+    expect(session.state().inbox).toBe(2);
+
+    const all = await inbox();
+    expect(all.total).toBe(2);
+    // The latest first.
+    expect(all.items.map((item) => item.personName)).toEqual(['Bea Test', 'Ada Test']);
+    const ofAda = await inbox('kept', ada);
+    expect(ofAda).toMatchObject({ total: 1, items: [{ personId: ada }] });
+    const second = await call<RecordInboxPage>('listRecordInbox', {
+      state: 'kept',
+      personId: null,
+      offset: 1,
+      limit: 1,
+    });
+    expect(second).toMatchObject({ total: 2, items: [{ personId: ada }] });
+    // The window reads as many again as it showed, up to 500 in one go.
+    expect(
+      await call<RecordInboxPage>('listRecordInbox', {
+        state: 'kept',
+        personId: null,
+        offset: 0,
+        limit: 500,
+      }),
+    ).toMatchObject({ total: 2 });
+    for (const request of [
+      { state: 'all', personId: null, offset: 0, limit: 10 },
+      { state: 'kept', personId: null, offset: 0, limit: 1000 },
+      { state: 'kept', personId: 'ada', offset: 0, limit: 10 },
+      { state: 'kept', offset: 0, limit: 10 },
+    ]) {
+      expect((await errorOf('listRecordInbox', request)).code).toBe('invalid');
+    }
+  });
+
+  it('moves what was kept to the person who stays when two are merged', async () => {
+    const { ada } = await start();
+    const bea = await addPerson('Ada', { birthDate: '1850' });
+    await search(bea);
+    await keep(bea);
+    expect((await inbox()).items).toMatchObject([{ personId: bea }]);
+
+    await call('mergePersons', ada, bea);
+    expect((await inbox()).items).toMatchObject([{ personId: ada, title: 'Ada Test' }]);
+    expect(await compare(ada, KEPT)).toMatchObject({ ok: true });
+    await call('undo');
+    expect((await inbox()).items).toMatchObject([{ personId: bea }]);
+
+    // What was kept for the one who goes is not lost to a turning-down of the one who stays.
+    await search(ada);
+    expect(await decline(ada)).toMatchObject({ ok: true });
+    await call('mergePersons', ada, bea);
+    expect((await inbox()).items).toMatchObject([{ personId: ada, title: 'Ada Test' }]);
+    expect((await inbox('declined')).items).toEqual([]);
+    expect(await compare(ada, KEPT)).toMatchObject({ ok: true });
+  });
+
+  it('takes no more marks than a tree holds', async () => {
+    const { ada } = await start();
+    await search(ada);
+    const db = session.tree.db;
+    db.exec("UPDATE change_state SET mode = 'replay'");
+    const insert = db.prepare(
+      "INSERT INTO record_mark (id, person_id, source_id, record_key, state, read_at, marked_at) VALUES (?, ?, 'wikitree', ?, 'declined', 0, 0)",
+    );
+    for (let index = 0; index < 5000; index += 1) insert.run('id-' + index, ada, 'K-' + index);
+    db.exec("UPDATE change_state SET mode = 'idle'");
+
+    for (const result of [await keep(ada), await decline(ada)]) {
+      expect(result).toMatchObject({
+        ok: false,
+        problem: { kind: 'failed', message: expect.stringContaining('5,000') },
+      });
+    }
+    // Taking one back makes room.
+    expect(await unmark(ada, { sourceId: 'wikitree', key: 'K-1' })).toMatchObject({ ok: true });
+    expect(await keep(ada)).toMatchObject({ ok: true, tree: { inbox: 1 } });
   });
 });

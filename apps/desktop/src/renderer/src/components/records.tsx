@@ -35,7 +35,10 @@ import { Dialog, TextField } from './ui';
  *
  * A result can be attached to the person as a source with one click, and a
  * result that is a person or a record of one can be set beside the person
- * of the tree (see `recordcompare.tsx`). For
+ * of the tree (see `recordcompare.tsx`). A result can be kept to look at
+ * later, which puts it into the inbox (see `recordinbox.tsx`), or turned
+ * down for this person, after which it is left out unless the user asks to
+ * see what they turned down. For
  * sites the app does not search itself, a button opens a search in the
  * user's browser, and a page found there is cited by pasting its address.
  */
@@ -71,11 +74,16 @@ function textFormOf(query: TextQuery): TextForm {
 /** What a search asks for: a person, or words. */
 type Asked = { kind: 'person'; query: PersonQuery } | { kind: 'text'; query: TextQuery };
 
+/** What the user decided about a result for this person. */
+type Mark = 'kept' | 'declined';
+
 /** What one source has answered so far. */
 interface Found {
   items: ExternalRecord[];
   /** How well each result fits the person of the tree, by its key. */
   fits: Record<string, RecordFitInfo>;
+  /** The results that are kept for this person or were turned down for them, by their key. */
+  marks: Record<string, Mark>;
   total: number | null;
   nextOffset: number | null;
   hidden: number;
@@ -86,6 +94,7 @@ interface Found {
 const NOTHING: Found = {
   items: [],
   fits: {},
+  marks: {},
   total: null,
   nextOffset: null,
   hidden: 0,
@@ -119,51 +128,15 @@ function problemWords(problem: RecordSearchProblem): string {
     : problem.message;
 }
 
-interface ResultProps {
-  record: ExternalRecord;
-  /** How well the result fits the person; undefined for a text, which is not held against them. */
-  fit: RecordFitInfo | undefined;
-  attached: boolean;
-  busy: boolean;
-  onAttach: () => void;
-  onCompare: () => void;
+/** What turning a result down is called: a text is about someone, a record is of someone. */
+export function declineWords(record: ExternalRecord): string {
+  return record.kind === 'text' ? 'Not about this person' : 'Not this person';
 }
 
-function Result({ record, fit, attached, busy, onAttach, onCompare }: ResultProps) {
+/** What a record says, in the lines under its title. */
+export function RecordLines({ record }: { record: ExternalRecord }) {
   return (
-    <li data-testid="record-result">
-      <span className="record-attach">
-        {record.kind !== 'text' && (
-          <button type="button" onClick={onCompare} data-testid="record-compare-open">
-            Compare
-          </button>
-        )}{' '}
-        {attached ? (
-          <span className="badge" data-testid="record-attached">
-            Attached as a source
-          </span>
-        ) : (
-          <button type="button" onClick={onAttach} disabled={busy} data-testid="record-attach">
-            Attach as a source
-          </button>
-        )}
-      </span>
-      <a href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
-        {record.title}
-      </a>
-      {fit !== undefined && (
-        <span className={`badge fit fit-${fit.band}`} data-testid="record-fit">
-          {fitWords(fit)}
-        </span>
-      )}
-      {record.kind === 'person' && record.sex !== null && (
-        <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
-      )}
-      {fit !== undefined && fitWhy(fit) !== '' && (
-        <div className="record-fact muted" data-testid="record-fit-why">
-          {fitWhy(fit)}
-        </div>
-      )}
+    <>
       {record.kind === 'person' && record.about !== '' && (
         <div className="record-fact" data-testid="record-about">
           {record.about}
@@ -209,19 +182,115 @@ function Result({ record, fit, attached, busy, onAttach, onCompare }: ResultProp
               .join(', ')}
           </div>
         )}
+    </>
+  );
+}
+
+interface ResultProps {
+  record: ExternalRecord;
+  /** How well the result fits the person; undefined for a text, which is not held against them. */
+  fit: RecordFitInfo | undefined;
+  /** Whether the result is kept for this person, or was turned down for them. */
+  mark: Mark | undefined;
+  attached: boolean;
+  busy: boolean;
+  onAttach: () => void;
+  onCompare: () => void;
+  onKeep: () => void;
+  onDecline: () => void;
+  /** Takes a turning-down back. */
+  onAllow: () => void;
+}
+
+function Result({
+  record,
+  fit,
+  mark,
+  attached,
+  busy,
+  onAttach,
+  onCompare,
+  onKeep,
+  onDecline,
+  onAllow,
+}: ResultProps) {
+  return (
+    <li data-testid="record-result">
+      <a href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
+        {record.title}
+      </a>
+      {fit !== undefined && (
+        <span className={`badge fit fit-${fit.band}`} data-testid="record-fit">
+          {fitWords(fit)}
+        </span>
+      )}
+      {record.kind === 'person' && record.sex !== null && (
+        <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
+      )}
+      {fit !== undefined && fitWhy(fit) !== '' && (
+        <div className="record-fact muted" data-testid="record-fit-why">
+          {fitWhy(fit)}
+        </div>
+      )}
+      <RecordLines record={record} />
+      <div className="record-actions">
+        {mark === 'declined' ? (
+          <>
+            <span className="badge" data-testid="record-declined">
+              Turned down
+            </span>{' '}
+            <button type="button" onClick={onAllow} disabled={busy} data-testid="record-allow">
+              Allow again
+            </button>
+          </>
+        ) : (
+          <>
+            {record.kind !== 'text' && (
+              <button type="button" onClick={onCompare} data-testid="record-compare-open">
+                Compare
+              </button>
+            )}{' '}
+            {mark === 'kept' ? (
+              <span className="badge" data-testid="record-kept">
+                Kept for later
+              </span>
+            ) : (
+              <button type="button" onClick={onKeep} disabled={busy} data-testid="record-keep">
+                Keep for later
+              </button>
+            )}{' '}
+            <button type="button" onClick={onDecline} disabled={busy} data-testid="record-decline">
+              {declineWords(record)}
+            </button>{' '}
+            {attached ? (
+              <span className="badge" data-testid="record-attached">
+                Attached as a source
+              </span>
+            ) : (
+              <button type="button" onClick={onAttach} disabled={busy} data-testid="record-attach">
+                Attach as a source
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </li>
   );
 }
+
+/** Keep a result for later, turn it down, or take a turning-down back. */
+type MarkAction = 'keep' | 'decline' | 'allow';
 
 interface SourceResultsProps {
   source: RecordSourceInfo;
   found: Found;
   /** The keys of the results the person's page cites. */
   attached: ReadonlySet<string>;
-  /** The key of the result that is being attached; null when none is. */
+  /** The key of the result that is being attached or marked; null when none is. */
   attaching: string | null;
   onAttach: (record: ExternalRecord) => void;
   onCompare: (record: ExternalRecord) => void;
+  onMark: (record: ExternalRecord, action: MarkAction) => void;
   onMore: () => void;
 }
 
@@ -232,8 +301,15 @@ function SourceResults({
   attaching,
   onAttach,
   onCompare,
+  onMark,
   onMore,
 }: SourceResultsProps) {
+  /** Whether what was turned down for this person is shown all the same. */
+  const [showDeclined, setShowDeclined] = useState(false);
+  const declined = found.items.filter((record) => found.marks[record.key] === 'declined').length;
+  const visible = found.items.filter(
+    (record) => showDeclined || found.marks[record.key] !== 'declined',
+  );
   return (
     <section className="record-source" data-testid={`records-${source.id}`}>
       <h3>
@@ -245,20 +321,38 @@ function SourceResults({
           </span>
         )}
       </h3>
-      {found.items.length > 0 && (
+      {visible.length > 0 && (
         <ol className="record-list">
-          {found.items.map((record) => (
+          {visible.map((record) => (
             <Result
               key={record.key}
               record={record}
               fit={found.fits[record.key]}
+              mark={found.marks[record.key]}
               attached={attached.has(record.key)}
               busy={attaching !== null}
               onAttach={() => onAttach(record)}
               onCompare={() => onCompare(record)}
+              onKeep={() => onMark(record, 'keep')}
+              onDecline={() => onMark(record, 'decline')}
+              onAllow={() => onMark(record, 'allow')}
             />
           ))}
         </ol>
+      )}
+      {declined > 0 && (
+        <p className="hint" data-testid="record-declined-count">
+          {countOf(declined, 'result', 'results')} you turned down for this person{' '}
+          {declined === 1 ? 'is' : 'are'} {showDeclined ? 'shown too' : 'not shown'}.{' '}
+          <button
+            type="button"
+            className="small"
+            onClick={() => setShowDeclined((now) => !now)}
+            data-testid="record-declined-show"
+          >
+            {showDeclined ? 'Hide' : 'Show'}
+          </button>
+        </p>
       )}
       {found.total === 0 && <p className="muted">Nothing found.</p>}
       {source.searches === 'person' && found.items.length > 0 && (
@@ -426,6 +520,7 @@ interface SourceListProps {
   attaching: string | null;
   onAttach: (source: RecordSourceInfo, record: ExternalRecord) => void;
   onCompare: (source: RecordSourceInfo, record: ExternalRecord) => void;
+  onMark: (source: RecordSourceInfo, record: ExternalRecord, action: MarkAction) => void;
   onMore: (source: RecordSourceInfo, offset: number) => void;
 }
 
@@ -437,6 +532,7 @@ function SourceList({
   attaching,
   onAttach,
   onCompare,
+  onMark,
   onMore,
 }: SourceListProps) {
   return (
@@ -456,6 +552,7 @@ function SourceList({
           attaching={attaching}
           onAttach={(record) => onAttach(source, record)}
           onCompare={(record) => onCompare(source, record)}
+          onMark={(record, action) => onMark(source, record, action)}
           onMore={() => {
             const offset = found[source.id]?.nextOffset;
             if (offset !== null && offset !== undefined) onMore(source, offset);
@@ -611,12 +708,31 @@ export function RecordSearchDialog({
         setFound((all) => {
           const before = offset === 0 ? NOTHING : (all[source.id] ?? NOTHING);
           const known = new Set(before.items.map((record) => record.key));
+          // A result that comes again with a later page is shown as it came
+          // last. The main process holds that copy, and it is the one that is
+          // kept, compared or attached: what is shown must be the same.
+          const latest = new Map(result.items.map((record) => [record.key, record]));
           return {
             ...all,
             [source.id]: {
-              items: [...before.items, ...result.items.filter((record) => !known.has(record.key))],
-              // A result that was shown before keeps the label it was shown with.
-              fits: { ...result.fits, ...before.fits },
+              items: [
+                ...before.items.map((record) => latest.get(record.key) ?? record),
+                ...result.items.filter((record) => !known.has(record.key)),
+              ],
+              // And with the label of that copy.
+              fits: {
+                ...Object.fromEntries(
+                  Object.entries(before.fits).filter(([key]) => !latest.has(key)),
+                ),
+                ...result.fits,
+              },
+              marks: {
+                ...before.marks,
+                ...Object.fromEntries(result.marks.kept.map((key) => [key, 'kept' as const])),
+                ...Object.fromEntries(
+                  result.marks.declined.map((key) => [key, 'declined' as const]),
+                ),
+              },
               total: result.total,
               nextOffset: result.nextOffset,
               hidden: before.hidden + result.hidden,
@@ -662,6 +778,39 @@ export function RecordSearchDialog({
   const compare = (source: RecordSourceInfo, record: ExternalRecord) => {
     setProblem(null);
     setComparing({ sourceId: source.id, key: record.key });
+  };
+
+  /** Keeps a result for later, turns it down for this person, or takes a turning-down back. */
+  const mark = (source: RecordSourceInfo, record: ExternalRecord, action: MarkAction) => {
+    const request = { personId, sourceId: source.id, key: record.key };
+    setProblem(null);
+    setAttaching(attachedKey(source.id, record.key));
+    (action === 'keep'
+      ? api.keepRecord(request)
+      : action === 'decline'
+        ? api.declineRecord(request)
+        : api.unmarkRecord(request)
+    )
+      .then(
+        (result) => {
+          if (!result.ok) {
+            setProblem(result.problem.message);
+            return;
+          }
+          onTree(result.tree);
+          setFound((all) => {
+            const now = all[source.id];
+            if (now === undefined) return all;
+            const marks = Object.fromEntries(
+              Object.entries(now.marks).filter(([key]) => key !== record.key),
+            );
+            if (action !== 'allow') marks[record.key] = action === 'keep' ? 'kept' : 'declined';
+            return { ...all, [source.id]: { ...now, marks } };
+          });
+        },
+        (failure: unknown) => setProblem(errorMessage(failure)),
+      )
+      .finally(() => setAttaching(null));
   };
 
   const openLink = (link: RecordLinkInfo) => {
@@ -776,9 +925,11 @@ export function RecordSearchDialog({
             </li>
             <li>
               <strong>What is kept:</strong> results stay in the app&apos;s memory until the tree or
-              the app closes. Nothing is added to your tree unless you attach a result. The app
-              notes when it asked each service, and until when a service asked to be left alone, so
-              that it does not ask too often; it does not note what was asked.
+              the app closes. Nothing is added to your tree unless you attach a result, keep it for
+              later or turn it down; what you keep or turn down is saved in the tree&apos;s file,
+              and goes where the tree&apos;s folder goes. The app notes when it asked each service,
+              and until when a service asked to be left alone, so that it does not ask too often; it
+              does not note what was asked.
             </li>
           </ul>
           <div className="dialog-actions">
@@ -861,6 +1012,13 @@ export function RecordSearchDialog({
               {problem}
             </p>
           )}
+          {(sent !== null || sentText !== null) && (
+            <p className="hint" data-testid="record-mark-hint">
+              &quot;Keep for later&quot; puts a result into the inbox, which the bar at the top of
+              the window opens. A result you turn down is left out of later searches for this
+              person. Both are saved in your tree&apos;s file; nothing is sent for either.
+            </p>
+          )}
 
           {sent !== null && (
             <SourceList
@@ -870,6 +1028,7 @@ export function RecordSearchDialog({
               attaching={attaching}
               onAttach={attach}
               onCompare={compare}
+              onMark={mark}
               onMore={(source, offset) =>
                 ask({ kind: 'person', query: sent }, source, offset, round.current.person)
               }
@@ -980,6 +1139,7 @@ export function RecordSearchDialog({
               attaching={attaching}
               onAttach={attach}
               onCompare={compare}
+              onMark={mark}
               onMore={(source, offset) =>
                 ask({ kind: 'text', query: sentText }, source, offset, round.current.text)
               }

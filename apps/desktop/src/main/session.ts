@@ -5,6 +5,7 @@ import {
   MEDIA_DIR_NAME,
   TREE_FILE_NAME,
   backupTree,
+  countRecordMarks,
   createTree,
   exportGedcomFile,
   forgetTree,
@@ -151,6 +152,7 @@ export class TreeSession {
       redo: status.redo?.label ?? null,
       revision: this.#revision,
       lastBackupAt: this.#lastBackupAt,
+      inbox: countRecordMarks(tree, 'kept'),
     };
   }
 

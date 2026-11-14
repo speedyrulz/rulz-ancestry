@@ -3,6 +3,7 @@ import { sql } from './connection';
 import { isSelfOrAncestor, pruneFamilies } from './families';
 import { getStoredRecord, importedNoteOf } from './gedcom/store';
 import { requirePerson } from './persons';
+import { moveRecordMarks } from './recordmarks';
 import { TreeRuleError, type Tree } from './tree';
 
 /**
@@ -364,6 +365,8 @@ export function mergePersons(tree: Tree, keepId: string, mergeId: string): Merge
     const names = moveNames(tree, mergeId, keepId);
     const events = moveEvents(tree, 'person_id', mergeId, keepId);
     moveLinks(tree, 'person_id', mergeId, keepId);
+    // Results of a search that were kept or turned down for the other person.
+    moveRecordMarks(tree, mergeId, keepId);
 
     // Parents: the kept person joins each family the other was a child of.
     const touched = new Set<string>();

@@ -35,6 +35,9 @@ import {
   addCitation,
   attachRecord,
   takeRecordFacts,
+  declineRecord,
+  keepRecord,
+  removeRecordMark,
   addFamilyEvent,
   addMediaFiles,
   addName,
@@ -124,6 +127,7 @@ import type {
   TreePlaceInfo,
   TreeState,
 } from '../shared/ipc';
+import { RECORD_INBOX_MAX } from '../shared/ipc';
 import type { GazetteerService } from './gazetteer';
 import type { RecordSearchService } from './records';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
@@ -310,6 +314,17 @@ const textQuery = z.strictObject({
 });
 
 const siteId = z.string().regex(/^[a-z0-9-]{1,40}$/);
+
+/** Which copy of a result is meant: left out for the one a search showed. */
+const recordCopy = z.enum(['search', 'inbox']).optional();
+
+/** A result as the page names it: by its source and its key, never by what it says. */
+const recordRef = z.strictObject({
+  personId: id,
+  sourceId: siteId,
+  key: z.string().min(1).max(200),
+  from: recordCopy,
+});
 
 const citationTarget = z.strictObject({
   type: z.enum(['person', 'family', 'event', 'name']),
@@ -667,25 +682,73 @@ export function createHandlers(
 
     cancelRecordSearch: define<'cancelRecordSearch'>(none, () => records.cancel()),
 
-    attachRecord: define<'attachRecord'>(
+    attachRecord: define<'attachRecord'>(z.tuple([recordRef]), (request) => {
+      const found = records.attachment(session.tree, request);
+      if (!found.ok) return found;
+      const { citation, added } = session.change((tree) =>
+        attachRecord(tree, request.personId, found.connector, found.citation),
+      );
+      return { ok: true, tree: session.state(), citationId: citation.id, added };
+    }),
+
+    compareRecord: define<'compareRecord'>(z.tuple([recordRef]), (request) =>
+      records.comparison(session.tree, request),
+    ),
+
+    // Kept for later, or turned down: the mark is what the service read from
+    // the source or from the tree, and the page names the result only.
+    keepRecord: define<'keepRecord'>(z.tuple([recordRef]), (request) => {
+      const found = records.keeping(session.tree, request);
+      if (!found.ok) return found;
+      session.change((tree) => keepRecord(tree, request.personId, found.mark));
+      return { ok: true, tree: session.state() };
+    }),
+
+    declineRecord: define<'declineRecord'>(z.tuple([recordRef]), (request) => {
+      const found = records.declining(session.tree, request);
+      if (!found.ok) return found;
+      session.change((tree) => declineRecord(tree, request.personId, found.mark));
+      return { ok: true, tree: session.state() };
+    }),
+
+    // Taking a mark away is asked for with whatever the inbox listed. A
+    // tree's file can hold the mark of a source the app never knew, or a key
+    // longer than any source gives, and such a mark must still be removable.
+    unmarkRecord: define<'unmarkRecord'>(
       z.tuple([
-        z.strictObject({ personId: id, sourceId: siteId, key: z.string().min(1).max(200) }),
+        z.strictObject({
+          personId: id,
+          sourceId: z.string().min(1).max(1000),
+          key: z.string().min(1).max(4000),
+        }),
       ]),
       (request) => {
-        const found = records.attachment(session.tree, request);
-        if (!found.ok) return found;
-        const { citation, added } = session.change((tree) =>
-          attachRecord(tree, request.personId, found.connector, found.citation),
+        const removed = session.change((tree) =>
+          removeRecordMark(tree, request.personId, request.sourceId, request.key),
         );
-        return { ok: true, tree: session.state(), citationId: citation.id, added };
+        return removed === null
+          ? {
+              ok: false,
+              problem: {
+                kind: 'record',
+                message: 'This result is not kept or turned down any more.',
+                retryAt: null,
+              },
+            }
+          : { ok: true, tree: session.state() };
       },
     ),
 
-    compareRecord: define<'compareRecord'>(
+    listRecordInbox: define<'listRecordInbox'>(
       z.tuple([
-        z.strictObject({ personId: id, sourceId: siteId, key: z.string().min(1).max(200) }),
+        z.strictObject({
+          state: z.enum(['kept', 'declined']),
+          personId: id.nullable(),
+          offset: z.number().int().min(0).max(100_000),
+          limit: z.number().int().min(1).max(RECORD_INBOX_MAX),
+        }),
       ]),
-      (request) => records.comparison(session.tree, request),
+      (request) => records.inbox(session.tree, request),
     ),
 
     takeRecordFacts: define<'takeRecordFacts'>(
@@ -694,6 +757,7 @@ export function createHandlers(
           personId: id,
           sourceId: siteId,
           key: z.string().min(1).max(200),
+          from: recordCopy,
           stamp: z.string().regex(/^[0-9a-f]{64}$/),
           takes: z
             .array(
