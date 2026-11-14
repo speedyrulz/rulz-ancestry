@@ -1198,7 +1198,8 @@ export class RecordSearchService {
       attached: answer.page.items
         .filter((record) => cited.has(record.url))
         .map((record) => record.key),
-      items: answer.page.items,
+      // What fits the person best stands first, whatever the order of the source.
+      items: byFit(answer.page.items, fits),
       total: answer.page.total,
       nextOffset: answer.page.next?.offset ?? null,
       hidden: answer.page.hidden,
@@ -1239,6 +1240,25 @@ export class RecordSearchService {
 
 function shownKey(personId: string, sourceId: string, key: string): string {
   return `${personId}\n${sourceId}\n${key}`;
+}
+
+const BAND_ORDER: Record<RecordFitInfo['band'], number> = {
+  strong: 0,
+  possible: 1,
+  weak: 2,
+  unlikely: 3,
+};
+
+/**
+ * The results of one answer, those that fit the person best first. Within one
+ * label they stay in the order the source gave them. A result the app could
+ * not hold against the person stands with those that have little to go by, so
+ * an answer without any label keeps the order of its source.
+ */
+function byFit(items: ExternalRecord[], fits: Record<string, RecordFitInfo>): ExternalRecord[] {
+  const rank = (record: ExternalRecord) => BAND_ORDER[fits[record.key]?.band ?? 'weak'];
+  // The sort keeps the order of what ranks the same.
+  return [...items].sort((a, b) => rank(a) - rank(b));
 }
 
 function sameQuery(a: PersonQuery, b: PersonQuery): boolean {

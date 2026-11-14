@@ -2940,6 +2940,53 @@ describe('how well a result fits the person', () => {
     });
   });
 
+  it('puts the results that fit best first, and keeps the order of the source within one label', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850', deathDate: '1910' });
+    const profile = (number: number, extra: object) => ({
+      Id: number,
+      Name: `Test-${90010 + number}`,
+      FirstName: 'Ada',
+      LastNameAtBirth: 'Test',
+      LastNameCurrent: 'Test',
+      Gender: 'Female',
+      IsLiving: 0,
+      Privacy: 60,
+      ...extra,
+    });
+    // As a source gives them: by its own reckoning, which is not the person of the tree.
+    answerOf = () =>
+      new Response(
+        JSON.stringify([
+          {
+            status: 0,
+            matches: [
+              profile(1, { BirthDate: '1890-00-00' }),
+              profile(7, { FirstName: 'Adah' }),
+              profile(6, {}),
+              profile(2, { FirstName: 'Adah', BirthDate: '1851-00-00' }),
+              profile(3, { BirthDate: '1850-03-12', DeathDate: '1910-00-00' }),
+              profile(4, { BirthDate: '1850-00-00' }),
+              profile(5, { BirthDate: '1891-00-00' }),
+            ],
+            total: 5,
+          },
+        ]),
+      );
+    const found = await search(ada, 'wikitree');
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items.map((record) => [record.key, found.fits[record.key]?.band])).toEqual([
+      ['Test-90013', 'strong'],
+      ['Test-90014', 'strong'],
+      ['Test-90016', 'possible'],
+      ['Test-90012', 'possible'],
+      ['Test-90017', 'weak'],
+      ['Test-90011', 'unlikely'],
+      ['Test-90015', 'unlikely'],
+    ]);
+  });
+
   it('gives a text no label: it was found by its words', async () => {
     await openNewTree();
     await call('agreeToRecordSearch');

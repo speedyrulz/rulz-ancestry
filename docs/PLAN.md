@@ -793,7 +793,7 @@ Not done:
 - **Relatives.** A result carries no parents or partners yet, so none are compared. They are the strongest sign there is.
 - **Places as a hierarchy.** Places are compared by the town, as it is written before the first comma; a county alone, or a town written two ways, does not agree.
 - **How common a name is.** A rare name that agrees says more than a common one; the scoring does not know either.
-- **Sorting by fit,** and a filter that hides what does not fit.
+- **A filter that hides what does not fit,** and sorting by fit across the pages of "More results". Within one answer of a source the results stand by their label since later on 2026-11-14; see the outcome of part 4.4.
 - **Weights from data.** See above.
 
 ### Phase 4.2 outcome: a result beside the person, and its facts taken over (2026-11-14)
@@ -933,7 +933,9 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Tests: unit tests went from 1217 to 1230, end-to-end tests from 41 to 44.
 
-Tried against WikiTree itself, once, later on 2026-11-14 with the project owner's go-ahead: the built app, a tree of three people of public history who died more than 150 years ago (a person and both parents), WikiTree alone. The window announced three requests and three were sent, 1.3 and 1.2 seconds apart, each answered with status 200. Every person had a result labelled "Fits well" with the right dates and places; one had four more results ("May fit", "Does not fit"), and one profile was counted as not shown. Seen in this: the results of a person stand in the order WikiTree gives them, so one that fits well can stand below one that may fit. The search for one person does the same.
+Tried against WikiTree itself, once, later on 2026-11-14 with the project owner's go-ahead: the built app, a tree of three people of public history who died more than 150 years ago (a person and both parents), WikiTree alone. The window announced three requests and three were sent, 1.3 and 1.2 seconds apart, each answered with status 200. Every person had a result labelled "Fits well" with the right dates and places; one had four more results ("May fit", "Does not fit"), and one profile was counted as not shown. Seen in this: the results of a person stand in the order WikiTree gives them, so one that fits well could stand below one that may fit. The search for one person did the same.
+
+Changed after that, the same day, with the project owner's go-ahead: the results of one answer of a source stand by their label, those that fit well first, then those that may fit, those with little to go by, and last those that do not fit. Within one label the order of the source is kept, and an answer without labels (a source of texts) is left as it came. This holds for both searches. In the search for one person each page of "More results" is ordered by itself and added below, and a result keeps its place when its label changes after facts were taken over, until the next search. A review by a Claude Opus subagent found nothing in the code that goes by the order of a source, and two sentences of this plan that the change made untrue; both are corrected. Unit tests went from 1230 to 1231.
 
 Not done:
 
