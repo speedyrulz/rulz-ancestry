@@ -29,6 +29,6 @@ export const naraCatalogManifest = defineManifest({
     'The terms ask that keys are not shared or published. A key that is not used for twelve months is switched off.',
     'The search is records/search with q, page (from 1, at most 10,000) and limit (at most 1,000), by the API’s own specification (swagger.json). The specification does not describe the answer; the getting-started guide shows it as body.hits.total.value and body.hits.hits[]._source.record.',
     'Without a key the address answers with the website of the catalog, not with an error. What it answers to a wrong or exhausted key is not documented.',
-    'The connector was written without a key and has not been tried against the service.',
+    'The connector was written without a key. The project owner tried it on 2026-11-14 with their own key, in the app: a search answered with several hundred results, each with its title and its level of description, in the shape the guide shows. No years came with the results that were seen.',
   ],
 });

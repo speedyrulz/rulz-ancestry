@@ -16,9 +16,10 @@ import { naraCatalogManifest } from './manifest';
  *
  * It needs the user's own key, which the client of the source sends in a
  * header; nothing here sees it. The connector was written from the API's own
- * specification and its getting-started guide, without a key, and has not
- * been tried against the service. It reads an answer with care for that
- * reason: what is not as the guide shows it is left out, not guessed at.
+ * specification and its getting-started guide, without a key. The project
+ * owner then tried it in the app with their own key, on 2026-11-14, and it
+ * answered as the guide shows. It still reads an answer with care: what is
+ * not as the guide shows it is left out, not guessed at.
  *
  * A result is the description of something the Archives hold: a series, a
  * file, an item. It is found by words in the description. Only the words are

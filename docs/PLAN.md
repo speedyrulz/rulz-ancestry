@@ -766,7 +766,7 @@ Delivered:
 
 Decided while building:
 
-- **The connector was written without a key and was never tried against the service.** The key is the owner's; no tool that builds the app may see it. What the connector relies on is the API's specification (the address, `q`, `page`, `limit`, `dataSource`, `sourceIncludes`, the header) and the shape of an answer as the Archives' getting-started guide shows it. It reads an answer with care for that reason, and leaves out what is not as the guide shows it.
+- **The connector was written without a key.** It was tried only afterwards, by the owner, in the app; see below. The key is the owner's; no tool that builds the app may see it. What the connector relies on is the API's specification (the address, `q`, `page`, `limit`, `dataSource`, `sourceIncludes`, the header) and the shape of an answer as the Archives' getting-started guide shows it. It reads an answer with care for that reason, and leaves out what is not as the guide shows it.
 - **No key in a test, a file or a workflow.** The owner tries the search by typing the key into the app. The tests use a made-up key and look for it wherever it must not be: in an address, an error, a setting, an answer to a page.
 - **Only the words are sent,** not the years or the state. The catalog has dates of its own, and what they mean for a search was not tried.
 - **A month starts when its first day has begun everywhere on Earth.** The Archives do not say by which clock they count; this is the latest one.
@@ -788,13 +788,14 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Turned down from the design views: sending the years as a limit of the search (Opus; what the catalog's dates mean for a search was not tried), a kind of record of its own for an archive's description (Codex; a text with a few words on what kind of thing it is serves), and a key in an environment variable for a check on the owner's PC (the owner types it into the app instead).
 
-Tried by the owner on 2026-11-13, with their own key, in the app. The key was saved and three requests went out to the Archives, by the app's count. What the Archives' section of the window showed was not yet reported when this was written. In the same trial the Library of Congress did not answer within 20 seconds; it is now given 90 (`timeoutSeconds` in its manifest), and the window says so while it waits.
+Tried by the owner on 2026-11-13 and 2026-11-14, with their own key, in the app. The key was saved, and the count rose with each search. A search of the Archives answered with several hundred results, each with its title and its level of description ("Item", "File unit"), and with the button to attach it: the answer has the shape the Archives' guide shows, and the connector reads it. No years stood with the results that were seen; whether the catalog gave none for them or names them otherwise than the connector expects is not known. In the first trial the Library of Congress did not answer within 20 seconds; it is now given 90 (`timeoutSeconds` in its manifest), and the window says so while it waits.
 
 Tests: unit tests went from 1037 to 1071, end-to-end tests from 38 to 39.
 
 Not done:
 
-- **The connector is unverified against the service.** See above. If the Archives' answer differs from their guide, the search says that it cannot read the answer.
+- **The years of a description** did not show in the owner's trial. The connector asks for the fields the API's specification names for them; an answer was not looked at field by field, because that would take a key.
+- **What the Archives answer to a wrong or used-up key** is still not known. The trial was with a key they accept.
 - **The title of a description in a citation.** Open for the owner to ask the Archives; see [ACCESS.md](ACCESS.md).
 - **Scans and other digital objects** of a description, the hierarchy above it, and a search by record group.
 - **The years** as a limit of the search.
