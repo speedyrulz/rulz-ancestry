@@ -4088,7 +4088,10 @@ describe('results kept for later, and results turned down', () => {
     const insert = db.prepare(
       "INSERT INTO record_mark (id, person_id, source_id, record_key, state, read_at, marked_at) VALUES (?, ?, 'wikitree', ?, 'declined', 0, 0)",
     );
-    for (let index = 0; index < 5000; index += 1) insert.run('id-' + index, ada, 'K-' + index);
+    // In one transaction: written one by one, each row would wait for the disk.
+    db.transaction(() => {
+      for (let index = 0; index < 5000; index += 1) insert.run('id-' + index, ada, 'K-' + index);
+    })();
     db.exec("UPDATE change_state SET mode = 'idle'");
 
     for (const result of [await keep(ada), await decline(ada)]) {
