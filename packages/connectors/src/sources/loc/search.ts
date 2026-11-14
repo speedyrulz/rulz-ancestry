@@ -74,6 +74,7 @@ function recordOf(result: unknown): TextRecord | null {
     title: cleanText(result['title']) || `Image ${image} of ${paper}, ${year}-${month}-${day}`,
     url: `${LOC_RESOURCE_URL}${issue}/?sp=${image}`,
     date: externalDate(Number(year), Number(month), Number(day)),
+    about: '',
     by: '',
   };
 }

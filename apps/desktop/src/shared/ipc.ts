@@ -554,6 +554,25 @@ export interface RecordSourceInfo {
   searches: 'person' | 'text';
   /** What of the search form is sent to the source, in words for the user. */
   asks: string;
+  /**
+   * Where the source stands with the user's own key:
+   * - "none": it needs no key;
+   * - "missing": it needs one, and none is saved;
+   * - "saved": one is saved. The key itself is never handed to a page;
+   * - "unreadable": one is saved, but this Windows account cannot read it;
+   * - "unavailable": it needs one, and this PC cannot keep one safely.
+   */
+  key: 'none' | 'missing' | 'saved' | 'unreadable' | 'unavailable';
+  /** How much of the source's count of requests the app has used; null for a source without one. */
+  quota: {
+    used: number;
+    /** How many the app sends at most, which is below what the source allows. */
+    ceiling: number;
+    /** "month" or "day". */
+    period: 'day' | 'month';
+    /** When the count starts again, in Unix milliseconds. */
+    resetsAt: number;
+  } | null;
   /** The credit shown with every result of the source. */
   attribution: string;
   /** The page with the source's terms. */
@@ -619,12 +638,23 @@ export interface RecordSearchProblem {
     | 'offline' /* the source could not be reached */
     | 'timeout'
     | 'cancelled' /* a newer search took this one's place */
+    | 'key' /* the source needs the user's own key, and has none it accepts */
     | 'failed';
   /** In words, for the user. */
   message: string;
   /** When the source may be asked again, in Unix milliseconds, where that is known. */
   retryAt: number | null;
 }
+
+/** A key of the user's own for a source that needs one. It goes to the main process and never comes back. */
+export interface RecordSourceKeyRequest {
+  sourceId: string;
+  key: string;
+}
+
+/** The sources as they stand after a key was saved or removed, or why it was not. */
+export type RecordSourceKeyResult =
+  { ok: true; sources: RecordSourceInfo[] } | { ok: false; message: string };
 
 export type RecordSearchResult =
   | {
@@ -977,6 +1007,14 @@ export interface RulzApi {
    * before the notice is agreed to.
    */
   openRecordLink(request: RecordLinkRequest): Promise<RecordLinkResult>;
+  /**
+   * Saves the user's own key for a source that needs one, encrypted by
+   * Windows for this user account. Sends nothing. The key is not handed back
+   * by any call.
+   */
+  setRecordSourceKey(request: RecordSourceKeyRequest): Promise<RecordSourceKeyResult>;
+  /** Removes the saved key of a source. */
+  removeRecordSourceKey(sourceId: string): Promise<RecordSourceKeyResult>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -1142,6 +1180,8 @@ export const API_METHODS = [
   'cancelRecordSearch',
   'attachRecord',
   'openRecordLink',
+  'setRecordSourceKey',
+  'removeRecordSourceKey',
   'getChart',
   'getRelationship',
   'findDuplicates',

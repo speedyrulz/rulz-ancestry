@@ -55,9 +55,15 @@ async function answerSearches(
         asked.push(`unexpected: ${typeof input === 'string' ? input : input.url}`);
         return Promise.resolve(new Response('', { status: 500 }));
       };
-      session.fromPartition('records').fetch = (input) => {
+      const keys: string[] = [];
+      (globalThis as unknown as { keysSent: string[] }).keysSent = keys;
+      session.fromPartition('records').fetch = (input, init) => {
         const url = typeof input === 'string' ? input : input.url;
         asked.push(url);
+        // Whatever comes in the header for a key, to see where a key goes.
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        if (headers['x-api-key'] !== undefined)
+          keys.push(`${new URL(url).host} ${headers['x-api-key']}`);
         if (served.busy) {
           return Promise.resolve(
             new Response('slow down', { status: 429, headers: { 'retry-after': '600' } }),
@@ -111,6 +117,33 @@ async function answerSearches(
                     entry('Q90001', '1850-03-12T00:00:00Z', '1912-01-01T00:00:00Z'),
                     entry('Q90002', '1985-06-01T00:00:00Z'),
                   ],
+                },
+              }),
+            ),
+          );
+        }
+        if (host === 'catalog.archives.gov') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                statusCode: 200,
+                body: {
+                  hits: {
+                    total: { value: 1 },
+                    hits: [
+                      {
+                        _source: {
+                          record: {
+                            naId: 90000001,
+                            title: 'Pension file of Josiah Marsh',
+                            levelOfDescription: 'fileUnit',
+                            coverageStartDate: { year: 1862 },
+                            coverageEndDate: { year: 1912 },
+                          },
+                        },
+                      },
+                    ],
+                  },
                 },
               }),
             ),
@@ -495,3 +528,85 @@ test('searches newspapers and books for words, and attaches a page of a newspape
   await expect(cited).toContainText('Image 8 of The Ashford gazette');
   await expect(cited).toContainText('Published 1 May 1903');
 });
+
+test('takes a key for the National Archives, keeps it out of sight, and searches with it', async ({
+  app,
+  window,
+}) => {
+  // A key that is none, made for this test.
+  const key = 'test-key-0123456789abcdef';
+  await answerSearches(app, 2);
+  await createTree(window, 'Archives');
+  await addPerson(window, {
+    given: 'Josiah',
+    surname: 'Marsh',
+    birthDate: '12 MAR 1850',
+    deathDate: 'ABT 1912',
+  });
+
+  await window.getByTestId('open-records').click();
+  // The notice says that the key goes to the Archives, and what it tells them.
+  await expect(window.getByTestId('record-notice-sources')).toContainText(
+    'US National Archives Catalog: the words only, and your own key',
+  );
+  await window.getByTestId('record-agree').click();
+
+  // Without a key the Archives are not asked.
+  const box = window.getByTestId('record-key-nara-catalog');
+  await expect(box).toContainText('needs a key of your own');
+  await expect(box.getByTestId('record-key-save')).toBeDisabled();
+  await window.getByTestId('record-text-go').click();
+  const archives = window.getByTestId('records-nara-catalog');
+  await expect(archives.getByTestId('record-problem')).toContainText('needs your own key');
+  expect((await askedOfInternet(app)).some((address) => address.includes('archives.gov'))).toBe(
+    false,
+  );
+
+  // A key that is too short to be one cannot be saved.
+  await box.getByTestId('record-key-input').fill('short');
+  await expect(box.getByTestId('record-key-save')).toBeDisabled();
+  // The key is typed into a field that does not show it.
+  await expect(box.getByTestId('record-key-input')).toHaveAttribute('type', 'password');
+  await box.getByTestId('record-key-input').fill(key);
+  await box.getByTestId('record-key-save').click();
+  await expect(box.getByTestId('record-key-state')).toContainText('A key is saved');
+  await expect(box.getByTestId('record-key-input')).toHaveCount(0);
+  // Nothing on the page holds the key now, and saving it asked nobody.
+  expect(await window.content()).not.toContain(key);
+  expect(await keysSent(app)).toEqual([]);
+
+  await window.getByTestId('record-text-go').click();
+  await expect(archives.getByTestId('record-result')).toHaveCount(1);
+  await expect(archives).toContainText('Pension file of Josiah Marsh');
+  await expect(archives.getByTestId('record-print')).toContainText('File unit');
+  await expect(archives.getByTestId('record-print')).toContainText('1862');
+  // The sentence the Archives ask every app to show.
+  await expect(archives).toContainText(
+    'not endorsed or certified by the National Archives and Records Administration',
+  );
+  await expect(box.getByTestId('record-quota')).toContainText('Asked 1 of 9,000 times this month');
+
+  // The key went to the Archives, in its header, and to nobody else and in no address.
+  expect(await keysSent(app)).toEqual([`catalog.archives.gov ${key}`]);
+  expect((await askedOfInternet(app)).some((address) => address.includes(key))).toBe(false);
+  expect(await window.content()).not.toContain(key);
+
+  // A description is cited by its identifier and address: the Archives ask that nothing they send is kept.
+  await archives.getByTestId('record-attach').click();
+  await expect(archives.getByTestId('record-attached')).toBeVisible();
+
+  // Removing the key brings the field back.
+  await box.getByTestId('record-key-remove').click();
+  await expect(box.getByTestId('record-key-input')).toBeVisible();
+
+  await window.getByTestId('record-search-close').click();
+  const cited = window.getByTestId('person-citation');
+  await expect(cited).toHaveCount(1);
+  await expect(cited).toContainText('US National Archives Catalog');
+  await expect(cited).toContainText('Identifier 90000001');
+  await expect(cited).not.toContainText('Pension file');
+});
+
+function keysSent(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(() => (globalThis as unknown as { keysSent?: string[] }).keysSent ?? []);
+}

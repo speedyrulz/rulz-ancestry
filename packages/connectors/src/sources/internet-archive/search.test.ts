@@ -48,6 +48,7 @@ describe('parseInternetArchiveSearch', () => {
           url: 'https://archive.org/details/marshfamily00exam',
           date: '1930',
           by: 'Fenwick, Henrietta.',
+          about: '',
         },
       ],
       total: 1,

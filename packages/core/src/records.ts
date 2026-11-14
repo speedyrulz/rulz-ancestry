@@ -198,8 +198,9 @@ export interface EventRecord extends RecordBase {
 }
 
 /**
- * A text: a page of a newspaper, a book. It was found by its words; whether it
- * is about the person is for the user to read.
+ * A text: a page of a newspaper, a book, the description of something an
+ * archive holds. It was found by its words; whether it is about the person
+ * is for the user to read.
  */
 export interface TextRecord extends RecordBase {
   kind: 'text';
@@ -207,6 +208,8 @@ export interface TextRecord extends RecordBase {
   date: string;
   /** Who wrote or published it, as the source says; empty when not given. */
   by: string;
+  /** What kind of thing it is, in a few words ("File unit"); empty when the source does not say. */
+  about: string;
 }
 
 /** One result of a search. */

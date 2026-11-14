@@ -9,6 +9,8 @@ import {
   internetArchiveManifest,
   locConnector,
   locManifest,
+  naraCatalogConnector,
+  naraCatalogManifest,
   openArchivesConnector,
   openArchivesManifest,
   wikidataConnector,
@@ -58,6 +60,7 @@ import type {
   RecordSearchResult,
   RecordSearchSetup,
   RecordSourceInfo,
+  RecordSourceKeyResult,
   TextSearchRequest,
 } from '../shared/ipc';
 
@@ -108,8 +111,26 @@ export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion'
  * 1: a name and two years, to WikiTree, and in a link to sites opened in the browser.
  * 2: also words and the years of printing, to the Library of Congress and the Internet Archive.
  * 3: the name and the years also to Open Archives, and the name to Wikidata.
+ * 4: words, and the user's own key, to the US National Archives.
  */
-export const RECORD_SEARCH_NOTICE_VERSION = 3;
+export const RECORD_SEARCH_NOTICE_VERSION = 4;
+
+/** The setting that holds the user's key for a source, as Windows encrypted it. */
+export const recordSearchKeySetting = (sourceId: string) => `recordSearch.key.${sourceId}`;
+
+/**
+ * What keeps a secret for this user of the PC. The app hands in Windows' own
+ * data protection; nothing here knows how it works. A secret is never kept
+ * as it is: when the PC cannot encrypt, nothing is saved.
+ */
+export interface SecretStore {
+  /** False when this PC cannot encrypt for the user. */
+  available(): boolean;
+  /** A text as it may be written to the settings. */
+  encrypt(text: string): string;
+  /** The text again. Throws when it cannot be read: another account, a profile from another PC. */
+  decrypt(kept: string): string;
+}
 
 /** The setting that holds what the client keeps about a host between runs of the app. */
 export const recordSearchHostSetting = (host: string) => `recordSearch.host.${host}`;
@@ -132,6 +153,8 @@ export interface RecordSearchOptions {
   appVersion: string;
   /** The clock, replaceable in tests. */
   now?: () => number;
+  /** What keeps the user's keys. Without it no key can be saved, and a source that needs one is not asked. */
+  secrets?: SecretStore;
 }
 
 /** What the app calls itself to a source: its name, its version and where its code is. */
@@ -164,6 +187,8 @@ const ASKS: Readonly<Record<string, string>> = {
     'the words, the years of printing and the state. It looks in the text of newspaper pages',
   [internetArchiveManifest.id]:
     'the words only. It looks in the titles, authors and descriptions of books, not inside them',
+  [naraCatalogManifest.id]:
+    'the words only, and your own key, which tells the Archives whose search it is. It looks in the descriptions of the records the Archives hold',
 };
 
 /** One of the searches of a source, with what it is asked already in it. */
@@ -181,10 +206,12 @@ export class RecordSearchService {
   readonly #shown = new Map<string, { personId: string; record: ExternalRecord }>();
   /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
   #closed = 0;
+  readonly #secrets: SecretStore | undefined;
 
   constructor(options: RecordSearchOptions) {
     this.#appDb = options.appDb;
     this.#now = options.now ?? Date.now;
+    this.#secrets = options.secrets;
     // A source's pause and its count of requests outlast the app: the Library
     // of Congress shuts a client out for an hour, whether or not the app was
     // closed in between. They are kept with the app's settings, not in a tree.
@@ -202,6 +229,8 @@ export class RecordSearchService {
       userAgent: userAgentOf(options.appVersion),
       now: this.#now,
       memory,
+      // The key is read and decrypted for each request, and kept nowhere here.
+      keyOf: (manifest) => this.#keyOf(manifest.id),
     });
     const connectors: SourceConnector[] = [
       wikitreeConnector(this.#http.for(wikitreeManifest)),
@@ -209,6 +238,7 @@ export class RecordSearchService {
       wikidataConnector(this.#http.for(wikidataManifest), this.#now),
       locConnector(this.#http.for(locManifest)),
       internetArchiveConnector(this.#http.for(internetArchiveManifest)),
+      naraCatalogConnector(this.#http.for(naraCatalogManifest)),
     ];
     this.#connectors = connectors.filter(({ manifest }) => ASKS[manifest.id] !== undefined);
   }
@@ -242,10 +272,84 @@ export class RecordSearchService {
       name: connector.manifest.name,
       searches: connector.searchPersons === undefined ? 'text' : 'person',
       asks: ASKS[connector.manifest.id] ?? '',
+      key: this.#keyState(connector.manifest),
+      quota: this.#quotaOf(connector.manifest),
       attribution: connector.manifest.attribution,
       termsUrl: connector.manifest.termsUrl,
       pausedUntil: this.#http.pausedUntil(connector.manifest),
     }));
+  }
+
+  /** The user's key for a source; null when none is saved or it cannot be read. */
+  #keyOf(sourceId: string): string | null {
+    const kept = getSetting(this.#appDb, recordSearchKeySetting(sourceId));
+    if (kept === null || this.#secrets === undefined) return null;
+    try {
+      const key = this.#secrets.decrypt(kept);
+      return key === '' ? null : key;
+    } catch {
+      return null;
+    }
+  }
+
+  #keyState(manifest: ConnectorManifest): RecordSourceInfo['key'] {
+    if (manifest.auth !== 'apiKey') return 'none';
+    const kept = getSetting(this.#appDb, recordSearchKeySetting(manifest.id));
+    if (kept !== null) return this.#keyOf(manifest.id) === null ? 'unreadable' : 'saved';
+    return this.#secrets?.available() === true ? 'missing' : 'unavailable';
+  }
+
+  #quotaOf(manifest: ConnectorManifest): RecordSourceInfo['quota'] {
+    const state = this.#http.quotaOf(manifest);
+    return state === null || manifest.quota === undefined
+      ? null
+      : {
+          used: state.used,
+          ceiling: state.ceiling,
+          period: manifest.quota.period,
+          resetsAt: state.resetsAt,
+        };
+  }
+
+  /** The source a key is for; undefined when the id names none that needs one. */
+  #keyed(sourceId: string): SourceConnector | undefined {
+    return this.#connectors.find(
+      ({ manifest }) => manifest.id === sourceId && manifest.auth === 'apiKey',
+    );
+  }
+
+  /**
+   * Saves the user's own key for a source, encrypted for this user of the PC.
+   * Nothing is sent: whether the source accepts the key shows at the first search.
+   */
+  setKey(sourceId: string, key: string): RecordSourceKeyResult {
+    if (this.#keyed(sourceId) === undefined) {
+      return { ok: false, message: 'This source takes no key.' };
+    }
+    if (this.#secrets?.available() !== true) {
+      return {
+        ok: false,
+        message:
+          'This PC cannot encrypt the key for your Windows account, so the app does not save it.',
+      };
+    }
+    let kept: string;
+    try {
+      kept = this.#secrets.encrypt(key);
+    } catch {
+      return { ok: false, message: 'The key could not be encrypted, so it was not saved.' };
+    }
+    setSetting(this.#appDb, recordSearchKeySetting(sourceId), kept);
+    return { ok: true, sources: this.sources() };
+  }
+
+  /** Removes the saved key of a source. The count of what was asked this month stays. */
+  removeKey(sourceId: string): RecordSourceKeyResult {
+    if (this.#keyed(sourceId) === undefined) {
+      return { ok: false, message: 'This source takes no key.' };
+    }
+    setSetting(this.#appDb, recordSearchKeySetting(sourceId), null);
+    return { ok: true, sources: this.sources() };
   }
 
   /**
@@ -345,6 +449,20 @@ export class RecordSearchService {
         retryAt: null,
       });
     }
+    // A source whose terms bar keeping what it returns is cited by the
+    // record's identifier and address alone; the app made both itself.
+    if (connector.manifest.mayStoreText === false) {
+      return {
+        ok: true,
+        connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
+        citation: {
+          page: cleanText(`Identifier ${record.key}`, CITATION_LIMITS.page),
+          text: '',
+          url: record.url,
+          accessedAt: localDay(this.#now()),
+        },
+      };
+    }
     return {
       ok: true,
       connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
@@ -424,6 +542,17 @@ export class RecordSearchService {
     const refusal = this.#refusal(tree, request.personId);
     if (refusal !== null) return fail(refusal);
     if (unfit !== null) return fail({ kind: 'empty', message: unfit, retryAt: null });
+    const key = this.#keyState(connector.manifest);
+    if (key !== 'none' && key !== 'saved') {
+      return fail({
+        kind: 'key',
+        message:
+          key === 'unreadable'
+            ? `The key saved for ${connector.manifest.name} cannot be read on this Windows account. Enter it again.`
+            : `${connector.manifest.name} needs your own key.`,
+        retryAt: null,
+      });
+    }
 
     this.#underWay.get(sourceId)?.abort();
     const abort = new AbortController();
@@ -544,7 +673,11 @@ function eventText(record: Extract<ExternalRecord, { kind: 'event' }>): string {
 function printText(record: Extract<ExternalRecord, { kind: 'text' }>): string {
   const parsed = record.date === '' ? null : parseDate(record.date);
   const date = (parsed === null ? null : describeDate(parsed)) ?? record.date;
-  return [record.by === '' ? '' : `By ${record.by}`, date === '' ? '' : `Published ${date}`]
+  return [
+    record.about,
+    record.by === '' ? '' : `By ${record.by}`,
+    date === '' ? '' : `Published ${date}`,
+  ]
     .filter((line) => line !== '')
     .join('\n');
 }
@@ -611,15 +744,24 @@ function queryOf(tree: Tree, personId: string): PersonQuery {
 function problemOf(error: unknown): RecordSearchProblem {
   if (error instanceof HttpError) {
     const kind =
-      error.kind === 'paused' || error.kind === 'cancelled' || error.kind === 'timeout'
+      error.kind === 'paused' ||
+      error.kind === 'cancelled' ||
+      error.kind === 'timeout' ||
+      error.kind === 'key'
         ? error.kind
-        : error.kind === 'network'
-          ? 'offline'
-          : 'failed';
+        : error.kind === 'quota'
+          ? 'paused'
+          : error.kind === 'network'
+            ? 'offline'
+            : 'failed';
     return { kind, message: error.message, retryAt: error.retryAt };
   }
   if (error instanceof ConnectorError) {
-    return { kind: 'failed', message: error.message, retryAt: null };
+    return {
+      kind: error.kind === 'key' ? 'key' : 'failed',
+      message: error.message,
+      retryAt: null,
+    };
   }
   return { kind: 'failed', message: 'The search failed.', retryAt: null };
 }

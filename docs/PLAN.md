@@ -741,13 +741,63 @@ Not done, and why:
 | 3b   | Attaching a result as a citation (a web address and the date consulted on a citation), the clip form, and the links to sites the app never fetches (Tier C) | **Done 2026-11-13** |
 | 3c   | Library of Congress and Internet Archive: search by text, results that are not people                                                                       | **Done 2026-11-13** |
 | 3d   | Open Archives and Wikidata                                                                                                                                  | **Done 2026-11-13** |
-| 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | Planned             |
+| 3e   | The National Archives catalog: the user's own key, kept through Windows data protection, and its monthly quota                                              | **Done 2026-11-13** |
 
 Attaching comes second, so that the phase's test ("a search returns grouped
 results and one click attaches a record as a citation") is met with one source
 before more are added. Sources that need a key come last. Three views were asked
 for on the split and on part 3a (the primary, an Opus helper and a Codex helper);
 they agreed on this order, except that Codex put the Tier C links last.
+
+### Phase 3e outcome: the National Archives, and a key of the user's own (2026-11-13)
+
+With this part Phase 3 is complete: six services are searched from a person's page, two more are opened in the browser, and every result attaches as a source with one click.
+
+Delivered:
+
+- **The catalog of the US National Archives** as a source of the form for words, now called "Newspapers, books and archives". A result is the description of something the Archives hold, with what kind of thing it is and the years it covers.
+- **A key of the user's own.** The window has a field for it. The key goes to the main process once, is encrypted by Windows for the user's account (Electron `safeStorage`, which is DPAPI on Windows) and kept in the app's settings. No call hands it back to a page: a page is told only whether a key is saved.
+- **The client sends the key.** It asks for the key just before a request goes out, puts it into the header the manifest names (`keyHeader`), and keeps it nowhere. A connector never sees it. Without a key nothing is sent.
+- **A count of the month.** The client counts every request to a source that allows so many a month, keeps the count in the settings, and stops at nine tenths of what the source allows: 9,000 of the Archives' 10,000. The window shows the count.
+- **Nothing the Archives send is kept.** Their terms ask for that. The client keeps no answer of theirs, also not in memory, and a citation holds the description's identifier and its address, which the app makes itself (`mayStoreText` in the manifest).
+- **The sentence the Archives ask every app to show** stands with their results.
+- **The notice is at version 4** and says that the key goes to the Archives and tells them whose search it is.
+- **A check without a key.** The weekly check reads the API's own specification and looks whether every parameter the connector sends is still in it.
+
+Decided while building:
+
+- **The connector was written without a key and was never tried against the service.** The key is the owner's; no tool that builds the app may see it. What the connector relies on is the API's specification (the address, `q`, `page`, `limit`, `dataSource`, `sourceIncludes`, the header) and the shape of an answer as the Archives' getting-started guide shows it. It reads an answer with care for that reason, and leaves out what is not as the guide shows it.
+- **No key in a test, a file or a workflow.** The owner tries the search by typing the key into the app. The tests use a made-up key and look for it wherever it must not be: in an address, an error, a setting, an answer to a page.
+- **Only the words are sent,** not the years or the state. The catalog has dates of its own, and what they mean for a search was not tried.
+- **A month starts when its first day has begun everywhere on Earth.** The Archives do not say by which clock they count; this is the latest one.
+- **The count is the app's own.** It counts a request when it goes out, also one that fails. It stays when the key is replaced or removed. When it cannot be kept, the app does not ask.
+- **Without a key the address answers with the catalog's website,** not with an error (seen in one request without a key). The client takes a web page, "unauthorized" and "forbidden" from a source with a key for a refusal of the key, and says so without a word of the key. What the Archives answer to a wrong or used-up key is not documented.
+- **A key is checked before it is used:** printable characters without spaces, at most 300, so that nothing typed can add a header.
+- **When Windows cannot read a saved key** (another account, a profile from another PC), the window says so and asks for the key again. When the PC cannot encrypt, no key is saved.
+- **The years of a description are shown as years.** The catalog gives years; written as dates they would read as the first and the last day.
+
+Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent each gave a view on the design before it was built and reviewed the result, without seeing each other's findings. Each finding was checked against the code. Neither found a way for the key to leave the main process unencrypted, to reach an address, an error or a setting, or to be sent to another host.
+
+- **A count that could not be read started again at nought** (both). A damaged setting after 9,000 requests allowed 9,000 more. Nothing kept is still a count of nought; something kept that cannot be read, or is no count, is now taken for a month that is used up.
+- **Setting the clock forward and back gave a fresh month** (both). The count now starts again only when a later month has begun, and never returns to an earlier one.
+- **The client would ask a counted source without a place to keep the count** (Codex). It refuses now. The app always hands one in; this guards the client itself.
+- **A refusal of the key inside an answer was reported as a failure like another** (both). It is reported as a matter of the key.
+- **The count in the window was not read again after a search that failed** (Opus), although a failed request is counted. It is now.
+- **Left:** the app's month and the Archives' month may not be the same twelve hours (Opus). Requests in the first half-day of a month are counted to the month before, so that 9,000 then and 9,000 later in the month would be 18,000 by the Archives' count. That takes 9,000 searches by hand within twelve hours, at one a second at most; the tenth kept in hand does not cover it, and a second count would.
+- **Left:** a saved key that has been tampered with into something no header can hold reads as "saved" while the search says a key is needed (Opus).
+
+Turned down from the design views: sending the years as a limit of the search (Opus; what the catalog's dates mean for a search was not tried), a kind of record of its own for an archive's description (Codex; a text with a few words on what kind of thing it is serves), and a key in an environment variable for a check on the owner's PC (the owner types it into the app instead).
+
+Tests: unit tests went from 1036 to 1070, end-to-end tests from 38 to 39.
+
+Not done:
+
+- **The connector is unverified against the service.** See above. If the Archives' answer differs from their guide, the search says that it cannot read the answer.
+- **The title of a description in a citation.** Open for the owner to ask the Archives; see [ACCESS.md](ACCESS.md).
+- **Scans and other digital objects** of a description, the hierarchy above it, and a search by record group.
+- **The years** as a limit of the search.
+- **Version 3 of the API,** which the Archives' documentation lists beside version 2.
+- **A warning before the count runs out.** The window shows the count; it does not warn.
 
 ### Phase 3d outcome: archive records and Wikidata (2026-11-13)
 

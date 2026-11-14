@@ -15,8 +15,13 @@ export {
   HttpError,
   addressOf,
   retryAfterMs,
+  QUOTA_SHARE,
+  quotaMemoryName,
+  quotaPeriod,
   type HostMemory,
   type HostRecord,
+  type QuotaRecord,
+  type QuotaState,
   type HttpClientOptions,
   type HttpErrorKind,
   type HttpFetch,
@@ -47,6 +52,14 @@ export {
   locSearchParams,
   parseLocSearch,
 } from './sources/loc/search';
+export { naraCatalogManifest } from './sources/nara-catalog/manifest';
+export {
+  NARA_RECORD_URL,
+  naraCatalogConnector,
+  naraSearchParams,
+  naraWords,
+  parseNaraSearch,
+} from './sources/nara-catalog/search';
 export { openArchivesManifest } from './sources/open-archives/manifest';
 export {
   OPEN_ARCHIVES_RECORD_URL,

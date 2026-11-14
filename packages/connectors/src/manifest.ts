@@ -47,6 +47,17 @@ export const connectorManifestSchema = z
      * of an answer. The client's own pause when absent.
      */
     pauseSeconds: z.number().int().positive().optional(),
+    /** The request header a key is sent in, for a source that needs one. A key is never put into an address. */
+    keyHeader: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,40}$/, 'a header name in small letters')
+      .optional(),
+    /**
+     * False when the source's terms bar keeping what it returns. Nothing of an
+     * answer is then written into a tree: a citation holds the record's
+     * identifier and its address, which the app makes itself. Absent means it may.
+     */
+    mayStoreText: z.boolean().optional(),
     /** A hard cap per key over a longer period, when the source states one. */
     quota: z
       .object({
@@ -79,6 +90,13 @@ export const connectorManifestSchema = z
         code: 'custom',
         path: ['rateLimit'],
         message: 'deep-link sources are never fetched by the app, so limits do not apply',
+      });
+    }
+    if ((manifest.auth === 'apiKey') !== (manifest.keyHeader !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['keyHeader'],
+        message: 'a source with a key names the header it is sent in, and no other source does',
       });
     }
     if (manifest.auth !== 'none' && manifest.access === 'open') {

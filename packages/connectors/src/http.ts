@@ -44,7 +44,11 @@ export type HttpErrorKind =
   /** The answer was larger than allowed. */
   | 'too-large'
   /** The answer was not what was asked for (not JSON). */
-  | 'format';
+  | 'format'
+  /** The source needs the user's own key, and there is none, or the source did not accept it. */
+  | 'key'
+  /** The source's count of requests for the month, or the day, is used up as far as the app lets it be. Nothing was sent. */
+  | 'quota';
 
 export class HttpError extends Error {
   readonly kind: HttpErrorKind;
@@ -86,7 +90,64 @@ export interface HttpClientOptions {
   cacheEntries?: number;
   /** Where the client keeps what must outlast the app. Without it, that is forgotten when the app closes. */
   memory?: HostMemory;
+  /**
+   * Gives the user's key for a source that needs one; null when there is
+   * none. The client asks for it just before a request goes out, sends it in
+   * the header the manifest names, and keeps it nowhere.
+   */
+  keyOf?: (manifest: ConnectorManifest) => string | null;
 }
+
+/** How much of a source's count of requests is used, as the app counts it. */
+export interface QuotaRecord {
+  /** The month ("2026-11") or the day ("2026-11-13") that is counted. */
+  period: string;
+  /** How many requests the app has sent in it. */
+  used: number;
+}
+
+/** What the app lets itself use of a source's count, and when the count starts again. */
+export interface QuotaState extends QuotaRecord {
+  /** How many requests the app sends in a period at most. Below what the source allows. */
+  ceiling: number;
+  /** When the next period starts, in Unix milliseconds. */
+  resetsAt: number;
+}
+
+/**
+ * The share of a source's count the app uses at most. The rest is left for
+ * whatever else uses the same key, and for a count of the source that
+ * differs from the app's.
+ */
+export const QUOTA_SHARE = 0.9;
+
+/**
+ * A period starts when its first day has begun everywhere on Earth. The
+ * source does not say by which clock it counts; this is the latest one.
+ */
+const QUOTA_CLOCK_BEHIND_MS = 12 * 3_600_000;
+
+/** The name under which the count of a source is kept. No host has a colon in its name. */
+export const quotaMemoryName = (manifestId: string) => `quota:${manifestId}`;
+
+/** The period a moment lies in, and when the next one starts. */
+export function quotaPeriod(now: number, period: 'day' | 'month'): { name: string; next: number } {
+  const date = new Date(now - QUOTA_CLOCK_BEHIND_MS);
+  const [year, month, day] = [date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()];
+  const two = (value: number) => String(value).padStart(2, '0');
+  return period === 'month'
+    ? {
+        name: `${year}-${two(month + 1)}`,
+        next: Date.UTC(year, month + 1, 1) + QUOTA_CLOCK_BEHIND_MS,
+      }
+    : {
+        name: `${year}-${two(month + 1)}-${two(day)}`,
+        next: Date.UTC(year, month, day + 1) + QUOTA_CLOCK_BEHIND_MS,
+      };
+}
+
+/** A key as it may stand in a header: printable, without spaces, not endless. */
+const KEY = /^[\x21-\x7e]{1,300}$/;
 
 /** What is kept about a host for the next time the app runs. */
 export interface HostRecord {
@@ -102,9 +163,9 @@ export interface HostRecord {
  * between, and so does its count of requests per minute.
  */
 export interface HostMemory {
-  /** What was kept about a host. Whatever comes back is checked before it is used. */
-  load(host: string): unknown;
-  save(host: string, record: HostRecord): void;
+  /** What was kept about a host, or under another name. Whatever comes back is checked before it is used. */
+  load(name: string): unknown;
+  save(name: string, record: HostRecord | QuotaRecord): void;
 }
 
 export interface JsonRequest {
@@ -243,6 +304,9 @@ export class HttpClient {
   readonly #pauseMs: number;
   readonly #cacheEntries: number;
   readonly #memory: HostMemory | undefined;
+  readonly #keyOf: ((manifest: ConnectorManifest) => string | null) | undefined;
+  /** The counts of the sources that have one, by the id of the source. */
+  readonly #quotas = new Map<string, QuotaRecord>();
   readonly #hosts = new Map<string, HostState>();
   /** Answers by address. A Map keeps the order they were put in, oldest first. */
   readonly #kept = new Map<string, Kept>();
@@ -262,6 +326,7 @@ export class HttpClient {
     this.#pauseMs = options.pauseMs ?? DEFAULTS.pauseMs;
     this.#cacheEntries = options.cacheEntries ?? DEFAULTS.cacheEntries;
     this.#memory = options.memory;
+    this.#keyOf = options.keyOf;
   }
 
   /** The client of one source. */
@@ -279,6 +344,99 @@ export class HttpClient {
   clearCache(): void {
     this.#forgotten += 1;
     this.#kept.clear();
+  }
+
+  /** How much of a source's count is used; null for a source that has none. */
+  quotaOf(manifest: ConnectorManifest): QuotaState | null {
+    const quota = manifest.quota;
+    if (quota === undefined) return null;
+    const { name, next } = quotaPeriod(this.#now(), quota.period);
+    const ceiling = Math.floor(quota.requests * QUOTA_SHARE);
+    const record = this.#counted(manifest.id, name, ceiling);
+    return { period: record.period, used: record.used, ceiling, resetsAt: next };
+  }
+
+  /**
+   * The count of a source. It starts again only when a later period has
+   * begun: a clock that is set forward and back again does not bring a used
+   * month back, and one that is set back does not empty the month it left.
+   */
+  #counted(id: string, period: string, ceiling: number): QuotaRecord {
+    let record = this.#quotas.get(id) ?? this.#recalledCount(id, period, ceiling);
+    if (period > record.period) record = { period, used: 0 };
+    this.#quotas.set(id, record);
+    return record;
+  }
+
+  /**
+   * The count that was kept when the app last ran. Nothing kept is a count of
+   * nought. Something kept that cannot be read, or is no count, is taken for
+   * a month that is used up: the app does not know how much it asked, and
+   * asking on could shut the user's key out at the source.
+   */
+  #recalledCount(id: string, period: string, ceiling: number): QuotaRecord {
+    const usedUp = { period, used: ceiling };
+    if (this.#memory === undefined) return { period, used: 0 };
+    let kept: unknown;
+    try {
+      kept = this.#memory.load(quotaMemoryName(id));
+    } catch {
+      return usedUp;
+    }
+    if (kept === null || kept === undefined) return { period, used: 0 };
+    if (typeof kept !== 'object') return usedUp;
+    const { period: was, used } = kept as Record<string, unknown>;
+    const fits =
+      typeof was === 'string' &&
+      was.length === period.length &&
+      /^\d{4}-\d{2}(-\d{2})?$/.test(was) &&
+      typeof used === 'number' &&
+      Number.isInteger(used) &&
+      used >= 0;
+    return fits ? { period: was, used } : usedUp;
+  }
+
+  /**
+   * Counts one request against a source's count for the month or the day,
+   * just before it goes out. Throws when the app's share is used up, and when
+   * the count cannot be kept: a count that is lost would let the app ask on.
+   */
+  #spend(manifest: ConnectorManifest): void {
+    const state = this.quotaOf(manifest);
+    if (state === null) return;
+    const lost = new HttpError(
+      'quota',
+      `The app cannot keep count of what it asks ${manifest.name}, so it does not ask.`,
+    );
+    // Without a place that outlasts the app, the count would start again with every start.
+    if (this.#memory === undefined) throw lost;
+    if (state.used >= state.ceiling) {
+      throw new HttpError(
+        'quota',
+        `${manifest.name} has been asked as often this ${manifest.quota?.period ?? 'month'} as the app allows.`,
+        { retryAt: state.resetsAt },
+      );
+    }
+    const record = { period: state.period, used: state.used + 1 };
+    try {
+      this.#memory.save(quotaMemoryName(manifest.id), record);
+    } catch {
+      throw lost;
+    }
+    this.#quotas.set(manifest.id, record);
+  }
+
+  /**
+   * The key of a source that needs one, for one request. Throws when there is
+   * none, or when it is not something a header can hold.
+   */
+  #key(manifest: ConnectorManifest): { header: string; value: string } | null {
+    if (manifest.auth !== 'apiKey') return null;
+    const value = this.#keyOf?.(manifest) ?? null;
+    if (manifest.keyHeader === undefined || value === null || !KEY.test(value)) {
+      throw new HttpError('key', `${manifest.name} needs your own key.`);
+    }
+    return { header: manifest.keyHeader, value };
   }
 
   /** Until when a source must be left alone, in Unix milliseconds; null when it may be asked. */
@@ -322,6 +480,8 @@ export class HttpClient {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const forgotten = this.#forgotten;
     try {
+      // Without a key there is nothing to wait a turn for.
+      this.#key(manifest);
       await this.#takeTurn(manifest, url.host, abort.signal);
       try {
         request.beforeSend?.();
@@ -329,6 +489,10 @@ export class HttpClient {
         if (error instanceof HttpError) throw error;
         throw new HttpError('cancelled', 'The request was given up.');
       }
+      // The key is taken now, not kept from before: it may have been removed
+      // while the request waited. Then the request is counted, and goes out.
+      const key = this.#key(manifest);
+      this.#spend(manifest);
       timer = setTimeout(() => {
         timedOut = true;
         abort.abort();
@@ -339,7 +503,11 @@ export class HttpClient {
           method: 'GET',
           credentials: 'omit',
           cache: 'no-store',
-          headers: { Accept: 'application/json', 'User-Agent': this.#userAgent },
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': this.#userAgent,
+            ...(key === null ? {} : { [key.header]: key.value }),
+          },
           signal: abort.signal,
           redirect: 'error',
         });
@@ -357,6 +525,10 @@ export class HttpClient {
         // out, or asks it to prove that it is no robot.
         if (response.status === 403 && manifest.pauseSeconds !== undefined) {
           throw this.#pause(manifest, url.host, null, response.status);
+        }
+        // From a source with a key, "unauthorized" and "forbidden" are about the key.
+        if (key !== null && (response.status === 401 || response.status === 403)) {
+          throw this.#refusedKey(manifest, response.status);
         }
         throw new HttpError('status', `${manifest.name} answered with error ${response.status}.`, {
           status: response.status,
@@ -380,6 +552,9 @@ export class HttpClient {
         if (manifest.pauseSeconds !== undefined && page) {
           throw this.#pause(manifest, url.host, null, response.status);
         }
+        // A source with a key that sends its website in place of an answer
+        // has not taken the request for one of its API.
+        if (key !== null && page) throw this.#refusedKey(manifest, response.status);
         throw new HttpError('format', `${manifest.name} answered with something other than JSON.`);
       }
       const fetchedAt = this.#now();
@@ -401,6 +576,15 @@ export class HttpClient {
     if (timedOut) return new HttpError('timeout', `${manifest.name} did not answer in time.`);
     if (outer?.aborted) return new HttpError('cancelled', 'The request was given up.');
     return new HttpError('network', `${manifest.name} could not be reached.`);
+  }
+
+  /** The error for a key the source did not accept. It says nothing of the key itself. */
+  #refusedKey(manifest: ConnectorManifest, status: number): HttpError {
+    return new HttpError(
+      'key',
+      `${manifest.name} did not accept the key. It may be mistyped, no longer valid, or over its limit.`,
+      { status },
+    );
   }
 
   #pauseOf(manifest: ConnectorManifest): number {

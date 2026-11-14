@@ -19,11 +19,12 @@ been tried and comes back out line for line. The app offers places while you
 type, and can link each place of a tree to where it lies on the map, from a
 list of the world's places that it downloads when you ask. A person's page
 tells their life as a timeline and marks its places on a map. Phase 2 is
-complete with that. Phase 3 has started: the app can search WikiTree, the
+complete with that. Phase 3 is complete too: the app can search WikiTree, the
 records of Dutch and Belgian archives at Open Archives, and Wikidata for a
 person of your tree, and attach a result to the person as a source with one
-click. It searches the newspapers of the Library of Congress and the books of
-the Internet Archive for words, such as the person's name. It opens a search at
+click. It searches the newspapers of the Library of Congress, the books of
+the Internet Archive and the catalog of the US National Archives for words,
+such as the person's name; the National Archives need a free key of your own. It opens a search at
 Find a Grave or FamilySearch in your browser, and a page you find there becomes
 a source when you paste its address. See
 [docs/PLAN.md](docs/PLAN.md) for the full plan and
@@ -189,6 +190,24 @@ Searching for records:
   The [Internet Archive](https://archive.org/) is searched in the titles,
   authors and descriptions of its books, not inside them, and is sent the
   words only. The form says which service is sent what.
+- **The catalog of the [US National Archives](https://catalog.archives.gov/)**
+  is searched in the descriptions of what the Archives hold: military,
+  immigration and naturalization records among them. It needs a key of your
+  own, which the Archives give out for free by email
+  ([how to ask](https://www.archives.gov/research/catalog/help/api)).
+  - You type the key into the search window once. Windows encrypts it for
+    your account, the app keeps only that, and it never shows the key again.
+    On another Windows account or another PC you enter it again.
+  - The key goes to the Archives with every search, and tells them whose
+    search it is. It goes nowhere else.
+  - A key allows 10,000 searches a month. The app counts its own and stops at
+    9,000; every search and every "More results" is one. The window shows the
+    count.
+  - The Archives ask that nothing their service returns is stored. So the app
+    keeps no answer, and a description you attach is cited by its identifier
+    and its address alone; you can add its title to the citation yourself.
+  - This product uses the National Archives Catalog API but is not endorsed
+    or certified by the National Archives and Records Administration.
 - **A result of these is found by its words alone.** Whether a newspaper page
   or a book is about your person is for you to read. A result does not say
   where on the page the words stand.

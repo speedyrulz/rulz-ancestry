@@ -1719,6 +1719,31 @@ ul.media-grid,
   margin: 0.25rem 0;
 }
 
+.record-key {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border, #d8d4c8);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.record-key p {
+  margin: 0.4rem 0 0;
+}
+
+.record-key-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.record-key-form input {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
 .record-source {
   margin-top: 1.25rem;
   border-top: 1px solid var(--border);

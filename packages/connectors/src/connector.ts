@@ -72,9 +72,10 @@ export interface SearchAnswer<R extends ExternalRecord = ExternalRecord> {
 
 /** A source answered, but not with what its connector can read, or it refused the question. */
 export class ConnectorError extends Error {
-  readonly kind: 'format' | 'refused';
+  /** "key": the source refused the user's key, and said so inside its answer. */
+  readonly kind: 'format' | 'refused' | 'key';
 
-  constructor(kind: 'format' | 'refused', message: string) {
+  constructor(kind: 'format' | 'refused' | 'key', message: string) {
     super(message);
     this.name = 'ConnectorError';
     this.kind = kind;

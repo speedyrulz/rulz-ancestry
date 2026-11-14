@@ -51,6 +51,7 @@ describe('parseLocSearch', () => {
           url: 'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
           date: '1 MAY 1903',
           by: '',
+          about: '',
         },
         {
           connectorId: 'loc',
@@ -60,6 +61,7 @@ describe('parseLocSearch', () => {
           url: 'https://www.loc.gov/resource/sn99000002/1910-04-27/ed-2/?sp=1',
           date: '27 APR 1910',
           by: '',
+          about: '',
         },
       ],
       total: 2,

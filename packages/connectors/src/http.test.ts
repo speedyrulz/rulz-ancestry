@@ -6,6 +6,7 @@ import {
   retryAfterMs,
   type HostMemory,
   type HostRecord,
+  type QuotaRecord,
   type HttpFetch,
 } from './http';
 import type { ConnectorManifest } from './manifest';
@@ -437,7 +438,7 @@ describe('HttpClient', () => {
 describe('what the client keeps for the next time the app runs', () => {
   /** A place that keeps what it is given, as the settings of the app do. */
   function memoryOf(kept: Record<string, unknown> = {}) {
-    const saved: [string, HostRecord][] = [];
+    const saved: [string, HostRecord | QuotaRecord][] = [];
     const memory: HostMemory = {
       load: (host) => kept[host],
       save: (host, record) => {
@@ -658,5 +659,273 @@ describe('what the client keeps for the next time the app runs', () => {
     const text = setup(() => new Response('not found'), {}, hourly);
     expect((await failure(text.client.getJson('a'))).kind).toBe('format');
     expect(text.http.pausedUntil(hourly)).toBeNull();
+  });
+});
+
+describe('a source that needs the key of the user', () => {
+  const keyed: ConnectorManifest = {
+    ...source,
+    id: 'keyed-source',
+    auth: 'apiKey',
+    access: 'key-required',
+    keyHeader: 'x-api-key',
+    cacheTtlHours: 0,
+  };
+  const KEY = 'canary-key-0123456789';
+
+  it('sends the key in its header, and in no address', async () => {
+    const { client, asked } = setup(() => json({ ok: true }), { keyOf: () => KEY }, keyed);
+    await client.getJson('search', { params: { q: 'x' } });
+    expect(asked[0]?.headers['x-api-key']).toBe(KEY);
+    expect(asked[0]?.url).toBe('https://example.org/api/search?q=x');
+    // A source without a key is sent none, whatever the app holds.
+    const open = setup(() => json({}), { keyOf: () => KEY });
+    await open.client.getJson('a');
+    expect(Object.values(open.asked[0]?.headers ?? {})).not.toContain(KEY);
+  });
+
+  it('sends nothing without a key, or with what no header can hold', async () => {
+    for (const key of [
+      null,
+      '',
+      'two words',
+      'tab\there',
+      'line\r\nInjected: yes',
+      'x'.repeat(301),
+    ]) {
+      const { client, asked } = setup(() => json({}), { keyOf: () => key }, keyed);
+      const error = await failure(client.getJson('a'));
+      expect(error.kind).toBe('key');
+      if (key) expect(error.message).not.toContain(key);
+      expect(asked).toHaveLength(0);
+    }
+    const none = setup(() => json({}), {}, keyed);
+    expect((await failure(none.client.getJson('a'))).kind).toBe('key');
+  });
+
+  it('asks for the key anew for each request, and keeps none', async () => {
+    let key: string | null = KEY;
+    const { client, asked } = setup(() => json({}), { keyOf: () => key }, keyed);
+    await client.getJson('a');
+    key = null;
+    expect((await failure(client.getJson('b'))).kind).toBe('key');
+    key = 'another-key-9876543210';
+    await client.getJson('c');
+    expect(asked.map((request) => request.headers['x-api-key'])).toEqual([
+      KEY,
+      'another-key-9876543210',
+    ]);
+  });
+
+  it('says when the source does not accept the key, and nothing of the key', async () => {
+    for (const answer of [
+      () => new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }),
+      () => new Response('', { status: 401 }),
+      // Its website in place of an answer, as a catalog sends without a key.
+      () => new Response('<!doctype html><html></html>'),
+    ]) {
+      const { client } = setup(answer, { keyOf: () => KEY }, keyed);
+      const error = await failure(client.getJson('a'));
+      expect(error.kind).toBe('key');
+      expect(error.message).toContain('did not accept the key');
+      expect(error.message).not.toContain(KEY);
+    }
+    // Another error is an error like another.
+    const broken = setup(() => new Response('', { status: 500 }), { keyOf: () => KEY }, keyed);
+    expect((await failure(broken.client.getJson('a'))).kind).toBe('status');
+  });
+
+  it('keeps the key out of what it writes down about a host', async () => {
+    const written: string[] = [];
+    const memory: HostMemory = {
+      load: () => null,
+      save: (name, record) => written.push(name + JSON.stringify(record)),
+    };
+    const { client } = setup(
+      () => new Response('', { status: 429 }),
+      { keyOf: () => KEY, memory },
+      { ...keyed, quota: { requests: 100, period: 'month' } },
+    );
+    await failure(client.getJson('a'));
+    expect(written.length).toBeGreaterThan(0);
+    expect(written.join('\n')).not.toContain(KEY);
+  });
+});
+
+describe('a source that allows so many requests a month', () => {
+  const counted: ConnectorManifest = {
+    ...source,
+    id: 'counted-source',
+    cacheTtlHours: 0,
+    rateLimit: { requests: 1000, perSeconds: 1, source: 'self-imposed' },
+    quota: { requests: 10, period: 'month' },
+  };
+  /** Noon on 15 November 2026, in Unix milliseconds. */
+  const MID_MONTH = Date.UTC(2026, 10, 15, 12);
+
+  function memoryOf(kept: Record<string, unknown> = {}) {
+    const memory: HostMemory = {
+      load: (name) => kept[name],
+      save: (name, record) => {
+        kept[name] = structuredClone(record);
+      },
+    };
+    return { memory, kept };
+  }
+
+  it('counts every request that goes out, and stops below what the source allows', async () => {
+    const { memory, kept } = memoryOf();
+    const { http, client, clock, asked } = setup(() => json({}), { memory }, counted);
+    clock.now = MID_MONTH;
+    expect(http.quotaOf(counted)).toEqual({
+      period: '2026-11',
+      used: 0,
+      // Nine of ten: the rest is left for whatever else uses the key.
+      ceiling: 9,
+      resetsAt: Date.UTC(2026, 11, 1, 12),
+    });
+    for (let index = 0; index < 9; index += 1) await client.getJson(`r${index}`);
+    expect(kept['quota:counted-source']).toEqual({ period: '2026-11', used: 9 });
+    const error = await failure(client.getJson('one-more'));
+    expect([error.kind, error.retryAt]).toEqual(['quota', Date.UTC(2026, 11, 1, 12)]);
+    expect(asked).toHaveLength(9);
+    // A source without a count has none.
+    expect(http.quotaOf(source)).toBeNull();
+  });
+
+  it('counts a request that failed, and none that was never sent', async () => {
+    const { memory, kept } = memoryOf();
+    const { client, clock } = setup(() => new Response('', { status: 500 }), { memory }, counted);
+    clock.now = MID_MONTH;
+    await failure(client.getJson('a'));
+    expect(kept['quota:counted-source']).toEqual({ period: '2026-11', used: 1 });
+    // An address the source does not have is refused before anything is counted.
+    await failure(client.getJson('../elsewhere'));
+    // So is a request that its caller gives up when its turn has come.
+    await failure(
+      client.getJson('b', {
+        beforeSend: () => {
+          throw new Error('not now');
+        },
+      }),
+    );
+    expect(kept['quota:counted-source']).toEqual({ period: '2026-11', used: 1 });
+  });
+
+  it('goes on counting after the app was closed, and starts again with the month', async () => {
+    const { memory, kept } = memoryOf({ 'quota:counted-source': { period: '2026-11', used: 8 } });
+    const first = setup(() => json({}), { memory }, counted);
+    first.clock.now = MID_MONTH;
+    expect(first.http.quotaOf(counted)?.used).toBe(8);
+    await first.client.getJson('a');
+    expect((await failure(first.client.getJson('b'))).kind).toBe('quota');
+
+    // The first of December has begun somewhere, but not everywhere: still November.
+    const early = setup(() => json({}), { memory }, counted);
+    early.clock.now = Date.UTC(2026, 11, 1, 11, 59);
+    expect(early.http.quotaOf(counted)).toMatchObject({ period: '2026-11', used: 9 });
+    expect((await failure(early.client.getJson('c'))).kind).toBe('quota');
+
+    // Now it has begun everywhere.
+    const next = setup(() => json({}), { memory }, counted);
+    next.clock.now = Date.UTC(2026, 11, 1, 12, 1);
+    expect(next.http.quotaOf(counted)).toMatchObject({ period: '2026-12', used: 0 });
+    await next.client.getJson('d');
+    expect(kept['quota:counted-source']).toEqual({ period: '2026-12', used: 1 });
+  });
+
+  it('takes no count on trust, and does not ask when it cannot keep count', async () => {
+    // Nothing kept is a count of nought.
+    for (const none of [null, undefined]) {
+      const { memory } = memoryOf({ 'quota:counted-source': none });
+      const { http, clock } = setup(() => json({}), { memory }, counted);
+      clock.now = MID_MONTH;
+      expect(http.quotaOf(counted)?.used).toBe(0);
+    }
+    // Something kept that is no count is taken for a month that is used up:
+    // the app does not know how much it asked.
+    for (const damaged of [
+      'nine',
+      7,
+      [],
+      {},
+      { period: 7, used: 3 },
+      { period: '2026-11', used: -4 },
+      { period: '2026-11', used: 2.5 },
+      { period: '2026-11' },
+      { period: 'November', used: 3 },
+      // A count by the day where one by the month is kept.
+      { period: '2026-11-15', used: 3 },
+    ]) {
+      const { memory } = memoryOf({ 'quota:counted-source': damaged });
+      const { http, client, clock, asked } = setup(() => json({}), { memory }, counted);
+      clock.now = MID_MONTH;
+      expect(http.quotaOf(counted)?.used, JSON.stringify(damaged)).toBe(9);
+      expect((await failure(client.getJson('a'))).kind).toBe('quota');
+      expect(asked).toHaveLength(0);
+    }
+    // And so is a place that cannot be read at all, although it can be written.
+    const unreadable: HostMemory = {
+      load: () => {
+        throw new Error('the settings cannot be read');
+      },
+      save: () => undefined,
+    };
+    const blind = setup(() => json({}), { memory: unreadable }, counted);
+    blind.clock.now = MID_MONTH;
+    expect((await failure(blind.client.getJson('a'))).kind).toBe('quota');
+    expect(blind.asked).toHaveLength(0);
+    const broken: HostMemory = {
+      load: () => {
+        throw new Error('the settings cannot be read');
+      },
+      save: (name) => {
+        if (name.startsWith('quota:')) throw new Error('the settings cannot be written');
+      },
+    };
+    const { client, clock, asked } = setup(() => json({}), { memory: broken }, counted);
+    clock.now = MID_MONTH;
+    const error = await failure(client.getJson('a'));
+    expect(error.kind).toBe('quota');
+    expect(asked).toHaveLength(0);
+  });
+
+  it('does not bring a used month back when the clock is set forward and back', async () => {
+    const { memory, kept } = memoryOf({ 'quota:counted-source': { period: '2026-11', used: 9 } });
+    const { http, client, clock, asked } = setup(() => json({}), { memory }, counted);
+    clock.now = MID_MONTH;
+    expect((await failure(client.getJson('a'))).kind).toBe('quota');
+    // The clock is put a month on: a new month, as far as the app can tell.
+    clock.now = Date.UTC(2026, 11, 15, 12);
+    for (let index = 0; index < 9; index += 1) await client.getJson(`r${index}`);
+    expect(kept['quota:counted-source']).toEqual({ period: '2026-12', used: 9 });
+    // And back again. November is not fresh, and what was asked "in December" still counts.
+    clock.now = MID_MONTH;
+    expect(http.quotaOf(counted)).toMatchObject({ period: '2026-12', used: 9 });
+    expect((await failure(client.getJson('b'))).kind).toBe('quota');
+    // Not after the app was started again either.
+    const again = setup(() => json({}), { memory }, counted);
+    again.clock.now = MID_MONTH;
+    expect((await failure(again.client.getJson('c'))).kind).toBe('quota');
+    expect(asked).toHaveLength(9);
+    expect(again.asked).toHaveLength(0);
+  });
+
+  it('does not ask a source it counts for when it has no place to keep the count', async () => {
+    const { client, clock, asked } = setup(() => json({}), {}, counted);
+    clock.now = MID_MONTH;
+    const error = await failure(client.getJson('a'));
+    expect(error.kind).toBe('quota');
+    expect(asked).toHaveLength(0);
+  });
+
+  it('counts by the day for a source that allows so many a day', async () => {
+    const daily = { ...counted, quota: { requests: 10, period: 'day' as const } };
+    const { http, clock } = setup(() => json({}), {}, daily);
+    clock.now = MID_MONTH;
+    expect(http.quotaOf(daily)).toMatchObject({
+      period: '2026-11-15',
+      resetsAt: Date.UTC(2026, 10, 16, 12),
+    });
   });
 });

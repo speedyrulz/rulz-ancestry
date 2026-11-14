@@ -175,13 +175,23 @@ function Result({ record, attached, busy, onAttach }: ResultProps) {
             {fact.place !== '' && `, ${fact.place}`}
           </div>
         ))}
-      {record.kind === 'text' && (record.by !== '' || record.date !== '') && (
-        <div className="record-fact" data-testid="record-print">
-          {[record.by, record.date === '' ? '' : `published ${dateWords(record.date)}`]
-            .filter((part) => part !== '')
-            .join(', ')}
-        </div>
-      )}
+      {record.kind === 'text' &&
+        (record.about !== '' || record.by !== '' || record.date !== '') && (
+          <div className="record-fact" data-testid="record-print">
+            {[
+              record.about,
+              record.by,
+              record.date === ''
+                ? ''
+                : // What an archive holds is dated; a newspaper or a book is published.
+                  record.about !== ''
+                  ? dateWords(record.date)
+                  : `published ${dateWords(record.date)}`,
+            ]
+              .filter((part) => part !== '')
+              .join(', ')}
+          </div>
+        )}
     </li>
   );
 }
@@ -259,6 +269,119 @@ function SourceResults({
         </a>
       </p>
     </section>
+  );
+}
+
+interface SourceKeyProps {
+  source: RecordSourceInfo;
+  /** The sources as they stand after the key was saved or removed. */
+  onSources: (sources: RecordSourceInfo[]) => void;
+}
+
+/**
+ * The user's own key for a source that needs one. The key is typed here once
+ * and handed to the main process, which keeps it encrypted; this window is
+ * never given it back, only told whether one is saved.
+ */
+function SourceKey({ source, onSources }: SourceKeyProps) {
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const fits = /^[\x21-\x7e]{8,300}$/.test(typed.trim());
+
+  const done = (
+    result: Promise<{ ok: true; sources: RecordSourceInfo[] } | { ok: false; message: string }>,
+  ) => {
+    setBusy(true);
+    setProblem(null);
+    result
+      .then(
+        (answer) => {
+          if (!answer.ok) {
+            setProblem(answer.message);
+            return;
+          }
+          onSources(answer.sources);
+        },
+        (failure: unknown) => setProblem(errorMessage(failure)),
+      )
+      .finally(() => setBusy(false));
+  };
+
+  const save = () => {
+    const key = typed.trim();
+    // The field is emptied at once: the key is not kept in this window.
+    setTyped('');
+    done(api.setRecordSourceKey({ sourceId: source.id, key }));
+  };
+
+  const quota = source.quota;
+  return (
+    <div className="record-key" data-testid={`record-key-${source.id}`}>
+      <strong>{source.name}</strong> needs a key of your own, which the service gives out for free.{' '}
+      <a href={source.termsUrl} target="_blank" rel="noreferrer">
+        How to ask for one
+      </a>
+      {source.key === 'saved' && (
+        <p data-testid="record-key-state">
+          A key is saved, encrypted by Windows for your account. The app does not show it again.{' '}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => done(api.removeRecordSourceKey(source.id))}
+            data-testid="record-key-remove"
+          >
+            Remove the key
+          </button>
+        </p>
+      )}
+      {source.key === 'unreadable' && (
+        <p className="error" data-testid="record-key-state">
+          The key that was saved cannot be read on this Windows account. Enter it again.
+        </p>
+      )}
+      {source.key === 'unavailable' && (
+        <p className="error" data-testid="record-key-state">
+          This PC cannot encrypt a key for your Windows account, so the app does not save one.
+        </p>
+      )}
+      {(source.key === 'missing' || source.key === 'unreadable') && (
+        <form
+          className="record-key-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (fits && !busy) save();
+          }}
+        >
+          <label htmlFor={`record-key-input-${source.id}`}>Your key</label>
+          <input
+            id={`record-key-input-${source.id}`}
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={300}
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            data-testid="record-key-input"
+          />
+          <button type="submit" disabled={!fits || busy} data-testid="record-key-save">
+            Save the key
+          </button>
+        </form>
+      )}
+      {problem !== null && (
+        <p className="error" role="alert" data-testid="record-key-problem">
+          {problem}
+        </p>
+      )}
+      {quota !== null && (
+        <p className="hint" data-testid="record-quota">
+          Asked {quota.used.toLocaleString()} of {quota.ceiling.toLocaleString()} times this{' '}
+          {quota.period}, as this app counts it. Every search, and every &quot;More results&quot;,
+          is one. The service allows a little more; the app keeps the rest in hand.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -393,6 +516,18 @@ export function RecordSearchDialog({
   const textProblem = typedText === null ? null : textQueryProblem(typedText);
   const textReady = typedText !== null && typedText.words !== '' && textProblem === null;
 
+  /** Reads the sources again: whether a key is saved, and how often a source was asked. */
+  const refreshSources = () => {
+    api.getRecordSearch(personId).then(
+      (loaded) => {
+        if (loaded !== null) setSources(loaded.sources);
+      },
+      () => undefined,
+    );
+  };
+  const setSources = (sources: RecordSourceInfo[]) =>
+    setSetup((now) => (now === null ? now : { ...now, sources }));
+
   const ask = (asked: Asked, source: RecordSourceInfo, offset: number, mine: number) => {
     setFound((all) => ({
       ...all,
@@ -415,6 +550,9 @@ export function RecordSearchDialog({
     answer.then(
       (result) => {
         if (round.current[asked.kind] !== mine) return;
+        // A source that counts what it is asked has been asked once more,
+        // whether or not it answered.
+        if (source.quota !== null) refreshSources();
         if (!result.ok) {
           failed(result.problem);
           return;
@@ -685,7 +823,7 @@ export function RecordSearchDialog({
             />
           )}
 
-          <h3>Newspapers and books</h3>
+          <h3>Newspapers, books and archives</h3>
           <form
             className="record-form"
             data-testid="record-text-form"
@@ -774,6 +912,12 @@ export function RecordSearchDialog({
               Search
             </button>
           </form>
+
+          {textSources
+            .filter((source) => source.key !== 'none')
+            .map((source) => (
+              <SourceKey key={source.id} source={source} onSources={setSources} />
+            ))}
 
           {sentText !== null && (
             <SourceList

@@ -29,6 +29,7 @@ import {
   type RecordLinkResult,
   type RecordSearchResult,
   type RecordSearchSetup,
+  type RecordSourceKeyResult,
   type RelationshipInfo,
   type SourceChange,
   type SourceDetails,
@@ -42,6 +43,8 @@ import {
   RECORD_SEARCH_NOTICE_VERSION_SETTING,
   RecordSearchService,
   recordSearchHostSetting,
+  recordSearchKeySetting,
+  type SecretStore,
 } from './records';
 import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
@@ -158,6 +161,43 @@ const entryAnswer = {
     ],
   },
 };
+/** What the National Archives answer in these tests: one description that is made up. */
+const catalogAnswer = {
+  statusCode: 200,
+  body: {
+    hits: {
+      total: { value: 1 },
+      hits: [
+        {
+          _source: {
+            record: {
+              naId: 90000001,
+              title: 'Pension file of Ada Test',
+              levelOfDescription: 'fileUnit',
+              coverageStartDate: { year: 1862 },
+              coverageEndDate: { year: 1910 },
+            },
+          },
+        },
+      ],
+    },
+  },
+};
+/** A key that is none: it only has to be found again wherever it must not be. */
+const CANARY = 'canary-key-0123456789';
+/** Whether the fake of Windows' data protection works, and can read what was kept. */
+let secretsWork: { available: boolean; readable: boolean };
+/** Stands in for Windows' data protection: what it keeps is not the text itself. */
+const secrets: SecretStore = {
+  available: () => secretsWork.available,
+  encrypt: (text) => `kept:${Buffer.from(text).toString('hex')}`,
+  decrypt: (kept) => {
+    if (!secretsWork.readable || !kept.startsWith('kept:')) throw new Error('cannot be read');
+    return Buffer.from(kept.slice(5), 'hex').toString();
+  },
+};
+/** The headers of every request the search for records sent. */
+let headersOfSources: Record<string, string>[];
 /** What a source answers when asked; a test can put its own answer in its place. */
 let answerOf: (url: string) => Response;
 const usualAnswer = (url: string): Response => {
@@ -167,11 +207,13 @@ const usualAnswer = (url: string): Response => {
       ? newspaperAnswer
       : host === 'archive.org'
         ? bookAnswer
-        : host === 'api.openarchieven.nl'
-          ? archiveAnswer
-          : host === 'query.wikidata.org'
-            ? entryAnswer
-            : sourceAnswer;
+        : host === 'catalog.archives.gov'
+          ? catalogAnswer
+          : host === 'api.openarchieven.nl'
+            ? archiveAnswer
+            : host === 'query.wikidata.org'
+              ? entryAnswer
+              : sourceAnswer;
   return new Response(JSON.stringify(data));
 };
 /** What the fake folder picker answers next; null is a cancelled dialog. */
@@ -263,13 +305,17 @@ beforeEach(() => {
   });
   askedOfSources = [];
   answerOf = usualAnswer;
+  secretsWork = { available: true, readable: true };
+  headersOfSources = [];
   records = new RecordSearchService({
     appDb,
     appVersion: '0.0.0',
-    fetch: (url) => {
+    fetch: (url, init) => {
       askedOfSources.push(url);
+      headersOfSources.push(init.headers);
       return Promise.resolve(answerOf(url));
     },
+    secrets,
   });
   handlers = createHandlers(session, platform, gazetteer, records);
   pickedFolder = null;
@@ -353,6 +399,15 @@ describe('argument checks', () => {
         'attachRecord',
         { personId: MISSING, sourceId: 'wikitree', key: 'a', url: 'https://x.example' },
       ],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog' }],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog', key: 'short' }],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog', key: 'two words here' }],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog', key: 'line\nbreak-in-the-key' }],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog', key: 'x'.repeat(301) }],
+      ['setRecordSourceKey', { sourceId: '../x', key: CANARY }],
+      ['setRecordSourceKey', { sourceId: 'nara-catalog', key: CANARY, show: true }],
+      ['removeRecordSourceKey', '../x'],
+      ['removeRecordSourceKey', 'nara-catalog', 'extra argument'],
       ['openRecordLink', { personId: MISSING, linkId: 'find-a-grave' }],
       ['openRecordLink', { personId: MISSING, linkId: 'Find A Grave', query: QUERY }],
       [
@@ -1726,6 +1781,24 @@ describe('the search for records', () => {
       ['wikidata', 'person'],
       ['loc', 'text'],
       ['internet-archive', 'text'],
+      ['nara-catalog', 'text'],
+    ]);
+    // Only the National Archives need a key, and count what they are asked.
+    expect(setup.sources.map((source) => source.key)).toEqual([
+      'none',
+      'none',
+      'none',
+      'none',
+      'none',
+      'missing',
+    ]);
+    expect(setup.sources.map((source) => source.quota?.ceiling ?? null)).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      9000,
     ]);
     // Every source says what it is sent.
     expect(setup.sources.every((source) => source.asks !== '')).toBe(true);
@@ -2084,6 +2157,7 @@ describe('the search of newspapers and books', () => {
         url: 'https://www.loc.gov/resource/sn99000001/1903-05-01/ed-1/?sp=8',
         date: '1 MAY 1903',
         by: '',
+        about: '',
       },
     ]);
     expect(found).toMatchObject({ total: 2, hidden: 0, attached: [], cached: false });
@@ -2123,6 +2197,7 @@ describe('the search of newspapers and books', () => {
         url: 'https://archive.org/details/testfamily00exam',
         date: '1930',
         by: 'Fenwick, H.',
+        about: '',
       },
     ]);
     const asked = new URL(askedOfSources[0] ?? '');
@@ -2468,6 +2543,242 @@ describe('the search of archive records and of Wikidata', () => {
         }),
       ).toMatchObject({ ok: false, problem: { kind: 'source' } });
     }
+    expect(askedOfSources).toEqual([]);
+  });
+});
+
+describe('the National Archives, and the key of the user', () => {
+  const search = (personId: string, offset = 0) =>
+    call<RecordSearchResult>('searchRecordTexts', {
+      personId,
+      sourceId: 'nara-catalog',
+      query: TEXT,
+      offset,
+    });
+  const setKey = (key: string, sourceId = 'nara-catalog') =>
+    call<RecordSourceKeyResult>('setRecordSourceKey', { sourceId, key });
+  const stateOf = async (personId: string) =>
+    (await call<RecordSearchSetup>('getRecordSearch', personId)).sources.find(
+      (source) => source.id === 'nara-catalog',
+    );
+  /** Every setting of the app, as text. */
+  const settings = () =>
+    JSON.stringify(appDb.prepare('SELECT key, value FROM setting ORDER BY key').all());
+
+  it('asks nothing without a key', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    expect(await search(ada)).toMatchObject({
+      ok: false,
+      problem: { kind: 'key', message: 'US National Archives Catalog needs your own key.' },
+    });
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('keeps the key encrypted, sends it in its header, and never hands it back', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    const saved = await setKey(CANARY);
+    // The answer says that a key is saved, and nothing of the key.
+    expect(saved).toMatchObject({ ok: true });
+    expect(JSON.stringify(saved)).not.toContain(CANARY);
+    expect((await stateOf(ada))?.key).toBe('saved');
+    // Saving sent nothing.
+    expect(askedOfSources).toEqual([]);
+    // The settings hold what Windows made of it, not the key.
+    expect(getSetting(appDb, recordSearchKeySetting('nara-catalog'))).toMatch(/^kept:[0-9a-f]+$/);
+    expect(settings()).not.toContain(CANARY);
+
+    const found = await search(ada);
+    if (!found.ok) throw new Error(found.problem.message);
+    expect(found.items).toEqual([
+      {
+        connectorId: 'nara-catalog',
+        key: '90000001',
+        kind: 'text',
+        title: 'Pension file of Ada Test',
+        url: 'https://catalog.archives.gov/id/90000001',
+        date: '',
+        by: '',
+        about: 'File unit, 1862–1910',
+      },
+    ]);
+    expect(JSON.stringify(found)).not.toContain(CANARY);
+    // One request, to the Archives, with the words in its address and the key in its header.
+    expect(askedOfSources).toHaveLength(1);
+    const asked = new URL(askedOfSources[0] ?? '');
+    expect(asked.origin + asked.pathname).toBe(
+      'https://catalog.archives.gov/api/v2/records/search',
+    );
+    expect(asked.searchParams.get('q')).toBe('"ada test"');
+    expect(askedOfSources[0]).not.toContain(CANARY);
+    expect(headersOfSources[0]?.['x-api-key']).toBe(CANARY);
+    // No page of the app, and no setting, holds the key afterwards.
+    expect(JSON.stringify(await call('getRecordSearch', ada))).not.toContain(CANARY);
+    expect(settings()).not.toContain(CANARY);
+    // No other source is sent it.
+    await call<RecordSearchResult>('searchRecordTexts', {
+      personId: ada,
+      sourceId: 'loc',
+      query: TEXT,
+      offset: 0,
+    });
+    expect(Object.values(headersOfSources[1] ?? {})).not.toContain(CANARY);
+  });
+
+  it('counts what it asks the Archives, and keeps no answer', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await setKey(CANARY);
+    expect((await stateOf(ada))?.quota).toMatchObject({ used: 0, ceiling: 9000, period: 'month' });
+    await search(ada);
+    // The same search again is asked again: the terms of the Archives bar keeping an answer.
+    expect(await search(ada)).toMatchObject({ ok: true, cached: false });
+    expect(askedOfSources).toHaveLength(2);
+    expect((await stateOf(ada))?.quota?.used).toBe(2);
+
+    // When the app's share of the month is used up, nothing more is sent.
+    const period = (await stateOf(ada))?.quota;
+    const kept = JSON.parse(
+      getSetting(appDb, recordSearchHostSetting('quota:nara-catalog')) ?? '{}',
+    ) as { period: string };
+    setSetting(
+      appDb,
+      recordSearchHostSetting('quota:nara-catalog'),
+      JSON.stringify({ period: kept.period, used: 9000 }),
+    );
+    const again = new RecordSearchService({
+      appDb,
+      appVersion: '0.0.0',
+      fetch: (url) => {
+        askedOfSources.push(url);
+        return Promise.resolve(answerOf(url));
+      },
+      secrets,
+    });
+    expect(
+      await again.searchTexts(session.tree, {
+        personId: ada,
+        sourceId: 'nara-catalog',
+        query: TEXT,
+        offset: 0,
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'paused', retryAt: period?.resetsAt } });
+    expect(askedOfSources).toHaveLength(2);
+  });
+
+  it('cites a description by its identifier and address, and keeps nothing the Archives sent', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await setKey(CANARY);
+    await search(ada);
+    const attached = await call<AttachRecordResult>('attachRecord', {
+      personId: ada,
+      sourceId: 'nara-catalog',
+      key: '90000001',
+    });
+    if (!attached.ok) throw new Error(attached.problem.message);
+    const [cited] = (await call<PersonPage>('getPersonPage', ada)).citations;
+    expect(cited).toMatchObject({
+      sourceTitle: 'US National Archives Catalog',
+      page: 'Identifier 90000001',
+      text: '',
+      url: 'https://catalog.archives.gov/id/90000001',
+    });
+    // Not the title, nor what kind of record it is.
+    expect(JSON.stringify(cited)).not.toContain('Pension');
+    expect(JSON.stringify(cited)).not.toContain('File unit');
+  });
+
+  it('says when the Archives do not accept the key', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await setKey(CANARY);
+    for (const answer of [
+      () => new Response(JSON.stringify({ message: 'Forbidden' }), { status: 403 }),
+      () => new Response('<!doctype html><html><body>Catalog</body></html>'),
+    ]) {
+      answerOf = answer;
+      const refused = await search(ada);
+      expect(refused).toMatchObject({ ok: false, problem: { kind: 'key' } });
+      expect(JSON.stringify(refused)).not.toContain(CANARY);
+    }
+    // An error that the Archives put inside an answer.
+    answerOf = () => new Response(JSON.stringify({ statusCode: 403, body: {} }));
+    const inside = await search(ada);
+    expect(inside).toMatchObject({ ok: false, problem: { kind: 'key' } });
+    if (inside.ok) throw new Error('it did not fail');
+    expect(inside.problem.message).toContain('did not accept the key');
+  });
+
+  it('replaces and removes the key, and takes none for a source that needs none', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    await setKey(CANARY);
+    await setKey('another-key-9876543210');
+    await search(ada);
+    expect(headersOfSources[0]?.['x-api-key']).toBe('another-key-9876543210');
+
+    expect(
+      await call<RecordSourceKeyResult>('removeRecordSourceKey', 'nara-catalog'),
+    ).toMatchObject({
+      ok: true,
+    });
+    expect(getSetting(appDb, recordSearchKeySetting('nara-catalog'))).toBeNull();
+    expect((await stateOf(ada))?.key).toBe('missing');
+    expect(await search(ada)).toMatchObject({ ok: false, problem: { kind: 'key' } });
+    // The count of the month stays, whoever's key it was.
+    expect((await stateOf(ada))?.quota?.used).toBe(1);
+
+    for (const sourceId of ['wikitree', 'loc', 'find-a-grave', 'no-such-source']) {
+      expect(await setKey(CANARY, sourceId)).toEqual({
+        ok: false,
+        message: 'This source takes no key.',
+      });
+      expect(getSetting(appDb, recordSearchKeySetting(sourceId))).toBeNull();
+    }
+  });
+
+  it('saves no key when the PC cannot encrypt, and says when a saved one cannot be read', async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
+    secretsWork.available = false;
+    expect((await stateOf(ada))?.key).toBe('unavailable');
+    expect(await setKey(CANARY)).toMatchObject({ ok: false });
+    expect(getSetting(appDb, recordSearchKeySetting('nara-catalog'))).toBeNull();
+    expect(settings()).not.toContain(CANARY);
+
+    secretsWork.available = true;
+    await setKey(CANARY);
+    // As on another Windows account, or with a profile copied from another PC.
+    secretsWork.readable = false;
+    expect((await stateOf(ada))?.key).toBe('unreadable');
+    const refused = await search(ada);
+    expect(refused).toMatchObject({ ok: false, problem: { kind: 'key' } });
+    if (refused.ok) throw new Error('it did not fail');
+    expect(refused.problem.message).toContain('cannot be read on this Windows account');
+    expect(askedOfSources).toEqual([]);
+    // Entering it again puts it right.
+    secretsWork.readable = true;
+    await setKey(CANARY);
+    expect(await search(ada)).toMatchObject({ ok: true });
+  });
+
+  it('keeps the rules of every search', async () => {
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+    const rita = await addPerson('Rita', { birthDate: '1990' });
+    await setKey(CANARY);
+    expect(await search(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    await call('agreeToRecordSearch');
+    expect(await search(rita)).toMatchObject({ ok: false, problem: { kind: 'living' } });
     expect(askedOfSources).toEqual([]);
   });
 });

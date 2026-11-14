@@ -77,6 +77,7 @@ function recordOf(doc: unknown): TextRecord | null {
     title: textOf(doc['title']) || identifier,
     url: INTERNET_ARCHIVE_ITEM_URL + encodeURIComponent(identifier),
     date: yearOf(doc['year']),
+    about: '',
     by: textOf(doc['creator']) || textOf(doc['publisher']),
   };
 }

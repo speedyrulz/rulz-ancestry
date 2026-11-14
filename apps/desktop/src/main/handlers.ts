@@ -679,6 +679,21 @@ export function createHandlers(
       },
     ),
 
+    setRecordSourceKey: define<'setRecordSourceKey'>(
+      z.tuple([
+        z.strictObject({
+          sourceId: siteId,
+          // What a header can hold: printable, without spaces. Its form is the source's own matter.
+          key: z.string().regex(/^[\x21-\x7e]{8,300}$/),
+        }),
+      ]),
+      (request) => records.setKey(request.sourceId, request.key),
+    ),
+
+    removeRecordSourceKey: define<'removeRecordSourceKey'>(z.tuple([siteId]), (sourceId) =>
+      records.removeKey(sourceId),
+    ),
+
     openRecordLink: define<'openRecordLink'>(
       z.tuple([z.strictObject({ personId: id, linkId: siteId, query: personQuery })]),
       async (request) => {

@@ -14,7 +14,10 @@ Terms below were checked on 2026-11-11 unless marked "to confirm".
 ## Needed before Phase 3 (federated search)
 
 - [x] **US National Archives Catalog API key**
-  - **The owner has a key since 2026-11-13.** It is kept outside this repository and is entered in the app when part 3e is built.
+  - **The owner has a key since 2026-11-13.** It is kept outside this repository. Since part 3e it is typed into the search window of the app, which keeps it encrypted by Windows for the user's account. It is never put into a file of this repository, an environment file, a test or a workflow.
+  - The connector was written without a key. The owner tries it by entering their key in the app and searching once.
+  - The Archives switch off a key that is not used for twelve months, and one that was made public.
+  - Open, for the owner to ask the Archives: whether a citation may keep the title of a description. Their terms ask that nothing the API returns is stored, so the app keeps the identifier and the address only.
   - How it was requested: email `Catalog_API@nara.gov` with your name and the email address to tie to the key. Ask for a read-only key.
   - Limit: 10,000 queries per month per key. A key over the limit is blocked until the 1st of the next month.
   - Because the limit is per key, each user of the app will enter their own key.

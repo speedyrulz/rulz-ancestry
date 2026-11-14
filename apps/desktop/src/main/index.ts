@@ -10,6 +10,7 @@ import {
   nativeImage,
   net,
   protocol,
+  safeStorage,
   session as electronSession,
   shell,
   type IpcMainInvokeEvent,
@@ -384,6 +385,13 @@ if (!app.requestSingleInstanceLock()) {
       appDb,
       fetch: (url, init) => electronSession.fromPartition(RECORDS_PARTITION).fetch(url, init),
       appVersion: app.getVersion(),
+      // A key of the user's own is encrypted by Windows for their account
+      // (DPAPI) before it is written to the settings, and never kept as it is.
+      secrets: {
+        available: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+        decrypt: (kept) => safeStorage.decryptString(Buffer.from(kept, 'base64')),
+      },
     });
 
     registerIpc(treeSession, gazetteer, records);
