@@ -23,7 +23,7 @@ export const locManifest = defineManifest({
     'Paging past the 100,000th result is not supported, and some searches fail before that; narrow by date or state first.',
     'Limits can drop under heavy load. On HTTP 429 or a CAPTCHA response, pause instead of retrying.',
     'The search of newspaper pages is collections/chronicling-america/ with dl=page, qs, ops (PHRASE or AND), searchType=advanced, start_date, end_date and location_state, as in the Library’s own tutorial; tried on 2026-11-13.',
-    'A search of the newspapers can take the Library a minute and more, above all for a common name over many years: a search over all years before 1870 did not answer within 40 seconds on 2026-11-13, and one for a name over sixty years did not within 20. It is given 90 seconds.',
+    'A search of the newspapers can take the Library a minute and more, above all for a common name over many years: a search over all years before 1870 did not answer within 40 seconds on 2026-11-13, and one for a name over sixty years did not within 20. It is given 90 seconds, within which the same search answered on 2026-11-14.',
     'A result does not say where on the page the words stand. That would take one more request per result to the text services.',
     'Image and text services have a separate published limit of 150 requests per minute.',
   ],

@@ -788,14 +788,14 @@ Found by the reviews, and what was done. OpenAI Codex and a Claude Opus subagent
 
 Turned down from the design views: sending the years as a limit of the search (Opus; what the catalog's dates mean for a search was not tried), a kind of record of its own for an archive's description (Codex; a text with a few words on what kind of thing it is serves), and a key in an environment variable for a check on the owner's PC (the owner types it into the app instead).
 
-Tried by the owner on 2026-11-13 and 2026-11-14, with their own key, in the app. The key was saved, and the count rose with each search. A search of the Archives answered with several hundred results, each with its title and its level of description ("Item", "File unit"), and with the button to attach it: the answer has the shape the Archives' guide shows, and the connector reads it. No years stood with the results that were seen; whether the catalog gave none for them or names them otherwise than the connector expects is not known. In the first trial the Library of Congress did not answer within 20 seconds; it is now given 90 (`timeoutSeconds` in its manifest), and the window says so while it waits.
+Tried by the owner on 2026-11-13 and 2026-11-14, with their own key, in the app. The key was saved, and the count rose with each search. A search of the Archives answered with several hundred results, each with its title and its level of description ("Item", "File unit"), and with the button to attach it: the answer has the shape the Archives' guide shows, and the connector reads it. No years stood with the results that were seen; whether the catalog gave none for them or names them otherwise than the connector expects is not known. In the first trial the Library of Congress did not answer within 20 seconds; it is now given 90 (`timeoutSeconds` in its manifest), and the window says so while it waits. With that it answered in the second trial. The owner then put in a key that is none: the Archives refused it, and the window said that they did not accept the key, in the client's own words and without a word of the key. So a wrong key comes back as "unauthorized", "forbidden" or the catalog's website, which are the three the client takes for a refusal; which of the three it was, the window does not say.
 
 Tests: unit tests went from 1037 to 1071, end-to-end tests from 38 to 39.
 
 Not done:
 
 - **The years of a description** did not show in the owner's trial. The connector asks for the fields the API's specification names for them; an answer was not looked at field by field, because that would take a key.
-- **What the Archives answer to a wrong or used-up key** is still not known. The trial was with a key they accept.
+- **What the Archives answer to a key that is over its limit** is still not known. A wrong key is refused, as the owner's trial showed; a used-up one was not tried, and should not be.
 - **The title of a description in a citation.** Open for the owner to ask the Archives; see [ACCESS.md](ACCESS.md).
 - **Scans and other digital objects** of a description, the hierarchy above it, and a search by record group.
 - **The years** as a limit of the search.
