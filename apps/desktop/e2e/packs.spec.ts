@@ -1,8 +1,16 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import type { Page } from '@playwright/test';
+import { gzipSync } from 'node:zlib';
+import type { ElectronApplication, Page } from '@playwright/test';
 import { buildPack } from '../src/main/packbuild';
-import type { PackInfo, PacksState, RecordSearchResult } from '../src/shared/ipc';
+import type {
+  PackActionResult,
+  PackArchivesResult,
+  PackInfo,
+  PackOfferResult,
+  PacksState,
+  RecordSearchResult,
+} from '../src/shared/ipc';
 import { addPerson, createTree, expect, launchApp, test } from './fixtures';
 
 /**
@@ -144,4 +152,165 @@ test('a pack in the packs folder is listed, searched through its worker, and rem
   } finally {
     await app.close().catch(() => undefined);
   }
+});
+
+/**
+ * Replaces Electron's `net.fetch` in the main process with a made-up Open
+ * Archives: the catalogue, one archive's page, and the sizes and bytes of its
+ * two files. Every request is kept as "METHOD address", so that the test can
+ * say exactly what the app asked. Nothing reaches the real site.
+ */
+async function pretendOpenArchives(
+  app: ElectronApplication,
+  texts: Record<string, string>,
+  files: Record<string, { base64: string; etag: string }>,
+): Promise<void> {
+  await app.evaluate(
+    ({ net }, { texts: pages, files: served }) => {
+      const asked: string[] = [];
+      (globalThis as unknown as { askedOfInternet: string[] }).askedOfInternet = asked;
+      net.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        const method = init?.method ?? 'GET';
+        asked.push(`${method} ${url}`);
+        const page = pages[url];
+        if (page !== undefined) return Promise.resolve(new Response(page));
+        const file = served[url];
+        if (file === undefined) return Promise.resolve(new Response('not found', { status: 404 }));
+        const bytes = Buffer.from(file.base64, 'base64');
+        const headers = { 'content-length': String(bytes.length), etag: file.etag };
+        return Promise.resolve(
+          method === 'HEAD'
+            ? new Response(null, { headers })
+            : new Response(new Uint8Array(bytes), { headers }),
+        );
+      };
+    },
+    { texts, files },
+  );
+}
+
+function askedOfInternet(app: ElectronApplication): Promise<string[]> {
+  return app.evaluate(
+    () => (globalThis as unknown as { askedOfInternet?: string[] }).askedOfInternet ?? [],
+  );
+}
+
+test('installs an Open Archives pack from a made-up catalogue, and searches it', async ({
+  app,
+  window,
+}) => {
+  test.setTimeout(120_000);
+  const site = 'https://www.openarchieven.nl';
+  const exports = 'https://oa-export.s3.nl-ams.scw.cloud/csv';
+  const marriages = gzipSync(readFileSync(join(FIXTURES, 'pack-sample.csv')));
+  const births = gzipSync(readFileSync(join(FIXTURES, 'pack-sample-births.csv')));
+  await pretendOpenArchives(
+    app,
+    {
+      [`${site}/datasets/datacatalog.jsonld`]: readFileSync(
+        join(FIXTURES, 'catalogue.sample.jsonld'),
+        'utf8',
+      ),
+      [`${site}/datasets/tst1`]: readFileSync(join(FIXTURES, 'dataset-page-tst1.html'), 'utf8'),
+    },
+    {
+      [`${exports}/tst1.bsh.csv.gz`]: { base64: marriages.toString('base64'), etag: '"m-1"' },
+      [`${exports}/tst1.bsg.csv.gz`]: { base64: births.toString('base64'), etag: '"b-1"' },
+    },
+  );
+  await createTree(window, 'Archives');
+  await addPerson(window, {
+    given: 'Tobias',
+    surname: 'Baker',
+    birthDate: '1860',
+    deathDate: '1930',
+  });
+  await window.getByTestId('open-packs').click();
+  await expect(window.getByTestId('packs-dialog')).toBeVisible();
+  // Nothing is asked before the user asks.
+  expect(await askedOfInternet(app)).toEqual([]);
+
+  const listed = await ask<PackArchivesResult>(window, 'listPackArchives');
+  if (!listed.ok) throw new Error(listed.message);
+  expect(listed.archives.map((archive) => [archive.code, archive.name, archive.installed])).toEqual(
+    [
+      ['tst1', 'Test Town Archive', 'no'],
+      ['tst2', 'Voorbeeldstad Archief', 'no'],
+    ],
+  );
+
+  const described = await ask<PackOfferResult>(window, 'describePackArchive', 'tst1');
+  if (!described.ok) throw new Error(described.message);
+  expect(described.offer).toMatchObject({
+    code: 'tst1',
+    name: 'Test Town Archive',
+    files: [
+      { url: `${exports}/tst1.bsh.csv.gz`, bytes: marriages.length },
+      { url: `${exports}/tst1.bsg.csv.gz`, bytes: births.length },
+    ],
+    downloadBytes: marriages.length + births.length,
+    installed: 'no',
+  });
+
+  expect(await ask<PackActionResult>(window, 'installPackArchive', 'tst1')).toEqual({ ok: true });
+  await expect
+    .poll(
+      async () => {
+        const state = await ask<PacksState>(window, 'getPacks');
+        if (state.job?.phase === 'failed') throw new Error(state.job.message ?? 'the job failed');
+        return state.packs.map((pack) => `${pack.id} ${pack.state}`);
+      },
+      { timeout: 90_000 },
+    )
+    .toEqual(['oatst1 ready']);
+
+  const state = await ask<PacksState>(window, 'getPacks');
+  expect(state.packs[0]).toMatchObject({
+    id: 'oatst1',
+    kind: 'open-archives',
+    title: 'Test Town Archive',
+    licence: 'CC0 1.0',
+    sourceModified: '2026-02-01',
+  });
+
+  // The pack found its way into the search, and the worker that reads it ran.
+  const id = await personId(window);
+  const result = await ask<RecordSearchResult>(window, 'searchRecords', {
+    personId: id,
+    sourceId: 'pack:oatst1',
+    query: { given: 'Tobias', surname: 'Baker', birthYear: null, deathYear: null },
+    offset: 0,
+  });
+  if (!result.ok) throw new Error(`the search of the pack failed: ${result.problem.message}`);
+  expect(result.items).toHaveLength(1);
+  expect(result.items[0]).toMatchObject({ connectorId: 'open-archives', title: 'Tobias Baker' });
+
+  // The app asked exactly this: the catalogue, the page, the sizes, and again
+  // the sizes and then the files when the install began.
+  expect(await askedOfInternet(app)).toEqual([
+    `GET ${site}/datasets/datacatalog.jsonld`,
+    `GET ${site}/datasets/tst1`,
+    `HEAD ${exports}/tst1.bsh.csv.gz`,
+    `HEAD ${exports}/tst1.bsg.csv.gz`,
+    `HEAD ${exports}/tst1.bsh.csv.gz`,
+    `HEAD ${exports}/tst1.bsg.csv.gz`,
+    `GET ${exports}/tst1.bsh.csv.gz`,
+    `GET ${exports}/tst1.bsg.csv.gz`,
+  ]);
+
+  // Looking again, the files are those the pack was made from.
+  const again = await ask<PackOfferResult>(window, 'describePackArchive', 'tst1');
+  if (!again.ok) throw new Error(again.message);
+  expect(again.offer.installed).toBe('current');
+  const asked = await askedOfInternet(app);
+  expect(asked.slice(8)).toEqual([
+    `GET ${site}/datasets/tst1`,
+    `HEAD ${exports}/tst1.bsh.csv.gz`,
+    `HEAD ${exports}/tst1.bsg.csv.gz`,
+  ]);
+
+  // An archive that was not looked at cannot be installed.
+  const unlooked = await ask<PackActionResult>(window, 'installPackArchive', 'tst2');
+  expect(unlooked.ok).toBe(false);
 });

@@ -1215,7 +1215,49 @@ export interface PackInfo {
   downloadedAt: string;
   /** "rebuild": made by another version of the app's builder; "unreadable": the file cannot be opened as a pack. */
   state: 'ready' | 'rebuild' | 'unreadable';
+  /** The source's own last-changed day when the pack was made, `YYYY-MM-DD`; null when not known. */
+  sourceModified: string | null;
 }
+
+/** An archive of Open Archives that may be installed as a pack: CC0 only, as the catalogue lists it. */
+export interface PackArchiveInfo {
+  /** The archive's code, `[a-z0-9]{2,10}`. */
+  code: string;
+  name: string;
+  /** The years it covers, as the catalogue gives them, e.g. "1798/1909"; null when not given. */
+  period: string | null;
+  /** The number of records the catalogue gives; null when not given. */
+  records: number | null;
+  /** The catalogue's last-changed day, `YYYY-MM-DD`; null when not given. */
+  modified: string | null;
+  /** "maybe-update": installed, and the catalogue's day is after the pack's source day (a hint only). */
+  installed: 'no' | 'yes' | 'maybe-update';
+}
+
+export type PackArchivesResult =
+  { ok: true; archives: PackArchiveInfo[] } | { ok: false; message: string };
+
+/** What installing one archive would download, as just looked up. Held by the app for 15 minutes. */
+export interface PackOfferInfo {
+  code: string;
+  name: string;
+  period: string | null;
+  records: number | null;
+  /** The dataset page the files were read from. */
+  pageUrl: string;
+  files: { url: string; bytes: number }[];
+  downloadBytes: number;
+  /** About how large the pack will be once built. */
+  estimateBytes: number;
+  /** Free space on the packs folder's drive; null when it cannot be read. */
+  freeBytes: number | null;
+  /** "update": installed, and the files are not those the pack was made from. */
+  installed: 'no' | 'current' | 'update';
+  /** When this offer stops being held, ms since the epoch; install after it needs a new look. */
+  expiresAt: number;
+}
+
+export type PackOfferResult = { ok: true; offer: PackOfferInfo } | { ok: false; message: string };
 
 /** The install or update of a pack that is under way, or that ended last. */
 export interface PackJob {
@@ -1807,6 +1849,12 @@ export interface RulzApi {
   cancelPackJob(): Promise<PackActionResult>;
   /** Deletes a pack from this PC. Citations made from it stay in the tree. */
   removePack(id: string): Promise<PackActionResult>;
+  /** Asks Open Archives for its catalogue and lists the CC0 archives. Sends nothing about the user or the tree. */
+  listPackArchives(): Promise<PackArchivesResult>;
+  /** Reads one archive's page and the sizes of its CSV files. */
+  describePackArchive(code: string): Promise<PackOfferResult>;
+  /** Installs or updates the archive as last described, if that description is still held. */
+  installPackArchive(code: string): Promise<PackActionResult>;
   /** The proposals the app holds in memory, the latest first, each held against the tree as it is now. */
   listAiProposals(): Promise<AiProposalItem[]>;
   /** Forgets one proposal. Nothing changes in the tree. */
@@ -2015,6 +2063,9 @@ export const API_METHODS = [
   'getPacks',
   'cancelPackJob',
   'removePack',
+  'listPackArchives',
+  'describePackArchive',
+  'installPackArchive',
   'listAiProposals',
   'dismissAiProposal',
   'listAiActivity',

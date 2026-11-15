@@ -28,6 +28,7 @@ import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
 import { workerBuildRunner } from './packbuild';
 import buildWorkerPath from './packbuild.worker?modulePath';
+import { PackOffers } from './packoffers';
 import { PackManager } from './packs';
 import { PackSearch, workerSearchChannel } from './packsearch';
 import searchWorkerPath from './packsearch.worker?modulePath';
@@ -368,8 +369,18 @@ function registerIpc(
   ai: AiSessionService,
   runs: RecordRun,
   packManager: PackManager,
+  packOffers: PackOffers,
 ): void {
-  const handlers = createHandlers(session, platform, places, records, ai, runs, packManager);
+  const handlers = createHandlers(
+    session,
+    platform,
+    places,
+    records,
+    ai,
+    runs,
+    packManager,
+    packOffers,
+  );
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -491,6 +502,13 @@ if (!app.requestSingleInstanceLock()) {
       build: workerBuildRunner(buildWorkerPath),
     });
     packs = manager;
+    // The archives of Open Archives that can be installed as packs. Asked
+    // only when the user presses a button; `net.fetch` is looked up at each call.
+    const packOffers = new PackOffers({
+      fetch: (url, init) => net.fetch(url, init),
+      appVersion: app.getVersion(),
+      packs: manager,
+    });
     try {
       manager.start();
     } catch (error) {
@@ -543,7 +561,7 @@ if (!app.requestSingleInstanceLock()) {
       connector: findConnector(),
     });
     aiSession = ai;
-    registerIpc(treeSession, gazetteer, records, ai, runs, manager);
+    registerIpc(treeSession, gazetteer, records, ai, runs, manager, packOffers);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded

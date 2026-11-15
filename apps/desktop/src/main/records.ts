@@ -66,9 +66,9 @@ import {
   listNames,
   listPersonEvents,
   listRecordMarks,
+  recordMarkStatesFor,
   PackSearchStopped,
   presumedLivingIds,
-  recordMarkStates,
   setSetting,
   type CitationInput,
   type ConnectorSource,
@@ -824,8 +824,13 @@ export class RecordSearchService {
 
   /** Why the tree takes no further mark; null when it does, or when the result has one already. */
   #full(tree: Tree, request: AttachRecordRequest): RecordSearchProblem | null {
-    return getRecordMark(tree, request.personId, markSourceOf(request.sourceId), request.key) ===
-      null && countRecordMarks(tree) >= RECORD_MARK_LIMIT
+    return getRecordMark(
+      tree,
+      request.personId,
+      markSourceOf(request.sourceId),
+      request.key,
+      true,
+    ) === null && countRecordMarks(tree) >= RECORD_MARK_LIMIT
       ? {
           kind: 'failed',
           message: `The tree holds ${RECORD_MARK_LIMIT.toLocaleString('en-US')} results that were kept or turned down, and takes no more. Remove some of them first.`,
@@ -1707,7 +1712,12 @@ export class RecordSearchService {
       }
     }
     // What the user kept for this person, and what they turned down for them.
-    const states = recordMarkStates(tree, request.personId, markSourceOf(sourceId));
+    const states = recordMarkStatesFor(
+      tree,
+      request.personId,
+      markSourceOf(sourceId),
+      page.items.map((record) => record.key),
+    );
     const marked = (state: 'kept' | 'declined') =>
       page.items.filter((record) => states.get(record.key) === state).map((record) => record.key);
     return {

@@ -71,6 +71,16 @@ export {
   parseOpenArchivesSearch,
 } from './sources/open-archives/search';
 export {
+  OA_CATALOGUE_URL,
+  OA_CODE_PATTERN,
+  OA_CSV_HOST,
+  OA_SITE_HOST,
+  oaDatasetPageUrl,
+  parseOaCatalogue,
+  parseOaDatasetPage,
+  type OaArchive,
+} from './sources/open-archives/catalogue';
+export {
   OA_BUILDER_VERSION,
   OA_PACK_KIND,
   oaLayout,

@@ -53,6 +53,8 @@ export interface PackMeta {
   builtAt: string;
   /** Rows of the source that were left out because they were not whole. */
   skipped?: number;
+  /** The source's own last-changed day (`YYYY-MM-DD`) when the pack was made, where the source gives one. */
+  sourceModified?: string;
 }
 
 /** A search was stopped by its `stop()` function. */

@@ -136,6 +136,7 @@ import {
 } from '../shared/ipc';
 import type { AiSessionService } from './aisession';
 import type { GazetteerService } from './gazetteer';
+import type { PackOffers } from './packoffers';
 import type { PackManager } from './packs';
 import { RecordRun } from './recordrun';
 import { markSourceOf, type RecordSearchService } from './records';
@@ -336,6 +337,9 @@ const routeId = z.string().regex(/^(?:[a-z0-9-]{1,40}|pack:[a-z0-9]{2,12})$/);
 /** The id of a data pack. */
 const packId = z.string().regex(PACK_ID_PATTERN);
 
+/** The code of an archive of Open Archives. */
+const archiveCode = z.string().regex(/^[a-z0-9]{2,10}$/);
+
 /** Which copy of a result is meant: left out for the one a search showed. */
 const recordCopy = z.enum(['search', 'inbox', 'proposal']).optional();
 
@@ -470,6 +474,8 @@ export function createHandlers(
   runs: RecordRun = new RecordRun(records),
   /** The data packs. Without them the page sees none, and cannot add or remove any. */
   packs: PackManager | null = null,
+  /** The archives of Open Archives that can be installed as packs. */
+  packOffers: PackOffers | null = null,
 ): ApiHandlers {
   // What was found for one tree is not kept for the next, however the tree is
   // left; a search for several people ends with its tree, and so does a
@@ -754,6 +760,21 @@ export function createHandlers(
     removePack: define<'removePack'>(z.tuple([packId]), (id) => {
       if (packs === null) throw new SessionError('data packs are not available');
       return packs.remove(id);
+    }),
+
+    listPackArchives: define<'listPackArchives'>(none, () => {
+      if (packOffers === null) throw new SessionError('data packs are not available');
+      return packOffers.archives();
+    }),
+
+    describePackArchive: define<'describePackArchive'>(z.tuple([archiveCode]), (code) => {
+      if (packOffers === null) throw new SessionError('data packs are not available');
+      return packOffers.describe(code);
+    }),
+
+    installPackArchive: define<'installPackArchive'>(z.tuple([archiveCode]), (code) => {
+      if (packOffers === null) throw new SessionError('data packs are not available');
+      return packOffers.install(code);
     }),
 
     attachRecord: define<'attachRecord'>(z.tuple([recordRef]), (request) => {

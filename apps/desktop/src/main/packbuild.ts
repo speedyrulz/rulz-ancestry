@@ -73,6 +73,8 @@ export interface BuildInput {
     licence: string;
     credit: string;
     downloadedAt: string;
+    /** The source's own last-changed day, where it gives one. */
+    sourceModified?: string;
   };
   /** The build stops when the free space of the drive falls below this. */
   reserveBytes: number;
@@ -262,6 +264,9 @@ export async function buildPack(input: BuildInput, hooks: BuildHooks): Promise<P
       })),
       downloadedAt: input.meta.downloadedAt,
       skipped,
+      ...(input.meta.sourceModified !== undefined
+        ? { sourceModified: input.meta.sourceModified }
+        : {}),
     });
   } catch (error) {
     writer.abandon();

@@ -8,7 +8,7 @@ import { TreeRuleError, type Tree } from './tree';
  * at later, or turned down because the record is not of this person. See
  * `schema/010-record-marks.ts` for what a row holds and why.
  *
- * Nothing here knows what a record is. Whoever keeps one hands in its JSON,
+ * Whoever keeps a record hands in its JSON,
  * and whoever reads it back checks it again: a tree's folder can come from
  * another PC, and what its file holds is not to be trusted as it stands.
  */
@@ -103,19 +103,94 @@ function markOf(row: Row): RecordMark {
   };
 }
 
+function formOf(sourceId: string, key: string): { part: string; pack: boolean } | null {
+  if (sourceId !== 'open-archives') return null;
+  const match = /^([^/]+:[^/]+)\/([^/]+)$/.exec(key);
+  if (!match) return null;
+  const suffix = match[2]!;
+  if (suffix.startsWith('_') && !/^_[A-Z][A-Z0-9_]{0,23}$/.test(suffix)) return null;
+  return { part: match[1]!, pack: suffix.startsWith('_') };
+}
+
+export function recordPartOf(sourceId: string, key: string): string {
+  return formOf(sourceId, key)?.part ?? key;
+}
+
+function exactMark(tree: Tree, personId: string, sourceId: string, key: string): RecordMark | null {
+  const row = sql(
+    tree.db,
+    `SELECT ${COLUMNS} FROM record_mark
+    WHERE person_id = ? AND source_id = ? AND record_key = ?`,
+  ).get(personId, sourceId, key) as Row | undefined;
+  return row === undefined ? null : markOf(row);
+}
+
+function otherMarks(tree: Tree, personId: string, sourceId: string, key: string): RecordMark[] {
+  const form = formOf(sourceId, key);
+  if (form === null) return [];
+  const rows = sql(
+    tree.db,
+    `SELECT ${COLUMNS} FROM record_mark
+    WHERE person_id = ? AND source_id = ? AND substr(record_key, 1, ?) = ?`,
+  ).all(personId, sourceId, form.part.length + 1, `${form.part}/`) as Row[];
+  return rows.map(markOf).filter((mark) => {
+    const other = formOf(sourceId, mark.key);
+    return other !== null && other.part === form.part && other.pack !== form.pack;
+  });
+}
+
 /** The mark of a result for a person; null when there is none. */
 export function getRecordMark(
   tree: Tree,
   personId: string,
   sourceId: string,
   key: string,
+  singleOnly = false,
 ): RecordMark | null {
-  const row = sql(
-    tree.db,
-    `SELECT ${COLUMNS} FROM record_mark
-     WHERE person_id = ? AND source_id = ? AND record_key = ?`,
-  ).get(personId, sourceId, key) as Row | undefined;
-  return row === undefined ? null : markOf(row);
+  const exact = exactMark(tree, personId, sourceId, key);
+  if (exact !== null) return exact;
+  const others = otherMarks(tree, personId, sourceId, key);
+  if (singleOnly && others.length !== 1) return null;
+  return others.find((mark) => mark.state === 'kept') ?? others[0] ?? null;
+}
+
+/**
+ * What each of the given results is marked as for a person, as
+ * `getRecordMark` would say it, from one read of the person's marks of the
+ * source. A result without a mark is left out of the map.
+ */
+export function recordMarkStatesFor(
+  tree: Tree,
+  personId: string,
+  sourceId: string,
+  keys: readonly string[],
+): Map<string, RecordMarkState> {
+  const found = new Map<string, RecordMarkState>();
+  if (keys.length === 0) return found;
+  const states = recordMarkStates(tree, personId, sourceId);
+  if (states.size === 0) return found;
+  // The marks by record, for the other form of a result.
+  const byPart = new Map<string, { pack: boolean; state: RecordMarkState }[]>();
+  for (const [markKey, state] of states) {
+    const form = formOf(sourceId, markKey);
+    if (form === null) continue;
+    const list = byPart.get(form.part) ?? [];
+    list.push({ pack: form.pack, state });
+    byPart.set(form.part, list);
+  }
+  for (const key of keys) {
+    const exact = states.get(key);
+    if (exact !== undefined) {
+      found.set(key, exact);
+      continue;
+    }
+    const form = formOf(sourceId, key);
+    if (form === null) continue;
+    const others = (byPart.get(form.part) ?? []).filter((mark) => mark.pack !== form.pack);
+    if (others.length === 0) continue;
+    found.set(key, others.some((mark) => mark.state === 'kept') ? 'kept' : 'declined');
+  }
+  return found;
 }
 
 /** How many marks the tree holds, of one kind or of both, for one person or for all. */
@@ -161,7 +236,7 @@ function setMark(
   };
   return tree.transact(label, () => {
     requirePerson(tree, personId);
-    const existing = getRecordMark(tree, personId, input.sourceId, input.key);
+    const existing = getRecordMark(tree, personId, input.sourceId, input.key, true);
     if (existing === null) {
       if (countRecordMarks(tree) >= RECORD_MARK_LIMIT) {
         throw new TreeRuleError(
@@ -181,10 +256,10 @@ function setMark(
       sql(
         tree.db,
         `UPDATE record_mark
-         SET state = @state, title = @title, url = @url, record_json = @recordJson,
+         SET record_key = @key, state = @state, title = @title, url = @url, record_json = @recordJson,
              ai_json = @aiJson, read_at = @readAt, marked_at = @markedAt
          WHERE id = @id`,
-      ).run({ id: existing.id, ...values });
+      ).run({ id: existing.id, key: input.key, ...values });
     }
     const mark = getRecordMark(tree, personId, input.sourceId, input.key);
     if (mark === null) throw new Error('a mark that was just written is gone');
@@ -220,15 +295,16 @@ export function removeRecordMark(
   sourceId: string,
   key: string,
 ): RecordMarkState | null {
-  const existing = getRecordMark(tree, personId, sourceId, key);
-  if (existing === null) return null;
-  return tree.transact(
-    existing.state === 'kept' ? 'Remove a kept record' : 'Allow a record again',
-    () => {
-      sql(tree.db, 'DELETE FROM record_mark WHERE id = ?').run(existing.id);
-      return existing.state;
-    },
-  );
+  // The mark of this very result; failing that, every mark of the same record
+  // found the other way, which is what the result was shown as.
+  const exact = exactMark(tree, personId, sourceId, key);
+  const marks = exact !== null ? [exact] : otherMarks(tree, personId, sourceId, key);
+  if (marks.length === 0) return null;
+  const state: RecordMarkState = marks.some((mark) => mark.state === 'kept') ? 'kept' : 'declined';
+  return tree.transact(state === 'kept' ? 'Remove a kept record' : 'Allow a record again', () => {
+    for (const mark of marks) sql(tree.db, 'DELETE FROM record_mark WHERE id = ?').run(mark.id);
+    return state;
+  });
 }
 
 export interface RecordMarkPage {
@@ -271,34 +347,35 @@ export function recordMarkStates(
 
 /**
  * Moves the marks of a person who is merged into another to the one who
- * stays. Where both have a mark of the same result, that of the person who
- * stays is the one that counts and the other goes with its person, with one
+ * stays. Where both have a mark of the very same result (the same key), that
+ * of the person who stays is the one that counts and the other goes with its person, with one
  * exception: a result that was kept for the one who goes and turned down for
  * the one who stays is kept. A record that was kept is not lost without a
  * word; it is in the inbox, where it can be turned down again.
  */
 export function moveRecordMarks(tree: Tree, fromId: string, toId: string): void {
-  sql(
-    tree.db,
-    `DELETE FROM record_mark
-     WHERE person_id = @toId AND state = 'declined'
-       AND EXISTS (
-         SELECT 1 FROM record_mark other
-         WHERE other.person_id = @fromId
-           AND other.state = 'kept'
-           AND other.source_id = record_mark.source_id
-           AND other.record_key = record_mark.record_key
-       )`,
-  ).run({ fromId, toId });
-  sql(
-    tree.db,
-    `UPDATE record_mark SET person_id = @toId
-     WHERE person_id = @fromId
-       AND NOT EXISTS (
-         SELECT 1 FROM record_mark other
-         WHERE other.person_id = @toId
-           AND other.source_id = record_mark.source_id
-           AND other.record_key = record_mark.record_key
-       )`,
-  ).run({ fromId, toId });
+  // Only the columns every version of the table has: a merge also runs while
+  // an older tree is brought up to date.
+  type Lite = { id: string; source_id: string; record_key: string; state: RecordMarkState };
+  const marksOf = (personId: string) =>
+    sql(
+      tree.db,
+      'SELECT id, source_id, record_key, state FROM record_mark WHERE person_id = ?',
+    ).all(personId) as Lite[];
+  // The marks of the person who stays as they were before this merge: what is
+  // moved here never counts as a conflict for what is moved after it.
+  const staying = marksOf(toId);
+  for (const incoming of marksOf(fromId)) {
+    // Only the very same result clashes (the table is unique per person, source
+    // and key). The same record found the other way is a different key: it
+    // moves beside it, and nothing of the staying person is lost.
+    const clash = staying.find(
+      (mark) => mark.source_id === incoming.source_id && mark.record_key === incoming.record_key,
+    );
+    if (clash !== undefined) {
+      if (incoming.state !== 'kept' || clash.state === 'kept') continue;
+      sql(tree.db, 'DELETE FROM record_mark WHERE id = ?').run(clash.id);
+    }
+    sql(tree.db, 'UPDATE record_mark SET person_id = ? WHERE id = ?').run(toId, incoming.id);
+  }
 }

@@ -175,6 +175,7 @@ export {
   keepRecord,
   listRecordMarks,
   recordMarkStates,
+  recordMarkStatesFor,
   removeRecordMark,
   type RecordMark,
   type RecordMarkInput,

@@ -952,3 +952,79 @@ describe('free space and quitting', () => {
     expect(listing()).toEqual([PACKS_MARKER]);
   }, 20_000);
 });
+
+describe('files that were listed with a size and an ETag', () => {
+  /** Serves a file with an ETag; the file is sent as it is. */
+  function serveTagged(name: string, body: Buffer, etag: string): void {
+    routes.set(`/${name}`, (req, res) => {
+      res.writeHead(200, { 'content-length': body.length, etag });
+      res.end(req.method === 'HEAD' ? undefined : body);
+    });
+  }
+  const packed = gzipSync(marriages);
+  const listed = (over: { bytes?: number; etag?: string | null } = {}): PackInstallSpec =>
+    spec({
+      files: [
+        {
+          url: url('tagged.csv.gz'),
+          bytes: over.bytes ?? packed.length,
+          etag: over.etag === undefined ? '"abc"' : over.etag,
+        },
+      ],
+      sourceModified: '2026-02-01',
+    });
+
+  it('installs when both match, and keeps the source day in the pack', async () => {
+    serveTagged('tagged.csv.gz', packed, '"abc"');
+    const { manager } = make();
+    manager.install(listed());
+    await manager.idle();
+    expect(manager.state().job).toMatchObject({ phase: 'done' });
+    const pack = manager.state().packs[0];
+    expect(pack?.sourceModified).toBe('2026-02-01');
+    expect(manager.metaOf('tst1')?.files[0]?.etag).toBe('"abc"');
+  });
+
+  it('has no source day for a pack that was made without one', async () => {
+    const { manager } = make();
+    manager.install(spec());
+    await manager.idle();
+    expect(manager.state().packs[0]?.sourceModified).toBeNull();
+  });
+
+  it('fails when the ETag of the download is not the one listed, and keeps the old pack', async () => {
+    const { manager } = make();
+    manager.install(spec());
+    await manager.idle();
+    const before = manager.state().packs[0];
+    serveTagged('tagged.csv.gz', packed, '"other"');
+    manager.install(listed());
+    await manager.idle();
+    expect(manager.state().job).toMatchObject({
+      phase: 'failed',
+      message: expect.stringContaining('look again'),
+    });
+    expect(manager.state().packs[0]).toEqual(before);
+    expect(listing()).toEqual([PACKS_MARKER, 'tst1.pack']);
+  });
+
+  it('fails when the length differs from the one listed, announced or not', async () => {
+    serveTagged('tagged.csv.gz', packed, '"abc"');
+    const { manager } = make();
+    manager.install(listed({ bytes: packed.length + 1 }));
+    await manager.idle();
+    expect(manager.state().job).toMatchObject({
+      phase: 'failed',
+      message: expect.stringContaining('look again'),
+    });
+    expect(listing()).toEqual([PACKS_MARKER]);
+  });
+
+  it('does not compare an ETag the listing did not have', async () => {
+    serveTagged('tagged.csv.gz', packed, '"whatever"');
+    const { manager } = make();
+    manager.install(listed({ etag: null }));
+    await manager.idle();
+    expect(manager.state().job).toMatchObject({ phase: 'done' });
+  });
+});

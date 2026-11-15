@@ -88,8 +88,20 @@ export interface PackInstallSpec {
   sourceUrl: string;
   licence: string;
   credit: string;
-  files: { url: string }[];
+  /** Each file may say the size and ETag it was listed with; a download that differs fails. */
+  files: { url: string; bytes?: number; etag?: string | null }[];
+  /** The source's own last-changed day, `YYYY-MM-DD`, kept in the pack. */
+  sourceModified?: string;
 }
+
+/** What a download is told to expect of a file, from the listing it was chosen from. */
+interface Expected {
+  bytes?: number;
+  etag?: string | null;
+}
+
+const CHANGED_MESSAGE = "The archive's files changed since they were listed; look again.";
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * The part of `fetch` this needs. `redirect: 'error'` makes an answer that
@@ -101,6 +113,8 @@ export type PackFetch = (
   init: {
     signal: AbortSignal;
     redirect: 'error';
+    /** No cookie is stored or sent. */
+    credentials: 'omit';
     method: 'GET' | 'HEAD';
     headers: Record<string, string>;
   },
@@ -419,6 +433,7 @@ export class PackManager {
       bytes,
       downloadedAt: '',
       state: 'unreadable',
+      sourceModified: null,
     };
     const opened = PackReader.open(path);
     if (!opened.ok) return unreadable;
@@ -443,7 +458,29 @@ export class PackManager {
       bytes,
       downloadedAt: dated ? meta.downloadedAt : '',
       state,
+      sourceModified:
+        typeof meta.sourceModified === 'string' && DAY.test(meta.sourceModified)
+          ? meta.sourceModified
+          : null,
     };
+  }
+
+  /** What the file of an installed pack says of itself, or null when it is not there or not a pack. */
+  metaOf(id: string): PackMeta | null {
+    if (typeof id !== 'string' || !PACK_ID_PATTERN.test(id)) return null;
+    const path = this.pathOf(id);
+    const stats = lstatOrNull(path);
+    if (stats === null || !stats.isFile() || stats.isSymbolicLink()) return null;
+    const opened = PackReader.open(path);
+    if (!opened.ok) return null;
+    const meta = opened.reader.meta;
+    opened.reader.close();
+    return meta;
+  }
+
+  /** What must stay free on the drive besides a pack's own size. */
+  get reserveBytes(): number {
+    return this.#reserve;
   }
 
   /** The packs in the folder, read from their own files. A file is read again only when it changed. */
@@ -663,6 +700,7 @@ export class PackManager {
         const response = await this.#fetch(file.url, {
           signal,
           redirect: 'error',
+          credentials: 'omit',
           method: 'HEAD',
           headers: { 'user-agent': this.#userAgent },
         });
@@ -711,9 +749,7 @@ export class PackManager {
       job.phase = 'downloading';
       const files: Downloaded[] = [];
       for (const [index, file] of spec.files.entries()) {
-        files.push(
-          await this.#download(job, kind.maxFileBytes, file.url, join(work, `file${index}`)),
-        );
+        files.push(await this.#download(job, kind.maxFileBytes, file, join(work, `file${index}`)));
       }
       const downloadedAt = new Date(this.#now()).toISOString().slice(0, 10);
       signal.throwIfAborted();
@@ -736,6 +772,9 @@ export class PackManager {
           licence: spec.licence,
           credit: spec.credit,
           downloadedAt,
+          ...(spec.sourceModified !== undefined && DAY.test(spec.sourceModified)
+            ? { sourceModified: spec.sourceModified }
+            : {}),
         },
         reserveBytes: this.#reserve,
       };
@@ -836,7 +875,13 @@ export class PackManager {
     }
   }
 
-  async #download(job: Job, maxBytes: number, url: string, path: string): Promise<Downloaded> {
+  async #download(
+    job: Job,
+    maxBytes: number,
+    expected: { url: string } & Expected,
+    path: string,
+  ): Promise<Downloaded> {
+    const url = expected.url;
     const user = job.abort.signal;
     // Given up as well when nothing arrives for a long time.
     const stall = new AbortController();
@@ -854,6 +899,7 @@ export class PackManager {
       const response = await this.#fetch(url, {
         signal,
         redirect: 'error',
+        credentials: 'omit',
         method: 'GET',
         headers: { 'user-agent': this.#userAgent },
       });
@@ -869,9 +915,24 @@ export class PackManager {
         if (response.url !== '' && new URL(response.url).host !== new URL(url).host) {
           throw new PackError(`${name} was sent from somewhere else than where it was asked for.`);
         }
+        // A file that is not the one that was listed (by its ETag) is refused
+        // before anything is read of it.
+        if (
+          typeof expected.etag === 'string' &&
+          response.headers.get('etag')?.trim() !== expected.etag
+        ) {
+          throw new PackError(CHANGED_MESSAGE);
+        }
         const packed = (response.headers.get('content-encoding') ?? 'identity') !== 'identity';
         const length = response.headers.get('content-length')?.trim() ?? '';
         if (!packed && /^\d{1,15}$/.test(length)) announced = Number(length);
+        if (
+          expected.bytes !== undefined &&
+          Number.isFinite(announced) &&
+          announced !== expected.bytes
+        ) {
+          throw new PackError(CHANGED_MESSAGE);
+        }
         if (announced > maxBytes) throw new PackError(`${name} is larger than it should be.`);
         reader = response.body?.getReader();
         if (!reader) throw new PackError(`The source sent nothing for ${name}.`);
@@ -882,6 +943,9 @@ export class PackManager {
           if (done) break;
           received += value.length;
           if (received > maxBytes) throw new PackError(`${name} is larger than it should be.`);
+          if (expected.bytes !== undefined && received > expected.bytes) {
+            throw new PackError(CHANGED_MESSAGE);
+          }
           hash.update(value);
           for (let written = 0; written < value.length;) {
             written += writeSync(fd, value, written, value.length - written);
@@ -907,6 +971,9 @@ export class PackManager {
         throw new PackError(`The download of ${name} ended before it was complete.`);
       }
       if (received === 0) throw new PackError(`The source sent nothing for ${name}.`);
+      if (expected.bytes !== undefined && received !== expected.bytes) {
+        throw new PackError(CHANGED_MESSAGE);
+      }
       return {
         path,
         url,

@@ -1,0 +1,55 @@
+[
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_tst1",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/name": [
+      { "@language": "nl", "@value": "Testdorp Archief" },
+      { "@language": "en", "@value": "Test Town Archive" }
+    ],
+    "https://schema.org/license": [{ "@value": "https://creativecommons.org/publicdomain/zero/1.0/" }],
+    "https://schema.org/dateModified": [{ "@value": "2026-02-01" }],
+    "https://schema.org/temporalCoverage": [{ "@value": "1798/1909" }],
+    "https://schema.org/description": [
+      { "@language": "en", "@value": "Genealogical metadata from 6,379 records of the Test Town Archive, with 8,451 historical person observations." },
+      { "@language": "nl", "@value": "Genealogische gegevens uit 6.379 akten." }
+    ],
+    "https://schema.org/mainEntityOfPage": [{ "@id": "https://www.openarchieven.nl/datasets/tst1" }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_tst2",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/name": [{ "@language": "nl", "@value": "Voorbeeldstad  Archief\u0007" }],
+    "https://schema.org/license": [{ "@value": "http://creativecommons.org/publicdomain/zero/1.0" }],
+    "https://schema.org/dateModified": [{ "@value": "yesterday" }],
+    "https://schema.org/description": [{ "@language": "en", "@value": "Metadata about 12 persons." }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_tst3",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/name": [{ "@language": "en", "@value": "Share Alike Archive" }],
+    "https://schema.org/license": [{ "@value": "https://creativecommons.org/licenses/by-sa/4.0/" }],
+    "https://schema.org/dateModified": [{ "@value": "2026-01-01" }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_Bad_Code",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/name": [{ "@language": "en", "@value": "Bad Code Archive" }],
+    "https://schema.org/license": [{ "@value": "https://creativecommons.org/publicdomain/zero/1.0/" }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_tst4",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/license": [{ "@value": "https://creativecommons.org/publicdomain/zero/1.0/" }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/dataset_tst5",
+    "@type": ["https://schema.org/Dataset"],
+    "https://schema.org/name": [{ "@language": "en", "@value": "Anywhere Archive" }],
+    "https://schema.org/license": [{ "@value": "https://example.com/zero/" }]
+  },
+  {
+    "@id": "https://www.openarchieven.nl/id/organisation_tst1",
+    "@type": ["https://schema.org/Organization"],
+    "https://schema.org/name": [{ "@language": "en", "@value": "Not A Dataset" }]
+  }
+]

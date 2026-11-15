@@ -15,6 +15,8 @@ import {
   keepRecord,
   listRecordMarks,
   recordMarkStates,
+  recordMarkStatesFor,
+  recordPartOf,
   removeRecordMark,
   type RecordMarkInput,
 } from './recordmarks';
@@ -31,6 +33,158 @@ import {
 import { TREE_APPLICATION_ID, Tree, TreeRuleError, createTree, openExistingTree } from './tree';
 
 cleanUpAfterEach();
+
+describe('Open Archives forms of a record', () => {
+  const oa = (key: string, extra: Partial<RecordMarkInput> = {}) =>
+    result(key, { sourceId: 'open-archives', ...extra });
+  const live = 'zz:123/person1';
+  const pack = 'zz:123/_BRIDE';
+
+  it('recognizes only valid forms and carries marks in either direction for one person', () => {
+    const { tree, ada, mary } = start();
+    expect(recordPartOf('open-archives', live)).toBe('zz:123');
+    expect(recordPartOf('open-archives', 'zz:123/_bad')).toBe('zz:123/_bad');
+    expect(recordPartOf('example-site', live)).toBe(live);
+    keepRecord(tree, ada, oa(live));
+    expect(getRecordMark(tree, ada, 'open-archives', pack)?.state).toBe('kept');
+    expect(getRecordMark(tree, mary, 'open-archives', pack)).toBeNull();
+    declineRecord(tree, mary, oa(pack));
+    expect(getRecordMark(tree, mary, 'open-archives', live)?.state).toBe('declined');
+    expect(getRecordMark(tree, mary, 'example-site', live)).toBeNull();
+  });
+
+  it('rewrites a single other form in one undoable step and unmarks across forms', () => {
+    const { tree, ada } = start();
+    const first = keepRecord(tree, ada, oa(live));
+    const before = snapshot(tree);
+    const next = declineRecord(tree, ada, oa(pack, { title: 'New title', readAt: 42 }));
+    expect(next).toMatchObject({
+      id: first.id,
+      key: pack,
+      state: 'declined',
+      title: 'New title',
+      readAt: 42,
+      recordJson: null,
+    });
+    expect(countRecordMarks(tree)).toBe(1);
+    tree.undo();
+    expect(snapshot(tree)).toBe(before);
+    expect(removeRecordMark(tree, ada, 'open-archives', pack)).toBe('kept');
+    expect(countRecordMarks(tree)).toBe(0);
+  });
+
+  it('allows a single other-form rewrite at the mark limit', () => {
+    const { tree, ada } = start();
+    keepRecord(tree, ada, oa(live));
+    tree.db.exec("UPDATE change_state SET mode = 'replay'");
+    const insert = tree.db
+      .prepare(`INSERT INTO record_mark (id, person_id, source_id, record_key, state, read_at, marked_at)
+      VALUES (?, ?, 'example-site', ?, 'declined', 0, 0)`);
+    for (let index = 1; index < RECORD_MARK_LIMIT; index += 1)
+      insert.run(`fill-${index}`, ada, `fill-${index}`);
+    tree.db.exec("UPDATE change_state SET mode = 'idle'");
+    expect(declineRecord(tree, ada, oa(pack)).key).toBe(pack);
+    expect(countRecordMarks(tree)).toBe(RECORD_MARK_LIMIT);
+  });
+
+  it('prefers exact marks, otherwise kept wins, and multiple other marks are not rewritten', () => {
+    const { tree, ada } = start();
+    declineRecord(tree, ada, oa(live));
+    keepRecord(tree, ada, oa('zz:123/person2'));
+    expect(getRecordMark(tree, ada, 'open-archives', pack)?.state).toBe('kept');
+    declineRecord(tree, ada, oa(pack));
+    expect(countRecordMarks(tree)).toBe(3);
+    expect(getRecordMark(tree, ada, 'open-archives', pack)?.state).toBe('declined');
+    expect(getRecordMark(tree, ada, 'open-archives', live)?.state).toBe('declined');
+  });
+
+  it('merges across forms without losing a mark, and restores the original marks on undo', () => {
+    const { tree, ada, mary } = start();
+    declineRecord(tree, ada, oa(pack));
+    keepRecord(tree, mary, oa(live));
+    const before = snapshot(tree);
+    mergePersons(tree, ada, mary);
+    // Different keys do not clash: the marks sit side by side, each exact for its own key.
+    expect(countRecordMarks(tree)).toBe(2);
+    expect(getRecordMark(tree, ada, 'open-archives', pack)?.state).toBe('declined');
+    expect(getRecordMark(tree, ada, 'open-archives', live)?.state).toBe('kept');
+    tree.undo();
+    expect(snapshot(tree)).toBe(before);
+  });
+
+  it('keeps a live and a pack mark of one record that the merged person holds', () => {
+    const { tree, ada, mary } = start();
+    keepRecord(tree, mary, oa('zz:123/person2'));
+    declineRecord(tree, mary, oa(live));
+    // With two live marks the pack mark is written beside them, not over one.
+    keepRecord(tree, mary, oa(pack));
+    expect(countRecordMarks(tree)).toBe(3);
+    mergePersons(tree, ada, mary);
+    expect(countRecordMarks(tree)).toBe(3);
+    expect([...recordMarkStates(tree, ada, 'open-archives')].sort()).toEqual([
+      [pack, 'kept'],
+      [live, 'declined'],
+      ['zz:123/person2', 'kept'],
+    ]);
+  });
+
+  it('keeps several live turn-downs beside an incoming kept pack mark', () => {
+    const { tree, ada, mary } = start();
+    declineRecord(tree, ada, oa('zz:123/person1'));
+    declineRecord(tree, ada, oa('zz:123/person2'));
+    keepRecord(tree, mary, oa(pack));
+    mergePersons(tree, ada, mary);
+    expect(countRecordMarks(tree)).toBe(3);
+    expect(getRecordMark(tree, ada, 'open-archives', pack)?.state).toBe('kept');
+    expect(getRecordMark(tree, ada, 'open-archives', 'zz:123/person1')?.state).toBe('declined');
+    expect(getRecordMark(tree, ada, 'open-archives', 'zz:123/person2')?.state).toBe('declined');
+  });
+
+  it('answers a batch of keys as getRecordMark does', () => {
+    const { tree, ada } = start();
+    declineRecord(tree, ada, oa('zz:1/person1'));
+    keepRecord(tree, ada, oa('zz:1/person2'));
+    keepRecord(tree, ada, oa('zz:2/person1'));
+    declineRecord(tree, ada, oa('zz:2/_BRIDE'));
+    declineRecord(tree, ada, oa('zz:3/person1'));
+    keepRecord(tree, ada, result('plain'));
+    const keys = [
+      'zz:1/_BRIDE', // other form, kept wins
+      'zz:2/person1', // exact first
+      'zz:2/_BRIDE',
+      'zz:3/_GROOM', // other form, declined
+      'zz:4/_BRIDE', // nothing
+      'zz:1/person9', // same form, not the other one
+      'plain',
+    ];
+    const batch = recordMarkStatesFor(tree, ada, 'open-archives', keys);
+    for (const key of keys) {
+      expect(batch.get(key) ?? null).toBe(
+        getRecordMark(tree, ada, 'open-archives', key)?.state ?? null,
+      );
+    }
+    expect(batch.get('zz:1/_BRIDE')).toBe('kept');
+    expect(batch.get('zz:3/_GROOM')).toBe('declined');
+    // Another source: exact key only, and a person with no marks has none.
+    const other = recordMarkStatesFor(tree, ada, 'example-site', ['plain', 'zz:1/_BRIDE']);
+    expect([...other]).toEqual([['plain', 'kept']]);
+    expect(recordMarkStatesFor(tree, start().ada, 'open-archives', keys).size).toBe(0);
+  });
+
+  it('unmarks a pack result shown as marked by two live marks, in one undoable step', () => {
+    const { tree, ada } = start();
+    declineRecord(tree, ada, oa('zz:123/person1'));
+    keepRecord(tree, ada, oa('zz:123/person2'));
+    const before = snapshot(tree);
+    const steps = undoDepth(tree);
+    expect(removeRecordMark(tree, ada, 'open-archives', pack)).toBe('kept');
+    expect(countRecordMarks(tree)).toBe(0);
+    expect(undoDepth(tree)).toBe(steps + 1);
+    tree.undo();
+    expect(snapshot(tree)).toBe(before);
+    expect(countRecordMarks(tree)).toBe(2);
+  });
+});
 
 /** A result of a search of a site that does not exist, as whoever keeps it hands it in. */
 const result = (key: string, extra: Partial<RecordMarkInput> = {}): RecordMarkInput => ({

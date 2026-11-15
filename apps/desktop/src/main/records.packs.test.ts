@@ -2,7 +2,15 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getRecordMark, listCitations, listRecordMarks, openAppDatabase, type Db } from '@rulz/db';
+import {
+  declineRecord,
+  getRecordMark,
+  keepRecord,
+  listCitations,
+  listRecordMarks,
+  openAppDatabase,
+  type Db,
+} from '@rulz/db';
 import type {
   AttachRecordResult,
   CompareRecordResult,
@@ -327,6 +335,57 @@ describe('keeping, declining and citing a result of a pack', () => {
     if (record === undefined) throw new Error('no result');
     return { thomas, record };
   }
+
+  it('shows live marks on pack results and pack turn-downs on live and run results', async () => {
+    const { thomas, record } = await firstResult();
+    const other = await addPerson('Mira', 'Lark', { birthDate: '1860', deathDate: '1930' });
+    const part = record.key.slice(0, record.key.lastIndexOf('/'));
+    const liveKey = `${part}/P1`;
+    const mark = {
+      sourceId: 'open-archives',
+      key: liveKey,
+      title: '',
+      url: '',
+      readAt: 1,
+      markedAt: 2,
+    };
+    keepRecord(session.tree, thomas, mark);
+    expect(found(await searchPack(thomas, BAKER)).marks.kept).toContain(record.key);
+    expect(found(await searchPack(other, BAKER)).marks.kept).not.toContain(record.key);
+    declineRecord(session.tree, thomas, { ...mark, key: record.key });
+    const [archive, identifier] = part.split(':');
+    liveAnswer = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            response: {
+              number_found: 1,
+              docs: [
+                {
+                  pid: 'P1',
+                  identifier,
+                  archive_code: archive,
+                  personname: 'Tobias Baker',
+                  relationtype: 'Groom',
+                  eventtype: 'Marriage',
+                  eventdate: { year: 1900 },
+                },
+              ],
+            },
+          }),
+        ),
+      );
+    records.agree();
+    const request = { personId: thomas, sourceId: 'open-archives', query: BAKER };
+    const live = found(await call<RecordSearchResult>('searchRecords', { ...request, offset: 0 }));
+    expect(live.marks.declined).toContain(liveKey);
+    const query = records.setup(session.tree, thomas)?.query;
+    if (query === undefined) throw new Error('no search setup');
+    const run = found(
+      await records.searchOnce(session.tree, { ...request, query }, new AbortController().signal),
+    );
+    expect(run.marks.declined).toContain(liveKey);
+  });
 
   it('maps a route to the source the tree keeps it under', () => {
     expect(markSourceOf('pack:tst1')).toBe('open-archives');
