@@ -19,9 +19,9 @@ import {
 import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
-import { PROFILE_ENV } from '../bridge/protocol';
 import { AiBridgeServer } from './aibridge';
 import { AiSessionService, type AiConnector } from './aisession';
+import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
 import { RecordRun } from './recordrun';
@@ -130,24 +130,7 @@ function findConnector(): AiConnector | null {
   if (!existsSync(file) || !existsSync(bridge)) return null;
   const profile = app.getPath('userData');
   const usual = join(app.getPath('appData'), USUAL_PROFILE);
-  // A path in double quotes, as PowerShell, cmd and a POSIX shell all take it.
-  // One that holds a character a shell would read is not offered at all, and
-  // neither is one with two backslashes in a row or one at its end, which a
-  // POSIX shell reads as one backslash or as a quote that does not close.
-  const quoted = (path: string): string | null =>
-    /^[^"$`%!\r\n]+$/.test(path) && !path.includes('\\\\') && !path.endsWith('\\')
-      ? `"${path}"`
-      : null;
-  const bridgeArg = quoted(bridge);
-  const profileArg = quoted(`${PROFILE_ENV}=${profile}`);
-  const fileFits = profile.toLowerCase() === usual.toLowerCase();
-  if (bridgeArg === null || profileArg === null) return { file, fileFits, command: '' };
-  const env = fileFits ? '' : `--env ${profileArg} `;
-  return {
-    file,
-    fileFits,
-    command: `claude mcp add --scope user --transport stdio ${env}rulz-ancestry "--" node ${bridgeArg}`,
-  };
+  return { file, ...connectorCommandOf({ bridge, profile, usual }) };
 }
 
 function createMainWindow(): BrowserWindow {

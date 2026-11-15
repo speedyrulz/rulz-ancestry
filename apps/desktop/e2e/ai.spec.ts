@@ -200,7 +200,7 @@ test('the AI assistant is off until its notice is agreed to; a session is listed
   const command = (await connect.getByTestId('ai-connector-command').textContent()) ?? '';
   // This run keeps its data in a folder of its own, so the command says where.
   expect(command).toMatch(
-    /^claude mcp add --scope user --transport stdio --env "RULZ_ANCESTRY_PROFILE=[^"]+" rulz-ancestry "--" node "[^"]+bridge\.cjs"$/,
+    /^claude mcp add rulz-ancestry --scope user --transport stdio --env "RULZ_ANCESTRY_PROFILE=[^"]+" "--" node "[^"]+bridge\.cjs"$/,
   );
   expect(command).toContain(`RULZ_ANCESTRY_PROFILE=${userDataDir}"`);
   await connect.getByTestId('ai-connector-copy').click();
