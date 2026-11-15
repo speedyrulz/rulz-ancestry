@@ -245,13 +245,14 @@ export interface SourceConnector {
 
 ### Tier B: open bulk datasets, installed as optional data packs
 
-- **NARA 1950 census** (verified): public S3 bucket `nara-1950-census`, no AWS account needed. Over 165 TB in full, so a pack holds only the name index and images load on demand. The index was machine-read from handwriting and has errors.
+- **NARA 1950 census** (verified): public S3 bucket `nara-1950-census`, no AWS account needed. Over 165 TB in full. It has no name index (checked 2026-11-15): only page images, maps and a list of enumeration districts per state. NARA's name search is on its website only. A pack holds the districts, and images load on demand (part 5.3).
 - **NARA 1940 census** (verified): bucket `nara-1940-census`, about 15 TB. No name index found; browse by enumeration district.
 - **Open Archives dumps** (verified): CSV/XML per archive; some archives exclude their data.
 - **To confirm:** Reclaim the Records indexes, GeoNames gazetteer, VA gravesite data, Commonwealth War Graves data.
 
 Each pack is its own SQLite file with FTS5 under `%LOCALAPPDATA%\RulZAncestry\packs\`,
-attached to the main database, so a pack can be removed without touching the tree.
+built on the user's PC and opened on its own read-only connection, never attached,
+so a pack can be removed without touching the tree (see "Phase 5 breakdown").
 
 ### Tier C: link-only
 
@@ -579,7 +580,7 @@ Durations are rough estimates for one developer working with AI assistance.
 | 3. Federated search         | HTTP client; WikiTree, Wikidata, Library of Congress, Open Archives, NARA, Internet Archive; Tier C links and clip form                                                                                                   | A search returns grouped results and one click attaches a record as a citation                                                                                                                                                          | 3–4 weeks |
 | 4. Hints                    | Matching engine, job scheduler, inbox, compare view                                                                                                                                                                       | Hints appear for an imported tree and precision is measured on a labelled test set                                                                                                                                                      | 2–3 weeks |
 | 4b. AI assistant (optional) | Shared tool set; connector for Claude Desktop and Claude Code (route A); AI hints with quoted reasons; consent, masking of living people, activity log; then the API-key route (C). Route B only if Anthropic confirms it | From Claude Desktop, asking for records for one person puts proposals in the hints inbox, each with reasons quoted from the record, and precision is measured on the Phase 4 test set                                                   | 2–3 weeks |
-| 5. Packs and more sources   | Pack manager, 1950 census index, Open Archives dumps; Geni, regional newspapers                                                                                                                                           | Packs install, search offline, and uninstall cleanly                                                                                                                                                                                    | 2–3 weeks |
+| 5. Packs and more sources   | Pack manager, 1950 census areas, Open Archives dumps; Geni, regional newspapers                                                                                                                                           | Packs install, search offline, and uninstall cleanly                                                                                                                                                                                    | 2–3 weeks |
 | 6. Release                  | Reports, accessibility, app icon, auto-update, MSIX, Store submission, user docs                                                                                                                                          | Installable from the Store and GitHub Releases                                                                                                                                                                                          | 2 weeks   |
 | 7. DNA and extras           | DNA tools; transcription of record images, locally or through the AI assistant                                                                                                                                            | Open-ended                                                                                                                                                                                                                              | —         |
 
@@ -1307,6 +1308,46 @@ Not done:
 - **A real call.** With the owner's key: Haiku 5.5 and a cap of $0.25. It is to show that Anthropic takes the key as SDK 1.3.0 sends it (`Authorization: Bearer`), that `response.model` is the model id as asked (otherwise every run would end after one response), the real split of tokens and cache, and the estimate beside the Console's figure.
 - **Whether 8,000 tokens a response are enough** at high effort, where thinking counts in them; only real runs show how much a turn thinks.
 - **Prices change.** The table is dated and must be kept by hand.
+
+### Phase 5 breakdown
+
+Planned on 2026-11-15 from two design views (Codex and Grok, each without the other's), a check of facts on both datasets by a Claude Sonnet agent, a read of the plan by the principal engineer (Claude Fable 5.2), and a spike on two small real Open Archives files (part 5.0).
+
+**What the facts changed.** The NARA 1950 census bucket holds no name index: only page images, maps and `metadata/json/<state>.json` (60 files, 544 MB), which list enumeration districts and image paths, no names. NARA's name search is only on its website, as a first draft read by machine, with no API or bulk file. The Open Archives dumps are real: CSV per archive and record set (`https://oa-export.s3.nl-ams.scw.cloud/csv/<archive>.<set>.csv.gz`), about 9-10 GB compressed in all, every licence statement CC0, archives that forbid republication left out.
+
+**Decided by the project owner (2026-11-15):**
+
+1. **1950 census:** a pack of the census areas (state, county or city, enumeration district and its description) from the metadata files, to browse by place and open page images on demand, and a Tier C link that opens NARA's own name search for the selected person.
+2. **Open Archives:** the user picks archives one by one, each its own pack, with the download size and an estimate of the pack's size shown first; the live search stays; a record found both ways counts as one.
+3. **The list of an archive's CSV files** is read from the archive's own page `https://www.openarchieven.nl/datasets/<code>`, since the machine-readable catalogue lists only the XML and N-Triples dumps (about three times larger). Open Archives is to be asked to list CSV in its catalogue.
+
+**Design** (this replaces "attached to the main database" in section 4):
+
+- **Built on the user's PC** from the source's own files, as the gazetteer is. The project hosts, signs and redistributes nothing.
+- **Each pack is its own SQLite file,** never attached. It is built with the journal off in a build worker and opened read-only (`readonly`, `fileMustExist`, never `openDatabase()`) in a search worker, so a large query blocks neither the tree, `app.db` nor the window, and a pack lives apart from any tree. Packs live under a packs root that is a setting, by default `%LOCALAPPDATA%\RulZAncestry\packs` (not the roaming profile), with a marker file.
+- **A pack describes itself:** `application_id`, `user_version`, a `builder_version`, and a `meta` table (pack id, kind, source and file URLs, licence, credit line, the source's date and ETag, rows, download date, SHA-256 of the downloaded bytes). Its `meta` is the truth about it, not `app.db`.
+- **Raw columns, shaped when read.** A pack keeps the source's columns as its header gives them and an FTS5 index (`unicode61 remove_diacritics 2`, as the tree's) over names and places; records are turned into `EventRecord`s when read, so a fix to the mapping needs no new download. The living-person rule is applied when read, since it depends on the year.
+- **Stage, check, switch.** Free space is checked before a download and again during a build, with a fixed reserve so the tree can still write. A download resumes only when its ETag and length still match. A pack is built as `<id>.new`, checked (`quick_check`, rows) and swapped in only after the search worker confirms it closed the old one; the old one stays usable until then. At start the manager clears `.new`, `.old` and work folders, with the gazetteer's recovery of `.old`. Pack ids are checked against `[a-z0-9]{2,12}` and resolved under the packs root, and the manager deletes only names it made.
+- **Every query is bounded.** better-sqlite3 has no interrupt and a worker cannot be stopped inside a query, so every pack query has a limit and checks a stop flag per row; removing a pack never waits on a query.
+- **Identity and origin are two fields.** A record from a pack carries the connector id of its source (`open-archives`) and an origin (`pack:<id>`, or `live`), which decides the search under way, the run and the AI. The run (`RECORD_RUN_SOURCE_IDS`) and the AI (`mayShareWithAi`) see packs only by their own decision, per pack.
+- **One record, found both ways.** The live connector keys a person in a record `archive:identifier/pid`; the dump has no such person number (part 5.0). A pack keys a row `archive:identifier/<role slot>` and builds the link as the live connector does (`https://www.openarchieven.nl/<archive>:<identifier>/en`), never from the dump's own link. A pack result and a live result or mark count as one when they are for the same person of the tree and the same `archive:identifier`. Marks are already kept per person of the tree, so turning a record down for one ancestor does not hide it for another.
+- **A citation keeps its own text,** an https link on the source's site and the pack's download date, so it reads after the pack is removed. Every pack kind's manifest stays in the app, so marks from a removed pack still name their source.
+
+| Part | Scope                                                                                                                                                                                                                                               | Status               |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| 5.0  | Spike on two small real Open Archives files: identity, format, size, a worker under Electron, stopping a query                                                                                                                                      | **Done 2026-11-15**  |
+| 5.1  | The pack manager: format, the two workers, install, cancel, update and remove, a "Packs" window with sizes, free space and progress; packs as sources of the search service with no network; tested with a fixture in the real Open Archives format | To do                |
+| 5.2  | Open Archives packs: the archive's CSV sets from its page, CC0 only, build, offline search beside the live one with one record counted once                                                                                                         | To do                |
+| 5.3  | The 1950 census areas pack: browse by state, county and district, page images opened on demand and cited at an address chosen on purpose; the manifest corrected (no name index, an https site); the Tier C link to NARA's name search              | To do                |
+| 5.4  | Live sources Geni and regional newspapers                                                                                                                                                                                                           | Planned when reached |
+
+**Part 5.0 findings** (`ton.bsh`, 112 KB, marriages; `dom.bsg`, 47 KB, births; both CC0; 13 calls to the live API):
+
+- `SOURCE_RECORD_GUID` is the API's `identifier` in braces; `SOURCEREFERENCE_INSTITUTIONCODE` is its archive code. Every record compared matched.
+- The CSV has one row per record, not per person: 27 columns of event and source, then role slots of 17 columns each, which differ by record set (`GROOM`, `BRIDE` and their parents for marriages; `PR`, `PR_FTHR`, `PR_MTHR` for births; `WITNESS_1..5`, `OTHER`). `|`, no quoting, UTF-8, LF; day, month and year in separate columns; terms in Dutch only. In the births file the child's name was blank in all but 2 of 707 rows.
+- The API's person numbers are not in the CSV and differ in form between archives, so they cannot be rebuilt.
+- A pack is about 735 bytes a record, 1.4 times the unpacked CSV; built at 15,000-19,000 records a second; an FTS5 name query with a limit of 50 takes 0.1-2 ms on 183,000 records. The largest archives (about 400 MB compressed) would make packs of very roughly 20-30 GB (extrapolated).
+- better-sqlite3 13.0.3 loads and queries in a `worker_threads` worker in an Electron 45 main process (the packaged app is not tried). It has no interrupt, and stopping the worker waits for the query; a function that throws on a shared flag stops a query that calls it per row at once. After a stopped worker the file renames and deletes at once.
 
 ### Phase 3 breakdown
 
