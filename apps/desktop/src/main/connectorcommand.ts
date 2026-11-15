@@ -29,23 +29,30 @@ export interface ConnectorCommandInput {
   bridge: string;
   /** The folder this copy of the app keeps its data in. */
   profile: string;
-  /** The folder the bridge takes the app's data to be in when nothing tells it otherwise. */
-  usual: string;
+  /**
+   * The folders the bridge looks in when nothing tells it otherwise, in its
+   * order: that of an installed copy first.
+   */
+  usual: readonly string[];
 }
 
 export interface ConnectorCommand {
   /** The command; empty where a path holds what cannot be put in quotes safely. */
   command: string;
-  /** Whether this copy keeps its data in the usual folder, where the connector file looks. */
+  /** Whether this copy keeps its data in a folder the connector file looks in by itself. */
   fileFits: boolean;
 }
 
 export function connectorCommandOf(input: ConnectorCommandInput): ConnectorCommand {
-  const fileFits = input.profile.toLowerCase() === input.usual.toLowerCase();
+  const profile = input.profile.toLowerCase();
+  const fileFits = input.usual.some((folder) => folder.toLowerCase() === profile);
+  // Only the first folder needs no naming: a bridge that is told nothing
+  // would take a session of an installed copy before one of this copy.
+  const named = input.usual[0]?.toLowerCase() !== profile;
   const bridgeArg = quoted(input.bridge);
   const profileArg = quoted(`${PROFILE_ENV}=${input.profile}`);
   if (bridgeArg === null || profileArg === null) return { command: '', fileFits };
-  const env = fileFits ? '' : ` --env ${profileArg}`;
+  const env = named ? ` --env ${profileArg}` : '';
   return {
     command: `claude mcp add rulz-ancestry --scope user --transport stdio${env} "--" node ${bridgeArg}`,
     fileFits,

@@ -21,6 +21,7 @@ import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from 
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { AiBridgeServer } from './aibridge';
 import { AiSessionService, type AiConnector } from './aisession';
+import { DEV_PROFILE, USUAL_PROFILES } from '../bridge/profile';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
@@ -105,9 +106,6 @@ const BACKGROUND_SWITCH = 'background-window';
 /** Far enough to the left and above to be on no screen. */
 const OFF_SCREEN = -20_000;
 
-/** The folder of the app's data as a bridge takes it to be when nothing tells it otherwise. */
-const USUAL_PROFILE = 'RulZ Ancestry';
-
 /**
  * What this copy of the app hands out so that an AI app can be connected:
  * the connector file for Claude Desktop, and the command that adds the same
@@ -116,9 +114,11 @@ const USUAL_PROFILE = 'RulZ Ancestry';
  * its archive, since another program has to read them. Null when they are
  * not there, as in a copy that was started without being built whole.
  *
- * The bridge looks for the app's data in the usual folder. Where this copy
- * keeps its data elsewhere (a copy that is not packaged, or one started with
- * a folder of its own), the command says where.
+ * Told nothing, the bridge looks for the app's data where an installed copy
+ * keeps it, and then where a copy started from the source code does
+ * (`bridge/profile.ts`). Where this copy keeps its data in neither (one
+ * started with a folder of its own), the window says so; and the command
+ * names every folder but that of an installed copy.
  */
 function findConnector(): AiConnector | null {
   const dir = join(app.getAppPath(), 'out', 'connector').replace(
@@ -129,7 +129,7 @@ function findConnector(): AiConnector | null {
   const bridge = join(dir, 'bridge.cjs');
   if (!existsSync(file) || !existsSync(bridge)) return null;
   const profile = app.getPath('userData');
-  const usual = join(app.getPath('appData'), USUAL_PROFILE);
+  const usual = USUAL_PROFILES.map((name) => join(app.getPath('appData'), name));
   return { file, profile, ...connectorCommandOf({ bridge, profile, usual }) };
 }
 
@@ -365,7 +365,8 @@ function registerIpc(
 // unless a profile folder was given explicitly (the end-to-end tests do that).
 // This must happen before the single-instance lock, which is tied to the folder.
 if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
-  app.setPath('userData', join(app.getPath('appData'), 'RulZ Ancestry (dev)'));
+  // The bridge knows this folder by the same name.
+  app.setPath('userData', join(app.getPath('appData'), DEV_PROFILE));
 }
 
 // Every renderer is sandboxed, including any created by mistake later.

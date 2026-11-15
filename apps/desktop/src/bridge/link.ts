@@ -91,8 +91,12 @@ const FILE_MAX = 4096;
 const RETRY_MS = 300;
 
 export interface AppLinkOptions {
-  /** The app's data folder, where it writes the file for the bridge. */
-  profileDir: string;
+  /**
+   * The app's data folder, where it writes the file for the bridge. Where
+   * several are given, each is tried in turn, and the first one with a
+   * session that takes this bridge is the one.
+   */
+  profileDir: string | readonly string[];
   /** What the program on the other side of the bridge calls itself, asked when a connection is made. */
   client: () => BridgeClient;
   /** How long the app may take to prove itself; replaceable in tests. */
@@ -105,7 +109,7 @@ interface Open {
 }
 
 export class AppLink {
-  readonly #file: string;
+  readonly #files: readonly string[];
   readonly #client: () => BridgeClient;
   readonly #handshakeMs: number;
   #open: Open | null = null;
@@ -114,7 +118,8 @@ export class AppLink {
   #closed = false;
 
   constructor(options: AppLinkOptions) {
-    this.#file = join(options.profileDir, CONNECTOR_FILE);
+    const dirs = typeof options.profileDir === 'string' ? [options.profileDir] : options.profileDir;
+    this.#files = dirs.map((dir) => join(dir, CONNECTOR_FILE));
     this.#client = options.client;
     this.#handshakeMs = options.handshakeMs ?? HANDSHAKE_MS;
   }
@@ -182,11 +187,29 @@ export class AppLink {
     return this.#connect();
   }
 
-  #connect(): Promise<Open | LinkResult> {
+  /**
+   * The first folder with a session that takes this bridge is the one. A
+   * folder that has none, or whose session turns the bridge away, is passed
+   * over for the next: a file left by another copy of the app must not stand
+   * in the way of a session that is under way. Where no folder takes the
+   * bridge, the answer is what the first one said that had something to say.
+   */
+  async #connect(): Promise<Open | LinkResult> {
+    let said: LinkResult = NOT_UNDER_WAY;
+    for (const file of this.#files) {
+      if (this.#closed) return NOT_UNDER_WAY;
+      const result = await this.#connectTo(file);
+      if ('socket' in result) return result;
+      if (said === NOT_UNDER_WAY) said = result;
+    }
+    return said;
+  }
+
+  #connectTo(path: string): Promise<Open | LinkResult> {
     let text: string;
     try {
-      if (statSync(this.#file).size > FILE_MAX) return Promise.resolve(NOT_UNDER_WAY);
-      text = readFileSync(this.#file, 'utf8');
+      if (statSync(path).size > FILE_MAX) return Promise.resolve(NOT_UNDER_WAY);
+      text = readFileSync(path, 'utf8');
     } catch {
       return Promise.resolve(NOT_UNDER_WAY);
     }

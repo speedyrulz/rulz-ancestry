@@ -87,9 +87,9 @@ const manifest = {
   user_config: {
     data_folder: {
       type: 'directory',
-      title: 'Data folder of RulZ Ancestry (leave empty)',
+      title: 'Data folder of RulZ Ancestry (usually empty)',
       description:
-        'Leave this empty for an installed copy of RulZ Ancestry. Only a copy that keeps its data in another folder needs it; the window "AI assistant" of that copy names the folder.',
+        'Leave this empty unless the window "AI assistant" of your copy of RulZ Ancestry names a folder to choose here. A folder chosen here is the only one the connector looks in.',
       required: false,
     },
   },

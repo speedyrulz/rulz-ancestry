@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { AppLink } from './link';
-import { profileDirOf } from './profile';
+import { profileDirsOf } from './profile';
 import { clientOf, createBridgeServer } from './server';
 
 /**
@@ -22,7 +22,7 @@ import { clientOf, createBridgeServer } from './server';
 declare const __RULZ_VERSION__: string | undefined;
 
 const link = new AppLink({
-  profileDir: profileDirOf(process.env, homedir()),
+  profileDir: profileDirsOf(process.env, homedir()),
   client: () => clientOf(server),
 });
 const server = createBridgeServer(

@@ -343,6 +343,59 @@ describe.runIf(onWindows)('a bridge and what it finds in the place of the app', 
     expect(await link().call('get_session', {})).toBe(NOT_UNDER_WAY);
   });
 
+  it('looks in a second folder when the first has no session under way', async () => {
+    // As a connector does that was told no folder: an installed copy first,
+    // then a copy that was started from the source code.
+    const first = mkdtempSync(join(tmpdir(), 'rulz-bridge-first-'));
+    const twoFolders = (): AppLink => {
+      const made = new AppLink({
+        profileDir: [first, dir],
+        client: () => ({ name: 'an AI app', version: '1.2.3' }),
+        handshakeMs: 500,
+      });
+      links.push(made);
+      return made;
+    };
+    try {
+      // Neither has a session.
+      expect(await twoFolders().call('get_session', {})).toBe(NOT_UNDER_WAY);
+      const written = await listen();
+      // No file in the first folder.
+      expect(await twoFolders().call('get_session', {})).toEqual({
+        ok: true,
+        value: { tool: 'get_session' },
+      });
+      // A file there that is left from a session that is gone.
+      writeFileSync(
+        join(first, CONNECTOR_FILE),
+        JSON.stringify({ ...written, pipe: newPipeName(), key: newSecret() }),
+      );
+      expect(await twoFolders().call('get_session', {})).toEqual({
+        ok: true,
+        value: { tool: 'get_session' },
+      });
+      // A file there of a copy that speaks another wording does not stand in the way.
+      writeFileSync(join(first, CONNECTOR_FILE), JSON.stringify({ ...written, protocol: 2 }));
+      expect(await twoFolders().call('get_session', {})).toEqual({
+        ok: true,
+        value: { tool: 'get_session' },
+      });
+      // Neither does a pipe there that turns this bridge away: here the pipe
+      // of the session, named with a key that is not its key.
+      writeFileSync(join(first, CONNECTOR_FILE), JSON.stringify({ ...written, key: newSecret() }));
+      expect(await twoFolders().call('get_session', {})).toEqual({
+        ok: true,
+        value: { tool: 'get_session' },
+      });
+      // Where no folder takes the bridge, the first that had something to say is the answer.
+      bridge.close();
+      writeFileSync(join(first, CONNECTOR_FILE), JSON.stringify({ ...written, protocol: 2 }));
+      expect(await twoFolders().call('get_session', {})).toBe(NOT_FITTING);
+    } finally {
+      rmSync(first, { recursive: true, force: true });
+    }
+  });
+
   it('says that the two do not fit when the app speaks another wording', async () => {
     const written = await listen();
     writeFileSync(join(dir, CONNECTOR_FILE), JSON.stringify({ ...written, protocol: 2 }));
