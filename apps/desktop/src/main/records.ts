@@ -14,8 +14,10 @@ import {
   locManifest,
   naraCatalogConnector,
   naraCatalogManifest,
+  oaRecordsOf,
   openArchivesConnector,
   openArchivesManifest,
+  openArchivesSpan,
   wikidataConnector,
   wikidataManifest,
   wikitreeConnector,
@@ -64,6 +66,7 @@ import {
   listNames,
   listPersonEvents,
   listRecordMarks,
+  PackSearchStopped,
   presumedLivingIds,
   recordMarkStates,
   setSetting,
@@ -80,6 +83,7 @@ import type {
   AiProposalItem,
   AttachRecordRequest,
   CompareRecordResult,
+  PackInfo,
   RecordComparison,
   RecordCopy,
   RecordFactTarget,
@@ -228,6 +232,48 @@ export const RECORD_RUN_SOURCE_IDS: readonly string[] = [
   openArchivesManifest.id,
 ];
 
+/**
+ * A data pack that is installed on this PC is one more route for the search
+ * of a person, with the id `pack:<packId>`. A route id is what a page names a
+ * result's source by; what the tree keeps a result under is its source, and for
+ * a result of a pack that is the source the pack was made from (every pack of
+ * 5.1 is made from Open Archives' files). `markSourceOf` is the one place that
+ * maps the one to the other, and it is used wherever a mark is written, read
+ * or removed.
+ */
+export const PACK_ROUTE_PATTERN = /^pack:([a-z0-9]{2,12})$/;
+
+/** The source a result of this route is kept, marked and cited under. */
+export function markSourceOf(routeId: string): string {
+  return PACK_ROUTE_PATTERN.test(routeId) ? openArchivesManifest.id : routeId;
+}
+
+/** What the search for records needs of the installed packs. `PackManager` is one. */
+export interface PackRoutes {
+  /** The packs that can be searched. */
+  ready(): PackInfo[];
+  /** Looks for rows of one pack; rejects when the search is given up. */
+  search(
+    id: string,
+    q: {
+      names: string;
+      places?: string;
+      limit: number;
+      offset: number;
+      years?: { from: number; to: number };
+    },
+    signal: AbortSignal,
+  ): Promise<{ rows: Record<string, string>[]; total: number }>;
+}
+
+/** What a pack is searched for: the surname's words, then the given name's (not one letter alone, which is an initial). */
+function packNames(query: PersonQuery): string {
+  const words = (text: string) => text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return [...words(query.surname), ...words(query.given).filter((word) => [...word].length >= 2)]
+    .slice(0, 8)
+    .join(' ');
+}
+
 /** A question that may not be sent after all, as the last look before sending found. */
 class Refusal extends Error {
   readonly problem: RecordSearchProblem;
@@ -338,6 +384,8 @@ export interface RecordSearchOptions {
   now?: () => number;
   /** What keeps the user's keys. Without it no key can be saved, and a source that needs one is not asked. */
   secrets?: SecretStore;
+  /** The data packs on this PC, searched as routes of their own. Without it there are none. */
+  packs?: PackRoutes;
 }
 
 /** What the app calls itself to a source: its name, its version and where its code is. */
@@ -397,6 +445,7 @@ export class RecordSearchService {
   /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
   #closed = 0;
   readonly #secrets: SecretStore | undefined;
+  readonly #packs: PackRoutes | undefined;
   /** Hands over the record a proposal of the AI assistant is about; null until the assistant is set up. */
   #proposalCopy: ((tree: Tree, request: AttachRecordRequest) => ProposalCopy | null) | null = null;
 
@@ -404,6 +453,7 @@ export class RecordSearchService {
     this.#appDb = options.appDb;
     this.#now = options.now ?? Date.now;
     this.#secrets = options.secrets;
+    this.#packs = options.packs;
     // A source's pause and its count of requests outlast the app: the Library
     // of Congress shuts a client out for an hour, whether or not the app was
     // closed in between. They are kept with the app's settings, not in a tree.
@@ -469,7 +519,7 @@ export class RecordSearchService {
   }
 
   sources(): RecordSourceInfo[] {
-    return this.#connectors.map((connector) => ({
+    const live = this.#connectors.map((connector): RecordSourceInfo => ({
       id: connector.manifest.id,
       name: connector.manifest.name,
       searches: connector.searchPersons === undefined ? 'text' : 'person',
@@ -481,6 +531,31 @@ export class RecordSearchService {
       termsUrl: connector.manifest.termsUrl,
       pausedUntil: this.#http.pausedUntil(connector.manifest),
     }));
+    return [...live, ...this.#packSources()];
+  }
+
+  /** The installed packs that can be searched, as routes of the search. They send nothing anywhere. */
+  #packSources(): RecordSourceInfo[] {
+    return (this.#packs?.ready() ?? [])
+      .filter((pack) => this.#connectorOf(`pack:${pack.id}`) !== undefined)
+      .map((pack) => ({
+        id: `pack:${pack.id}`,
+        name: `${pack.title} (pack on this PC)`,
+        searches: 'person' as const,
+        asks: 'nothing: the pack is searched on this PC',
+        slowSeconds: null,
+        key: 'none' as const,
+        quota: null,
+        attribution: pack.credit !== '' ? pack.credit : openArchivesManifest.attribution,
+        termsUrl: openArchivesManifest.termsUrl,
+        pausedUntil: null,
+      }));
+  }
+
+  /** The connector whose manifest a result of this route is kept and cited under. */
+  #connectorOf(routeId: string): SourceConnector | undefined {
+    const sourceId = markSourceOf(routeId);
+    return this.#connectors.find(({ manifest }) => manifest.id === sourceId);
   }
 
   /** The user's key for a source; null when none is saved or it cannot be read. */
@@ -631,8 +706,13 @@ export class RecordSearchService {
     if (!found.ok) return found;
     const { connector, record } = found;
     // A kept copy says what the source said on the day it was read, not
-    // today; and so does the copy a proposal is about.
-    const accessedAt = localDay(found.from === 'search' ? this.#now() : found.readAt);
+    // today; and so does the copy a proposal is about. A result of a pack was
+    // read on the day the pack's files were downloaded, whatever day it is now.
+    const accessedAt = localDay(
+      found.from === 'search' && !PACK_ROUTE_PATTERN.test(request.sourceId)
+        ? this.#now()
+        : found.readAt,
+    );
     // A source whose terms bar keeping what it returns is cited by the
     // record's identifier and address alone; the app made both itself.
     if (connector.manifest.mayStoreText === false) {
@@ -694,17 +774,25 @@ export class RecordSearchService {
     if (getPerson(tree, request.personId) === null) {
       return fail('gone', 'This person is no longer in the tree.');
     }
-    const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
+    // For a result of a pack the connector is that of the source the pack was made from.
+    const connector = this.#connectorOf(request.sourceId);
+    const isPack = PACK_ROUTE_PATTERN.test(request.sourceId);
     const from: RecordCopy = request.from ?? 'search';
     let at: { record: ExternalRecord; readAt: number; aiJson?: string | null } | null = null;
     if (connector !== undefined && from === 'inbox') {
       // Read from the tree's file, and checked: the file can come from anywhere.
-      const mark = getRecordMark(tree, request.personId, request.sourceId, request.key);
+      const mark = getRecordMark(
+        tree,
+        request.personId,
+        markSourceOf(request.sourceId),
+        request.key,
+      );
       const record = mark === null ? null : keptRecordOf(mark, connector);
       if (mark !== null && record !== null) at = { record, readAt: mark.readAt };
     } else if (connector !== undefined && from === 'proposal') {
       // The reading the AI was given, from the session that holds the proposal.
-      at = this.#proposalCopy?.(tree, request) ?? null;
+      // The AI is never given a result of a pack, so there is none to hand over.
+      at = isPack ? null : (this.#proposalCopy?.(tree, request) ?? null);
     } else if (connector !== undefined) {
       at = this.#shown.get(shownKey(request.personId, request.sourceId, request.key)) ?? null;
     }
@@ -736,8 +824,8 @@ export class RecordSearchService {
 
   /** Why the tree takes no further mark; null when it does, or when the result has one already. */
   #full(tree: Tree, request: AttachRecordRequest): RecordSearchProblem | null {
-    return getRecordMark(tree, request.personId, request.sourceId, request.key) === null &&
-      countRecordMarks(tree) >= RECORD_MARK_LIMIT
+    return getRecordMark(tree, request.personId, markSourceOf(request.sourceId), request.key) ===
+      null && countRecordMarks(tree) >= RECORD_MARK_LIMIT
       ? {
           kind: 'failed',
           message: `The tree holds ${RECORD_MARK_LIMIT.toLocaleString('en-US')} results that were kept or turned down, and takes no more. Remove some of them first.`,
@@ -788,7 +876,7 @@ export class RecordSearchService {
     return {
       ok: true,
       mark: {
-        sourceId: request.sourceId,
+        sourceId: markSourceOf(request.sourceId),
         key: request.key,
         ...form,
         aiJson: proposed ? found.aiJson : null,
@@ -812,7 +900,7 @@ export class RecordSearchService {
     return {
       ok: true,
       mark: {
-        sourceId: request.sourceId,
+        sourceId: markSourceOf(request.sourceId),
         key: request.key,
         title:
           found.connector.manifest.mayStoreText === false ? '' : cleanText(found.record.title, 500),
@@ -1171,6 +1259,7 @@ export class RecordSearchService {
   /** Asks a source that keeps people for a person. */
   search(tree: Tree, request: RecordSearchRequest): Promise<RecordSearchResult> {
     const { query } = request;
+    if (PACK_ROUTE_PATTERN.test(request.sourceId)) return this.#searchPack(tree, request);
     return this.#search(
       tree,
       request,
@@ -1180,6 +1269,97 @@ export class RecordSearchService {
         return ask === undefined ? null : (page, options) => ask(query, page, options);
       },
     );
+  }
+
+  /**
+   * Looks for a person in an installed pack. Nothing is sent anywhere, so the
+   * notice of what a search sends does not stand in the way; the rest of the
+   * gate holds: the person may not be living, and there is a tree open. A pack
+   * search has its own place among the searches under way (its route id), so
+   * it never gives up a search of a live source, nor the other way round.
+   */
+  async #searchPack(tree: Tree, request: RecordSearchRequest): Promise<RecordSearchResult> {
+    const { sourceId: route, query } = request;
+    const fail = (problem: RecordSearchProblem): RecordSearchResult => ({
+      ok: false,
+      sourceId: route,
+      problem,
+    });
+    const id = PACK_ROUTE_PATTERN.exec(route)?.[1];
+    const pack = this.#packs?.ready().find((entry) => entry.id === id);
+    // A pack whose download day is not a real day is not a source: nothing is cited with today's date for it.
+    const downloaded = pack === undefined ? null : dayStart(pack.downloadedAt);
+    if (
+      this.#packs === undefined ||
+      id === undefined ||
+      pack === undefined ||
+      downloaded === null
+    ) {
+      return fail({ kind: 'source', message: 'This pack is not installed.', retryAt: null });
+    }
+    if (this.#connectorOf(route) === undefined) {
+      return fail({ kind: 'source', message: 'This source is not known.', retryAt: null });
+    }
+    const refusal = this.#refusal(tree, request.personId);
+    if (refusal !== null) return fail(refusal);
+    if (isEmptyQuery(query)) {
+      return fail({ kind: 'empty', message: 'Give a name to search for.', retryAt: null });
+    }
+
+    this.#underWay.get(route)?.abort();
+    const abort = new AbortController();
+    this.#underWay.set(route, abort);
+    const closed = this.#closed;
+    try {
+      const span = openArchivesSpan(query);
+      const found = await this.#packs.search(
+        id,
+        {
+          names: packNames(query),
+          limit: RECORD_SEARCH_PAGE,
+          offset: request.offset,
+          ...(span === null ? {} : { years: span }),
+        },
+        abort.signal,
+      );
+      if (closed !== this.#closed || abort.signal.aborted) throw new Refusal(GIVEN_UP);
+      // The person may have been edited while the pack was searched.
+      const last = this.#refusal(tree, request.personId);
+      if (last !== null) throw new Refusal(last);
+      // The UTC year, as the live search of Open Archives takes it: never a year ahead of it.
+      const thisYear = new Date(this.#now()).getUTCFullYear();
+      let hidden = 0;
+      const seen = new Set<string>();
+      const items: ExternalRecord[] = [];
+      for (const row of found.rows) {
+        const read = oaRecordsOf(row, thisYear, query);
+        hidden += read.hidden;
+        for (const record of read.records) {
+          if (!seen.has(record.key)) {
+            seen.add(record.key);
+            items.push(record);
+          }
+        }
+      }
+      // The day the pack's files were downloaded is the day these records were read.
+      const after = request.offset + RECORD_SEARCH_PAGE;
+      return this.#present(
+        tree,
+        { personId: request.personId, sourceId: route },
+        {
+          items,
+          total: found.total,
+          nextOffset: found.rows.length > 0 && after < found.total ? after : null,
+          hidden,
+          fetchedAt: downloaded,
+          cached: false,
+        },
+      );
+    } catch (error) {
+      return fail(problemOf(error));
+    } finally {
+      if (this.#underWay.get(route) === abort) this.#underWay.delete(route);
+    }
   }
 
   /** Asks a source of newspapers or books for words. */
@@ -1451,7 +1631,6 @@ export class RecordSearchService {
     signal: AbortSignal,
     lastLook: () => RecordSearchProblem | null,
   ): Promise<Extract<RecordSearchResult, { ok: true }>> {
-    const { sourceId } = request;
     const closed = this.#closed;
     /** What the last look found. Kept here, since the client reports whatever that look throws as a request given up. */
     const last: { refused: RecordSearchProblem | null } = { refused: null };
@@ -1472,15 +1651,44 @@ export class RecordSearchService {
     // The tree closed while the answer was on its way, or the search was
     // given up: the answer is for nobody now.
     if (closed !== this.#closed || signal.aborted) throw new Refusal(GIVEN_UP);
+    return this.#present(tree, request, {
+      items: answer.page.items,
+      total: answer.page.total,
+      nextOffset: answer.page.next?.offset ?? null,
+      hidden: answer.page.hidden,
+      fetchedAt: answer.fetchedAt,
+      cached: answer.cached,
+    });
+  }
+
+  /**
+   * What the page is given for an answer: the results remembered for
+   * attaching, each held against the person, with what the tree already has
+   * of them. `request.sourceId` is the route the page asked, which for a pack
+   * is not the source its results are marked under.
+   */
+  #present(
+    tree: Tree,
+    request: { personId: string; sourceId: string },
+    page: {
+      items: ExternalRecord[];
+      total: number | null;
+      nextOffset: number | null;
+      hidden: number;
+      fetchedAt: number;
+      cached: boolean;
+    },
+  ): Extract<RecordSearchResult, { ok: true }> {
+    const { sourceId } = request;
     // Remembered for attaching, with the person they were found for.
-    for (const record of answer.page.items) {
+    for (const record of page.items) {
       const key = shownKey(request.personId, sourceId, record.key);
       this.#shown.delete(key);
       this.#shown.set(key, {
         personId: request.personId,
         sourceId,
         record,
-        readAt: answer.fetchedAt,
+        readAt: page.fetchedAt,
       });
     }
     for (const key of this.#shown.keys()) {
@@ -1492,33 +1700,29 @@ export class RecordSearchService {
     // them now, whatever was typed into the form. Nothing is sent for it.
     const subject = subjectOf(tree, request.personId);
     const fits: Record<string, RecordFitInfo> = {};
-    for (const record of answer.page.items) {
+    for (const record of page.items) {
       const fit = scoreRecord(subject, record);
       if (fit !== null) {
         fits[record.key] = { band: fit.band, reasons: fit.reasons, doubts: fit.doubts };
       }
     }
     // What the user kept for this person, and what they turned down for them.
-    const states = recordMarkStates(tree, request.personId, sourceId);
+    const states = recordMarkStates(tree, request.personId, markSourceOf(sourceId));
     const marked = (state: 'kept' | 'declined') =>
-      answer.page.items
-        .filter((record) => states.get(record.key) === state)
-        .map((record) => record.key);
+      page.items.filter((record) => states.get(record.key) === state).map((record) => record.key);
     return {
       ok: true,
       sourceId,
       fits,
       marks: { kept: marked('kept'), declined: marked('declined') },
-      attached: answer.page.items
-        .filter((record) => cited.has(record.url))
-        .map((record) => record.key),
+      attached: page.items.filter((record) => cited.has(record.url)).map((record) => record.key),
       // What fits the person best stands first, whatever the order of the source.
-      items: byFit(answer.page.items, fits),
-      total: answer.page.total,
-      nextOffset: answer.page.next?.offset ?? null,
-      hidden: answer.page.hidden,
-      fetchedAt: answer.fetchedAt,
-      cached: answer.cached,
+      items: byFit(page.items, fits),
+      total: page.total,
+      nextOffset: page.nextOffset,
+      hidden: page.hidden,
+      fetchedAt: page.fetchedAt,
+      cached: page.cached,
     };
   }
 
@@ -1660,6 +1864,20 @@ function factsText(record: Extract<ExternalRecord, { kind: 'person' }>): string 
     .join('\n');
 }
 
+/**
+ * Midday of a calendar day (`YYYY-MM-DD`) on this PC's clock, so that
+ * {@link localDay} gives the same day back; null when it is not a real day.
+ */
+export function dayStart(day: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (match === null) return null;
+  const [year, month, date] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const at = new Date(year, month - 1, date, 12);
+  return at.getFullYear() === year && at.getMonth() === month - 1 && at.getDate() === date
+    ? at.getTime()
+    : null;
+}
+
 /** The day of a moment on this PC's clock, as `YYYY-MM-DD`. */
 export function localDay(at: number): string {
   const date = new Date(at);
@@ -1720,6 +1938,11 @@ export function queryOf(tree: Tree, personId: string): PersonQuery {
 /** A failure in words for the user. Nothing of the error itself is passed on unless it is the app's own. */
 function problemOf(error: unknown): RecordSearchProblem {
   if (error instanceof Refusal) return error.problem;
+  // A search of a pack that was given up, or stopped because the pack is being replaced or deleted.
+  if (error instanceof PackSearchStopped) return GIVEN_UP;
+  if (error instanceof Error && error.name === 'PackError') {
+    return { kind: 'source', message: error.message, retryAt: null };
+  }
   if (error instanceof HttpError) {
     const kind =
       error.kind === 'paused' ||

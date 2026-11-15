@@ -1200,6 +1200,44 @@ export interface AiRunStatus {
 }
 
 export type AiKeyState = 'missing' | 'saved' | 'unreadable' | 'unavailable';
+
+/** A data pack on this PC, as its own file describes it. */
+export interface PackInfo {
+  id: string;
+  kind: string;
+  title: string;
+  sourceName: string;
+  licence: string;
+  credit: string;
+  rows: number;
+  bytes: number;
+  /** The day the source's files were downloaded, `YYYY-MM-DD`. */
+  downloadedAt: string;
+  /** "rebuild": made by another version of the app's builder; "unreadable": the file cannot be opened as a pack. */
+  state: 'ready' | 'rebuild' | 'unreadable';
+}
+
+/** The install or update of a pack that is under way, or that ended last. */
+export interface PackJob {
+  id: string;
+  title: string;
+  phase: 'checking' | 'downloading' | 'building' | 'switching' | 'done' | 'failed' | 'cancelled';
+  doneBytes: number;
+  totalBytes: number | null;
+  rows: number;
+  message: string | null;
+}
+
+export interface PacksState {
+  /** The folder the packs are kept in. */
+  root: string;
+  /** Free space on its drive; null when it cannot be read. */
+  freeBytes: number | null;
+  packs: PackInfo[];
+  job: PackJob | null;
+}
+
+export type PackActionResult = { ok: true } | { ok: false; message: string };
 export type AiActionResult = { ok: true } | { ok: false; message: string };
 
 export type AiSessionStartResult =
@@ -1763,6 +1801,12 @@ export interface RulzApi {
   getAiSession(): Promise<AiSessionState>;
   /** Ends the session that is under way: no tool gives anything more, and nothing more is sent. */
   stopAiSession(): Promise<AiSessionState>;
+  /** The data packs on this PC, the folder they are in and a job under way. Needs no open tree. */
+  getPacks(): Promise<PacksState>;
+  /** Gives up the install or update under way; what it made so far is deleted. */
+  cancelPackJob(): Promise<PackActionResult>;
+  /** Deletes a pack from this PC. Citations made from it stay in the tree. */
+  removePack(id: string): Promise<PackActionResult>;
   /** The proposals the app holds in memory, the latest first, each held against the tree as it is now. */
   listAiProposals(): Promise<AiProposalItem[]>;
   /** Forgets one proposal. Nothing changes in the tree. */
@@ -1968,6 +2012,9 @@ export const API_METHODS = [
   'stopAiRun',
   'getAiSession',
   'stopAiSession',
+  'getPacks',
+  'cancelPackJob',
+  'removePack',
   'listAiProposals',
   'dismissAiProposal',
   'listAiActivity',

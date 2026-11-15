@@ -27,6 +27,11 @@ import { openArchivesManifest } from './manifest';
 /** Where a record's page is, for the user's browser. */
 export const OPEN_ARCHIVES_RECORD_URL = 'https://www.openarchieven.nl/';
 
+/** The address of a record's page on the site, from its archive code and identifier. */
+export function openArchivesRecordUrl(archive: string, identifier: string): string {
+  return `${OPEN_ARCHIVES_RECORD_URL}${archive}:${identifier}/en`;
+}
+
 /** The service gives at most this many results at a time. */
 export const OPEN_ARCHIVES_PAGE_LIMIT = 100;
 
@@ -84,7 +89,7 @@ function recordOf(doc: unknown, thisYear: number): EventRecord | null {
     key: `${archive}:${identifier}/${person}`,
     kind: 'event',
     title: name === '' ? `${archive}:${identifier}` : name,
-    url: `${OPEN_ARCHIVES_RECORD_URL}${archive}:${identifier}/en`,
+    url: openArchivesRecordUrl(archive, identifier),
     role: cleanText(doc['relationtype']),
     event: cleanText(doc['eventtype']),
     date,

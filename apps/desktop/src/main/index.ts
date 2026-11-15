@@ -26,6 +26,11 @@ import { DEV_PROFILE, USUAL_PROFILES } from '../bridge/profile';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
+import { workerBuildRunner } from './packbuild';
+import buildWorkerPath from './packbuild.worker?modulePath';
+import { PackManager } from './packs';
+import { PackSearch, workerSearchChannel } from './packsearch';
+import searchWorkerPath from './packsearch.worker?modulePath';
 import { RecordRun } from './recordrun';
 import { RecordSearchService } from './records';
 import { findMediaFile } from './mediafiles';
@@ -45,7 +50,10 @@ let appDbPath = '';
 let aiSession: AiSessionService | undefined;
 let treeSession: TreeSession | undefined;
 let gazetteer: GazetteerService | undefined;
+let packs: PackManager | undefined;
 let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
+/** True once a job of the packs was told to stop for the quit. */
+let packsStopped = false;
 
 /** A failed check is shown in the window; it must not stop the app from opening. */
 function runTreeEngineCheck(): AppInfo['treeEngine'] {
@@ -94,6 +102,20 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
 function defaultTreesDir(): string {
   if (app.commandLine.hasSwitch('user-data-dir')) return join(app.getPath('userData'), 'Trees');
   return join(app.getPath('documents'), app.isPackaged ? 'RulZ Ancestry' : 'RulZ Ancestry (dev)');
+}
+
+/**
+ * Where the data packs are kept. A copy that is not installed (run from the
+ * source code, or with a profile folder of its own, as the end-to-end tests do)
+ * keeps them inside its profile folder, so that it never touches the packs of
+ * an installed copy. The installed app keeps them under the user's local data,
+ * out of the roaming profile, since a pack is large and can be built again.
+ */
+function defaultPacksRoot(): string {
+  if (!app.isPackaged || app.commandLine.hasSwitch('user-data-dir')) {
+    return join(app.getPath('userData'), 'packs');
+  }
+  return join(process.env['LOCALAPPDATA'] ?? app.getPath('appData'), 'RulZAncestry', 'packs');
 }
 
 /**
@@ -345,8 +367,9 @@ function registerIpc(
   records: RecordSearchService,
   ai: AiSessionService,
   runs: RecordRun,
+  packManager: PackManager,
 ): void {
-  const handlers = createHandlers(session, platform, places, records, ai, runs);
+  const handlers = createHandlers(session, platform, places, records, ai, runs, packManager);
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -397,7 +420,16 @@ if (!app.requestSingleInstanceLock()) {
 
   // A session ends with the app, while its end can still be written to the
   // log. The pipe an AI app reached it by goes with it.
-  app.on('before-quit', () => aiSession?.stop('quit'));
+  app.on('before-quit', (event) => {
+    aiSession?.stop('quit');
+    // A pack that is being built is given up, and what it made so far is
+    // deleted, before the app goes: the quit waits for that, a few seconds at most.
+    if (packs?.running === true && !packsStopped) {
+      packsStopped = true;
+      event.preventDefault();
+      void packs.shutdown().finally(() => app.quit());
+    }
+  });
 
   app.on('will-quit', () => {
     // Backs up the open tree if it changed, then closes it.
@@ -406,6 +438,9 @@ if (!app.requestSingleInstanceLock()) {
     treeSession = undefined;
     gazetteer?.close();
     gazetteer = undefined;
+    // Ends the worker that searches the packs; the file of a pack is let go of.
+    void packs?.shutdown(0);
+    packs = undefined;
     appDb?.close();
     appDb = undefined;
   });
@@ -439,6 +474,29 @@ if (!app.requestSingleInstanceLock()) {
       fetch: (url, init) => net.fetch(url, init),
     });
 
+    // The data packs: records of a source, built on this PC from the files the
+    // source publishes and searched here, with no request to anyone. A pack is
+    // downloaded only when a job is started (`packs.ts`). Searching and
+    // building each run in a worker thread of their own.
+    const packSearch = new PackSearch({
+      spawn: () => workerSearchChannel(searchWorkerPath),
+      pathOf: (id) => manager.pathOf(id),
+    });
+    const manager: PackManager = new PackManager({
+      appDb,
+      defaultRoot: defaultPacksRoot(),
+      fetch: (url, init) => net.fetch(url, init),
+      appVersion: app.getVersion(),
+      search: packSearch,
+      build: workerBuildRunner(buildWorkerPath),
+    });
+    packs = manager;
+    try {
+      manager.start();
+    } catch (error) {
+      console.error(`the packs folder could not be swept: ${String(error)}`);
+    }
+
     // The search for records outside the tree: the other request the app
     // makes of the internet, and the only one that sends something of a tree.
     // See `records.ts` for what it sends and when.
@@ -454,6 +512,7 @@ if (!app.requestSingleInstanceLock()) {
       appDb,
       fetch: (url, init) => electronSession.fromPartition(RECORDS_PARTITION).fetch(url, init),
       appVersion: app.getVersion(),
+      packs: manager,
       // A key of the user's own is encrypted by Windows for their account
       // (DPAPI) before it is written to the settings, and never kept as it is.
       secrets,
@@ -484,7 +543,7 @@ if (!app.requestSingleInstanceLock()) {
       connector: findConnector(),
     });
     aiSession = ai;
-    registerIpc(treeSession, gazetteer, records, ai, runs);
+    registerIpc(treeSession, gazetteer, records, ai, runs, manager);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded

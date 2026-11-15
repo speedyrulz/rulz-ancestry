@@ -310,3 +310,14 @@ export {
   type StoredPart,
   type StoredRecord,
 } from './gedcom/store';
+export {
+  PACK_APPLICATION_ID,
+  PACK_FILE_SUFFIX,
+  PACK_FORMAT_VERSION,
+  PACK_ID_PATTERN,
+  PackReader,
+  PackSearchStopped,
+  PackWriter,
+  type PackMeta,
+  type PackOpen,
+} from './pack';

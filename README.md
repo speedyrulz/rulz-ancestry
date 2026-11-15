@@ -396,7 +396,7 @@ Run these from the repository root.
 ```
 apps/desktop          Electron app: main process, preload script, React UI, e2e tests
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
-packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives
+packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives, data pack files
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
 packages/ai           The rules of the optional AI assistant: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
 docs/                 Plan and access checklist

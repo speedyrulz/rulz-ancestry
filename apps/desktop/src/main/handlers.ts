@@ -27,6 +27,7 @@ import {
   NoTreeError,
   NotATreeError,
   NotFoundError,
+  PACK_ID_PATTERN,
   SchemaTooNewError,
   TreeLocationError,
   TreeRuleError,
@@ -135,8 +136,9 @@ import {
 } from '../shared/ipc';
 import type { AiSessionService } from './aisession';
 import type { GazetteerService } from './gazetteer';
+import type { PackManager } from './packs';
 import { RecordRun } from './recordrun';
-import type { RecordSearchService } from './records';
+import { markSourceOf, type RecordSearchService } from './records';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
 
 /**
@@ -324,6 +326,16 @@ const textQuery = z.strictObject({
 
 const siteId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
+/**
+ * What a search result's source is called by a page: a source (as `siteId`) or
+ * an installed data pack (`pack:<id>`). Used where a result is named; keys, the
+ * notice and the citation sources take `siteId` only.
+ */
+const routeId = z.string().regex(/^(?:[a-z0-9-]{1,40}|pack:[a-z0-9]{2,12})$/);
+
+/** The id of a data pack. */
+const packId = z.string().regex(PACK_ID_PATTERN);
+
 /** Which copy of a result is meant: left out for the one a search showed. */
 const recordCopy = z.enum(['search', 'inbox', 'proposal']).optional();
 
@@ -336,7 +348,7 @@ const proposalRef = z.strictObject({
 /** The parts of a request that say which result is meant; never what the result says. */
 const recordRefFields = {
   personId: id,
-  sourceId: siteId,
+  sourceId: routeId,
   key: z.string().min(1).max(200),
   from: recordCopy,
   proposal: proposalRef.optional(),
@@ -456,6 +468,8 @@ export function createHandlers(
   ai: AiSessionService,
   /** The search for several people. Handed in by tests that set its pace. */
   runs: RecordRun = new RecordRun(records),
+  /** The data packs. Without them the page sees none, and cannot add or remove any. */
+  packs: PackManager | null = null,
 ): ApiHandlers {
   // What was found for one tree is not kept for the next, however the tree is
   // left; a search for several people ends with its tree, and so does a
@@ -705,7 +719,7 @@ export function createHandlers(
       z.tuple([
         z.strictObject({
           personId: id,
-          sourceId: siteId,
+          sourceId: routeId,
           query: personQuery,
           offset: z.number().int().min(0).max(1000),
         }),
@@ -726,6 +740,21 @@ export function createHandlers(
     ),
 
     cancelRecordSearch: define<'cancelRecordSearch'>(none, () => records.cancel()),
+
+    getPacks: define<'getPacks'>(none, () => {
+      if (packs === null) throw new SessionError('data packs are not available');
+      return packs.state();
+    }),
+
+    cancelPackJob: define<'cancelPackJob'>(none, () => {
+      if (packs === null) throw new SessionError('data packs are not available');
+      return packs.cancel();
+    }),
+
+    removePack: define<'removePack'>(z.tuple([packId]), (id) => {
+      if (packs === null) throw new SessionError('data packs are not available');
+      return packs.remove(id);
+    }),
 
     attachRecord: define<'attachRecord'>(z.tuple([recordRef]), (request) => {
       const found = records.attachment(session.tree, request);
@@ -768,8 +797,9 @@ export function createHandlers(
         }),
       ]),
       (request) => {
+        // The page may name a result by the route it was found on; the tree keeps it under its source.
         const removed = session.change((tree) =>
-          removeRecordMark(tree, request.personId, request.sourceId, request.key),
+          removeRecordMark(tree, request.personId, markSourceOf(request.sourceId), request.key),
         );
         return removed === null
           ? {

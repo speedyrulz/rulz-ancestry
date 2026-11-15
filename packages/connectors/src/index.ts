@@ -65,10 +65,18 @@ export {
   OPEN_ARCHIVES_RECORD_URL,
   openArchivesConnector,
   openArchivesName,
+  openArchivesRecordUrl,
   openArchivesSearchParams,
   openArchivesSpan,
   parseOpenArchivesSearch,
 } from './sources/open-archives/search';
+export {
+  OA_BUILDER_VERSION,
+  OA_PACK_KIND,
+  oaLayout,
+  oaRecordsOf,
+  splitOaLine,
+} from './sources/open-archives/pack';
 export { wikidataManifest } from './sources/wikidata/manifest';
 export {
   WIKIDATA_ENTITY_URL,

@@ -10,6 +10,7 @@ import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
 import { MediaLibraryDialog } from './media';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
+import { PacksDialog } from './packs';
 import { PlacesDialog } from './places';
 import { RecordInboxDialog } from './recordinbox';
 import { SourcesDialog } from './sources';
@@ -55,6 +56,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     | 'media'
     | 'sources'
     | 'places'
+    | 'packs'
     | null
   >(null);
   /** What the right-hand side shows for the person selected: their details, or a chart. */
@@ -317,6 +319,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            title="Offline data packs on this PC"
+            onClick={() => setDialog('packs')}
+            data-testid="open-packs"
+          >
+            Packs
+          </button>
+          <button
+            type="button"
             title="The pictures and documents in this tree"
             onClick={() => setDialog('media')}
             data-testid="open-media"
@@ -526,6 +536,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
       {dialog === 'places' && (
         <PlacesDialog tree={tree} onTree={onTree} onClose={() => setDialog(null)} />
       )}
+      {dialog === 'packs' && <PacksDialog onClose={() => setDialog(null)} />}
       {dialog === 'media' && (
         <MediaLibraryDialog
           tree={tree}

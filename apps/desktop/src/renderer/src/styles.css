@@ -1556,6 +1556,19 @@ ul.media-grid,
   min-height: 120px;
 }
 
+/* Offline data packs */
+.pack-job {
+  margin-bottom: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.pack-job .dialog-text {
+  margin-bottom: 0;
+}
+
 /* A note, with its lines as typed. */
 .note-text {
   margin: 0 0 8px;
