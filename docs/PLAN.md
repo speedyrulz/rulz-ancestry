@@ -959,7 +959,7 @@ Planned on 2026-11-14 from two design views (a Claude Opus subagent and Codex) a
 | 4b.2 | An AI session the user starts, for chosen people and sources, with a count of requests and an end; proposals held in memory; an activity log | **Done 2026-11-14** |
 | 4b.3 | The screens: the consent notice, the window that starts a session and shows what it does, with Stop, and the AI's proposals in the inbox     | **Done 2026-11-14** |
 | 4b.4 | Route A: the named pipe, the bridge program, the `.mcpb` file for Claude Desktop, and how Claude Code adds it                                | **Done 2026-11-14** |
-| 4b.5 | Measuring: the labelled cases of part 4.1 given to Claude offline, and the AI's figures beside the engine's                                  | To do               |
+| 4b.5 | Measuring: the labelled cases of part 4.1 given to Claude offline, and the AI's figures beside the engine's                                  | **Done 2026-11-15** |
 | 4b.6 | Route C: the user's own API key, the same tools, tokens and cost shown                                                                       | To do               |
 
 What the checks of facts found:
@@ -1241,7 +1241,41 @@ Not done:
   - WikiTree's search of a common name is loose: asked for one given name and a last name, it gave other given names that look alike, 335 results of which the first 20 were passed on, less 3 the rules left out. An AI has many results that do not fit to weigh.
 - **Fixed the same day, found by the project owner on first use:** the command for Claude Code put the name of the server after `--env`. That option takes several values, so Claude Code read the name as one more of them and refused the command ("Invalid environment variable format"). Only a copy that keeps its data outside the usual folder has `--env` in its command, which is every copy that is not installed. The name now stands before the options, as tried with Claude Code 2.1.323, and the command is made by a function of its own with unit tests (`apps/desktop/src/main/connectorcommand.ts`). No helper review had found it, and no test had run the command.
 - **The wording of the notice (version 2) and of the research instructions was written by the primary agent** and read by helpers only. The project owner should read both.
-- **Measuring what an AI proposes** is part 4b.5, and is the project owner's to do in Claude Desktop.
+- **Measuring what an AI proposes** is part 4b.5, and is the project owner's to do in Claude Desktop. (A first run was made with a Claude subagent; see the outcome of part 4b.5.)
+
+### Phase 4b.5 outcome: the AI measured on labelled made-up cases (2026-11-15)
+
+Delivered: a tool that measures an AI's proposals beside the matching engine, and a first run with Claude Sonnet 5.5. **The run was made by the primary agent with a Claude subagent, not by the project owner in Claude Desktop as the plan had it; the tool is made so that the owner can repeat it there with one file.** Started on the owner's word.
+
+- **`packages/ai/src/measure.ts`** draws a set from the generator of part 4.1 (`labelledCases`, the second lists), by default seed 2026, 90 records of 30 made-up people, three each, every kind of case at least twice, with records that cannot be of the person and the two that nothing tells apart. People are shown as `get_person` shows one, with no relatives; records as `get_record` shows one, under two sources made for the measurement. The instructions carry the rules of the research instructions on judging and on texts that seem to give orders, and ask for one proposal per record in the shape of `propose_match`.
+- **The scorer** holds every answer to the app's own check of a proposal (`checkProposal`), so a made-up quote is dropped and a verdict nothing stands behind is refused, as in a session. A later proposal for a record that passes the check takes the place of an earlier one, as in the app. A record with no answer counts as one the AI did not show. It reads the list from a code fence or from prose around it.
+- **`packages/ai/scripts/measure.mjs`**: `node packages/ai/scripts/measure.mjs export <folder>` writes `blind.md` for the AI and `key.json`, which the AI must not see; `node packages/ai/scripts/measure.mjs score <folder> <answers file>` writes `report.md`. It bundles the code with rolldown, which comes with Vite, and adds no package.
+
+The first run: a fresh Claude Sonnet 5.5 subagent was given a folder holding `blind.md` alone and told to read nothing else, run nothing and look nothing up. Its record of calls shows two reads of `blind.md` and one write of its answer. It answered all 90 records.
+
+| Level                                    | AI shown | AI right | AI precision | AI recall | Engine shown | Engine right | Engine precision | Engine recall |
+| ---------------------------------------- | -------- | -------- | ------------ | --------- | ------------ | ------------ | ---------------- | ------------- |
+| Strong ("fits" / score from 75)          | 29       | 27       | 93.1%        | 58.7%     | 24           | 22           | 91.7%            | 47.8%         |
+| Possible ("fits" or "may fit" / from 50) | 57       | 46       | 80.7%        | 100%      | 48           | 46           | 95.8%            | 100%          |
+
+- **Neither was wrong about a strong fit where a record could tell,** and neither showed a record that cannot be of the person. The two wrong strong fits of each are the two namesakes born in one year in one town. The AI gave both "fits" with high confidence; its 17 "fits" of medium confidence were all right.
+- **The AI says "fits" more often where it is right:** death and marriage records and profiles that give a birth as "before" a year, which the engine leaves at "possible". It leaves at "may fit" profiles with a suffix after the name and profiles with the death two years off, which the engine calls strong.
+- **The AI says "may fit" to more people who are someone else:** 11 wrong at that level against the engine's 2, all of three kinds (a brother or sister, someone of the same given name of another family, someone whose middle name begins like the surname). The instructions tell it to say "may fit" when only a name or a year agrees, and in the inbox such a proposal is one the user has to turn down.
+- **No proposal was refused and no answer was missing.** Three reasons were dropped because a quote was part of a text and shorter than four characters.
+
+Reviews: treated as level 2, since it is a new tool over three packages and touches no code of the app. Built by a Claude Sonnet subagent; reviewed by Codex and Grok, each without the other's view. Every finding was checked against the code.
+
+- **Fixed, found by both:** the answer list was read up to the last `]` of the whole answer, so prose with a bracket after it made the scoring fail, and a copy of the example of the instructions after the list was scored in its place.
+- **Fixed, found by Grok:** answers were read only with `person` though the records show `personId`, as `propose_match` names it; the first proposal for a record counted where the app keeps the later one; the instructions lacked the rule on texts that seem to give orders.
+- **Fixed, found by Codex:** a missing or refused answer was counted as a disagreement with the engine; a set asked for with fewer than two records a person came out larger than asked.
+- **Turned down, from Codex:** some kinds of record of the generator always carry the same label (a profile with "Dr." before the name is always the person), so an AI that knew the generator could tell labels from the form. The judge does not see the generator; it is a limit of the set, written down below.
+
+Not done:
+
+- **The project owner's run in Claude Desktop,** with the model the owner uses there. Paste `blind.md` into a conversation, save the answer as a file, and score it.
+- **One run of one model on one set.** 90 records, of which 46 are of the person, so one record more or less moves a figure by one to two points. No second seed was run.
+- **What the set cannot show** is the same as for part 4.1: the generator was written by the hand that wrote the engine's scoring, and the records are short and clean. The set has no relatives, which a session gives and which the research instructions ask the AI to read first. How an AI does with real records and real sessions is not measured.
+- **The figures of the engine here are lower than in part 4.1** (91.7% at the strong level against 99.3%), because the set gives the hard kinds of case as much room as the easy ones.
 
 ### Phase 3 breakdown
 

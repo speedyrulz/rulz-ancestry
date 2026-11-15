@@ -346,6 +346,12 @@ now:
 - **While an AI app is connected,** details of the people being researched go to the
   AI service of the app you connect, which for Claude is Anthropic. See section
   7 of the plan.
+- **How well an AI judges records** is measured on made-up cases beside the
+  app's own matching: `node packages/ai/scripts/measure.mjs export <folder>`
+  writes a file to give the AI, and `score <folder> <answers file>` the figures.
+  In a first run (Claude Sonnet 5.5, 90 records) the AI was right in 27 of the
+  29 records it called a fit, the engine in 22 of 24; the AI said "may fit" to
+  more records of other people. See part 4b.5 of the plan.
 
 The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
 architecture, data sources, development guide and changelog. It is updated after
