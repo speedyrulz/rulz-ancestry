@@ -988,6 +988,11 @@ export function createHandlers(
       records.removeKey(sourceId),
     ),
 
+    // One request with a fixed word and no person; the answer never holds the key.
+    testRecordSourceKey: define<'testRecordSourceKey'>(z.tuple([siteId]), (sourceId) =>
+      records.testKey(sourceId),
+    ),
+
     // A search for several people. The page says whose ancestors and how far
     // back, and which sources; who is asked for, and what is sent for each, is
     // worked out here from the tree, for the plan and again for the start.

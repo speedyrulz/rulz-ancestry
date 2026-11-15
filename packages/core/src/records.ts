@@ -210,6 +210,13 @@ export interface TextRecord extends RecordBase {
   by: string;
   /** What kind of thing it is, in a few words ("File unit"); empty when the source does not say. */
   about: string;
+  /**
+   * A short passage of the text shown with the result, as plain text (never
+   * markup), at most 300 characters. For display only: nothing stores it, no
+   * citation, mark, inbox entry or export keeps it, and a source that gives
+   * none leaves it out.
+   */
+  excerpt?: string;
 }
 
 /** One result of a search. */

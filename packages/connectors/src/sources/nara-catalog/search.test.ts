@@ -227,7 +227,7 @@ describe('naraCatalogConnector', () => {
         return Promise.resolve(new Response(JSON.stringify(data)));
       },
       userAgent: 'RulZAncestry/test',
-      keyOf: () => key,
+      keyOf: () => (key === null ? { kind: 'none' } : { kind: 'key', value: key }),
       // The client does not ask a source it counts for without a place to keep the count.
       memory: { load: () => null, save: () => undefined },
     });

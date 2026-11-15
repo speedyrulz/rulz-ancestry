@@ -1976,6 +1976,8 @@ describe('the search for records', () => {
       ['loc', 'text'],
       ['internet-archive', 'text'],
       ['nara-catalog', 'text'],
+      ['papers-past', 'text'],
+      ['trove', 'text'],
     ]);
     // The Library of Congress is known to be slow, and is given more time than the others.
     expect(setup.sources.map((source) => source.slowSeconds)).toEqual([
@@ -1983,6 +1985,8 @@ describe('the search for records', () => {
       null,
       null,
       90,
+      null,
+      null,
       null,
       null,
     ]);
@@ -1994,6 +1998,8 @@ describe('the search for records', () => {
       'none',
       'none',
       'missing',
+      'missing',
+      'missing',
     ]);
     expect(setup.sources.map((source) => source.quota?.ceiling ?? null)).toEqual([
       null,
@@ -2002,6 +2008,9 @@ describe('the search for records', () => {
       null,
       null,
       9000,
+      // Papers Past is asked without a key: its count is the local cap of keyless requests.
+      200,
+      null,
     ]);
     // Every source says what it is sent.
     expect(setup.sources.every((source) => source.asks !== '')).toBe(true);
@@ -2226,6 +2235,7 @@ describe('a search opened in the browser', () => {
       'familysearch-records',
       'find-a-grave',
       'nara-1950-search',
+      'geni-search',
     ]);
 
     expect(await open(ada)).toEqual({ ok: true });

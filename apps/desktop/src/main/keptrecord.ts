@@ -87,6 +87,14 @@ const keptRecord = z.discriminatedUnion('kind', [
   }),
 ]);
 
+/** The record without its display-only snippet. */
+function withoutExcerpt(record: ExternalRecord): ExternalRecord {
+  if (record.kind !== 'text') return record;
+  const copy = { ...record };
+  delete copy.excerpt;
+  return copy;
+}
+
 /**
  * What is kept of a result: its title, and the record as JSON. Null when the
  * record is too long to keep. For a source whose terms bar keeping what it
@@ -97,7 +105,9 @@ export function keptFormOf(
   manifest: ConnectorManifest,
 ): { title: string; recordJson: string | null } | null {
   if (manifest.mayStoreText === false) return { title: '', recordJson: null };
-  const recordJson = JSON.stringify(record);
+  // The one place a record is turned into JSON for keeping: a snippet shown
+  // with a result (`excerpt`) is display only, for every source.
+  const recordJson = JSON.stringify(withoutExcerpt(record));
   return recordJson.length > RECORD_MARK_JSON_MAX
     ? null
     : { title: cleanText(record.title, 500), recordJson };

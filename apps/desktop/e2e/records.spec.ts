@@ -64,6 +64,8 @@ async function answerSearches(
         const headers = (init?.headers ?? {}) as Record<string, string>;
         if (headers['x-api-key'] !== undefined)
           keys.push(`${new URL(url).host} ${headers['x-api-key']}`);
+        if (headers['authentication-token'] !== undefined)
+          keys.push(`${new URL(url).host} ${headers['authentication-token']}`);
         if (served.busy) {
           return Promise.resolve(
             new Response('slow down', { status: 429, headers: { 'retry-after': '600' } }),
@@ -161,6 +163,26 @@ async function answerSearches(
                     date: '1903-05-01',
                   },
                 ],
+              }),
+            ),
+          );
+        }
+        if (host === 'api.digitalnz.org') {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                search: {
+                  result_count: 1,
+                  results: [
+                    {
+                      id: 90000123,
+                      title: 'Mr Josiah Marsh at the show',
+                      display_date: '3 March 1902',
+                      collection_title: ['Papers Past', 'Testland Gazette'],
+                      landing_url: 'https://paperspast.natlib.govt.nz/newspapers/TG19020303.2.9',
+                    },
+                  ],
+                },
               }),
             ),
           );
@@ -523,9 +545,25 @@ test('searches newspapers and books for words, and attaches a page of a newspape
   await expect(books.getByTestId('record-fit')).toHaveCount(0);
   await expect(books.getByTestId('record-print')).toHaveText('Fenwick, Henrietta., published 1930');
 
-  // Two requests: one to each, and none to the source that keeps people.
+  // Papers Past is asked too, without a key: none is saved.
+  const papersPast = window.getByTestId('records-papers-past');
+  await expect(papersPast.getByTestId('record-result')).toHaveCount(1);
+  await expect(papersPast).toContainText('Testland Gazette');
+
+  // Three requests: one to each, and none to the source that keeps people.
   const asked = (await askedOfInternet(app)).map((address) => new URL(address));
-  expect(asked.map((url) => url.host).sort()).toEqual(['archive.org', 'www.loc.gov']);
+  expect(asked.map((url) => url.host).sort()).toEqual([
+    'api.digitalnz.org',
+    'archive.org',
+    'www.loc.gov',
+  ]);
+  const digitalnz = asked.find((url) => url.host === 'api.digitalnz.org');
+  // The state is for the Library of Congress only, and no key goes with the request.
+  expect(digitalnz?.search).not.toMatch(/vermont/i);
+  expect(digitalnz?.searchParams.get('fields')).not.toMatch(/fulltext|description/);
+  expect(
+    await app.evaluate(() => (globalThis as unknown as { keysSent: string[] }).keysSent),
+  ).toEqual([]);
   const library = asked.find((url) => url.host === 'www.loc.gov');
   expect(library?.searchParams.get('qs')).toBe('Josiah Marsh');
   expect(library?.searchParams.get('start_date')).toBe('1850-01-01');
@@ -536,7 +574,7 @@ test('searches newspapers and books for words, and attaches a page of a newspape
   await newspapers.getByTestId('record-attach').click();
   await expect(newspapers.getByTestId('record-attached')).toBeVisible();
   await expect(window.getByTestId('undo')).toHaveAttribute('title', 'Undo Attach record (Ctrl+Z)');
-  expect(await askedOfInternet(app)).toHaveLength(2);
+  expect(await askedOfInternet(app)).toHaveLength(3);
 
   await window.getByTestId('record-search-close').click();
   const cited = window.getByTestId('person-citation');

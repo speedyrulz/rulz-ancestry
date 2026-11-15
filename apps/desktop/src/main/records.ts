@@ -21,6 +21,10 @@ import {
   openArchivesConnector,
   openArchivesManifest,
   openArchivesSpan,
+  papersPastConnector,
+  papersPastManifest,
+  troveConnector,
+  troveManifest,
   wikidataConnector,
   wikidataManifest,
   wikitreeConnector,
@@ -29,6 +33,7 @@ import {
   type DeepLinkSource,
   type HostMemory,
   type HttpFetch,
+  type KeyAnswer,
   type SearchAnswer,
   type SearchOptions,
   type SourceConnector,
@@ -102,6 +107,7 @@ import type {
   RecordSearchSetup,
   RecordSourceInfo,
   RecordSourceKeyResult,
+  RecordSourceKeyTest,
   TakeRecordFactsRequest,
   TextSearchRequest,
 } from '../shared/ipc';
@@ -192,8 +198,14 @@ export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion'
  *    (nara-1950-census.s3.us-east-2.amazonaws.com) when the user views a
  *    district's page: the pack, the district and the page's number go there,
  *    and nothing of the tree.
+ * 7: the words and the years to DigitalNZ (New Zealand) for Papers Past, with
+ *    the user's own key if one is saved; the words, the years and the user's
+ *    own key to Trove (Australia). A snippet of an article is shown and not
+ *    kept; a citation keeps the heading, the newspaper, the date, the page
+ *    and the link. The Geni link carries the first and the last name to the
+ *    browser.
  */
-export const RECORD_SEARCH_NOTICE_VERSION = 6;
+export const RECORD_SEARCH_NOTICE_VERSION = 7;
 
 /** The setting that holds the user's key for a source, as Windows encrypted it. */
 export const recordSearchKeySetting = (sourceId: string) => `recordSearch.key.${sourceId}`;
@@ -438,6 +450,8 @@ const ASKS: Readonly<Record<string, string>> = {
     'the words only. It looks in the titles, authors and descriptions of books, not inside them',
   [naraCatalogManifest.id]:
     'the words only, and your own key, which tells the Archives whose search it is. It looks in the descriptions of the records the Archives hold',
+  [papersPastManifest.id]: 'the words and the years; your own key if you saved one',
+  [troveManifest.id]: 'the words, the years and your own key',
 };
 
 /** One of the searches of a source, with what it is asked already in it. */
@@ -490,7 +504,7 @@ export class RecordSearchService {
       now: this.#now,
       memory,
       // The key is read and decrypted for each request, and kept nowhere here.
-      keyOf: (manifest) => this.#keyOf(manifest.id),
+      keyOf: (manifest) => this.#keyAnswerOf(manifest.id),
     });
     const connectors: SourceConnector[] = [
       wikitreeConnector(this.#http.for(wikitreeManifest)),
@@ -499,6 +513,8 @@ export class RecordSearchService {
       locConnector(this.#http.for(locManifest)),
       internetArchiveConnector(this.#http.for(internetArchiveManifest)),
       naraCatalogConnector(this.#http.for(naraCatalogManifest)),
+      papersPastConnector(this.#http.for(papersPastManifest)),
+      troveConnector(this.#http.for(troveManifest)),
     ];
     this.#connectors = connectors.filter(({ manifest }) => ASKS[manifest.id] !== undefined);
   }
@@ -544,6 +560,8 @@ export class RecordSearchService {
       asks: ASKS[connector.manifest.id] ?? '',
       slowSeconds: connector.manifest.timeoutSeconds ?? null,
       key: this.#keyState(connector.manifest),
+      keyOptional: connector.manifest.access === 'key-optional',
+      keyUrl: connector.manifest.keyUrl ?? null,
       quota: this.#quotaOf(connector.manifest),
       attribution: connector.manifest.attribution,
       termsUrl: connector.manifest.termsUrl,
@@ -564,6 +582,8 @@ export class RecordSearchService {
         asks: 'nothing: the pack is searched on this PC',
         slowSeconds: null,
         key: 'none' as const,
+        keyOptional: false,
+        keyUrl: null,
         quota: null,
         attribution: pack.credit !== '' ? pack.credit : openArchivesManifest.attribution,
         termsUrl: openArchivesManifest.termsUrl,
@@ -586,6 +606,23 @@ export class RecordSearchService {
       return key === '' ? null : key;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * What is held of the key of a source, for the HTTP client: nothing saved,
+   * the key, or one that is saved and cannot be read. Never "nothing" for a
+   * key that is saved: a source with an optional key is not asked without it then.
+   */
+  #keyAnswerOf(sourceId: string): KeyAnswer {
+    const kept = getSetting(this.#appDb, recordSearchKeySetting(sourceId));
+    if (kept === null) return { kind: 'none' };
+    if (this.#secrets === undefined) return { kind: 'unreadable' };
+    try {
+      const value = this.#secrets.decrypt(kept);
+      return value === '' ? { kind: 'unreadable' } : { kind: 'key', value };
+    } catch {
+      return { kind: 'unreadable' };
     }
   }
 
@@ -647,6 +684,58 @@ export class RecordSearchService {
     }
     setSetting(this.#appDb, recordSearchKeySetting(sourceId), null);
     return { ok: true, sources: this.sources() };
+  }
+
+  /**
+   * Tries the saved key of a source with one search for a fixed word and no
+   * person: nothing of the tree is sent. It needs the notice agreed and a key
+   * that is saved and can be read. What it says never holds the key, nor
+   * anything the source answered: the words are the app's own.
+   */
+  async testKey(sourceId: string): Promise<RecordSourceKeyTest> {
+    const done = (outcome: RecordSourceKeyTest['outcome'], message: string) => ({
+      outcome,
+      message,
+      sources: this.sources(),
+    });
+    const connector = this.#keyed(sourceId);
+    if (connector?.searchTexts === undefined) {
+      return done('failed', 'This source takes no key.');
+    }
+    const { name } = connector.manifest;
+    if (!this.agreed)
+      return done('failed', 'Nothing is sent before you have agreed to what a search sends.');
+    const answer = this.#keyAnswerOf(sourceId);
+    if (answer.kind === 'unreadable') {
+      return done(
+        'failed',
+        `The key saved for ${name} cannot be read on this Windows account. Enter it again.`,
+      );
+    }
+    if (answer.kind === 'none')
+      return done('failed', `Save a key for ${name} first, then test it.`);
+    const keyOptional = connector.manifest.access === 'key-optional';
+    try {
+      await connector.searchTexts(
+        { words: 'library', phrase: false, fromYear: null, toYear: null, state: '' },
+        { offset: 0, limit: RECORD_SEARCH_PAGE },
+        {},
+      );
+    } catch (error) {
+      if (error instanceof HttpError && error.kind === 'key') {
+        return done('refused', `${name} did not accept this key.`);
+      }
+      if (error instanceof HttpError && (error.kind === 'quota' || error.kind === 'paused')) {
+        return done('quota', `${name} cannot be asked again for now: the allowance is used up.`);
+      }
+      return done('failed', `${name} could not be asked, or did not answer in a way that tells.`);
+    }
+    return done(
+      'accepted',
+      keyOptional
+        ? `${name} answered the request that carried your key. DigitalNZ may accept a key it ignores, so this does not show that the key is valid (unverified).`
+        : `${name} accepted this key.`,
+    );
   }
 
   /**
@@ -761,6 +850,41 @@ export class RecordSearchService {
         connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
         citation: {
           page: cleanText(`Identifier ${record.key}`, CITATION_LIMITS.page),
+          text: '',
+          url: record.url,
+          accessedAt,
+        },
+      };
+    }
+    // A newspaper source that may be cited and not quoted: the citation holds
+    // the heading, the newspaper, the date, the page and the link, taken one
+    // by one from the record. The snippet (`excerpt`) is never read here.
+    if (connector.manifest.citeOnly === true && record.kind === 'text') {
+      if (!isOnSite(record.url, connector.manifest)) {
+        return {
+          ok: false,
+          problem: {
+            kind: 'record',
+            message: 'This result does not lead to the site of its source, so it is not attached.',
+            retryAt: null,
+          },
+        };
+      }
+      const page = /^page (\d{1,5})$/i.exec(record.about);
+      const where = [
+        record.by,
+        record.date,
+        ...(page === null ? [] : [`page ${page[1] ?? ''}`]),
+      ].filter((part) => part !== '');
+      const heading = record.title !== '' ? record.title : `Article ${record.key}`;
+      return {
+        ok: true,
+        connector: { id: connector.manifest.id, create: citationSourceOf(connector.manifest) },
+        citation: {
+          page: cleanText(
+            where.length === 0 ? heading : `${heading} (${where.join(', ')})`,
+            CITATION_LIMITS.page,
+          ),
           text: '',
           url: record.url,
           accessedAt,
@@ -1652,7 +1776,11 @@ export class RecordSearchService {
     if (refusal !== null) return fail(refusal);
     if (unfit !== null) return fail({ kind: 'empty', message: unfit, retryAt: null });
     const key = this.#keyState(connector.manifest);
-    if (key !== 'none' && key !== 'saved') {
+    // A source whose key is optional is asked without one; a key that is
+    // saved and cannot be read is never taken for none.
+    const askedWithoutKey =
+      connector.manifest.access === 'key-optional' && (key === 'missing' || key === 'unavailable');
+    if (key !== 'none' && key !== 'saved' && !askedWithoutKey) {
       return fail({
         kind: 'key',
         message:

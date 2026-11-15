@@ -2,6 +2,7 @@ import { QUERY_YEAR_SPREAD, isEmptyQuery, type PersonQuery } from '@rulz/core';
 import type { ConnectorManifest } from './manifest';
 import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
+import { geniSearchManifest } from './sources/geni-search/manifest';
 import { nara1950SearchManifest } from './sources/nara-1950-search/manifest';
 
 /**
@@ -77,6 +78,15 @@ export const nara1950SearchLinks = searchPage(nara1950SearchManifest, '/search/'
   name: [text(query.given), text(query.surname)].filter((part) => part !== '').join(' '),
 }));
 
+/**
+ * Geni's search of people (STUB by the orchestrator: names only; the Geni
+ * builder adds tests and may refine it).
+ */
+export const geniSearchLinks = searchPage(geniSearchManifest, '/search', (query) => ({
+  search_type: 'people',
+  names: [text(query.given), text(query.surname)].filter((part) => part !== '').join(' '),
+}));
+
 /** FamilySearch's search of historical records. */
 export const familySearchRecordsLinks = searchPage(
   familySearchRecordsManifest,
@@ -105,6 +115,7 @@ export const deepLinkSources: readonly DeepLinkSource[] = [
   familySearchRecordsLinks,
   findAGraveLinks,
   nara1950SearchLinks,
+  geniSearchLinks,
 ];
 
 /**

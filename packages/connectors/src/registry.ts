@@ -1,6 +1,7 @@
 import type { ConnectorManifest, ConnectorTier } from './manifest';
 import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
+import { geniSearchManifest } from './sources/geni-search/manifest';
 import { internetArchiveManifest } from './sources/internet-archive/manifest';
 import { locManifest } from './sources/loc/manifest';
 import { nara1940CensusManifest } from './sources/nara-1940-census/manifest';
@@ -8,6 +9,8 @@ import { nara1950CensusManifest } from './sources/nara-1950-census/manifest';
 import { nara1950SearchManifest } from './sources/nara-1950-search/manifest';
 import { naraCatalogManifest } from './sources/nara-catalog/manifest';
 import { openArchivesManifest } from './sources/open-archives/manifest';
+import { papersPastManifest } from './sources/papers-past/manifest';
+import { troveManifest } from './sources/trove/manifest';
 import { wikidataManifest } from './sources/wikidata/manifest';
 import { wikitreeManifest } from './sources/wikitree/manifest';
 
@@ -24,6 +27,9 @@ export const manifests: readonly ConnectorManifest[] = [
   findAGraveManifest,
   familySearchRecordsManifest,
   nara1950SearchManifest,
+  papersPastManifest,
+  troveManifest,
+  geniSearchManifest,
 ];
 
 const byId = new Map<string, ConnectorManifest>();

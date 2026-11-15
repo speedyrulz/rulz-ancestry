@@ -70,6 +70,14 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * What the app holds of the user's key for a source: none saved, the key, or a
+ * key that is saved but cannot be read (a secret store that fails). The last
+ * is never taken for "none": a source with an optional key is not asked
+ * without the key then.
+ */
+export type KeyAnswer = { kind: 'none' } | { kind: 'key'; value: string } | { kind: 'unreadable' };
+
 export interface HttpClientOptions {
   fetch: HttpFetch;
   /** Sent with every request. It names the app and its version, and nothing of the user. */
@@ -91,11 +99,11 @@ export interface HttpClientOptions {
   /** Where the client keeps what must outlast the app. Without it, that is forgotten when the app closes. */
   memory?: HostMemory;
   /**
-   * Gives the user's key for a source that needs one; null when there is
-   * none. The client asks for it just before a request goes out, sends it in
-   * the header the manifest names, and keeps it nowhere.
+   * Gives the user's key for a source that has one (see `KeyAnswer`). The
+   * client asks for it just before a request goes out, sends it in the header
+   * the manifest names, and keeps it nowhere. Without this, no key is saved.
    */
-  keyOf?: (manifest: ConnectorManifest) => string | null;
+  keyOf?: (manifest: ConnectorManifest) => KeyAnswer;
 }
 
 /** How much of a source's count of requests is used, as the app counts it. */
@@ -129,6 +137,19 @@ const QUOTA_CLOCK_BEHIND_MS = 12 * 3_600_000;
 
 /** The name under which the count of a source is kept. No host has a colon in its name. */
 export const quotaMemoryName = (manifestId: string) => `quota:${manifestId}`;
+
+/** The name under which the count of requests sent without a key is kept. */
+export const keylessQuotaMemoryName = (manifestId: string) => `quota:${manifestId}:keyless`;
+
+/**
+ * How many requests a day the app sends on this PC to a source with an
+ * optional key when no key is saved: the source's allowance without a key is
+ * shared by every user, and one install must not drain it.
+ */
+export const KEYLESS_DAILY_CAP = 200;
+
+/** The name of the memory of a host when a request sent no key: its pause and its turns are its own. */
+const keylessHost = (host: string) => `${host}:keyless`;
 
 /** The period a moment lies in, and when the next one starts. */
 export function quotaPeriod(now: number, period: 'day' | 'month'): { name: string; next: number } {
@@ -304,8 +325,8 @@ export class HttpClient {
   readonly #pauseMs: number;
   readonly #cacheEntries: number;
   readonly #memory: HostMemory | undefined;
-  readonly #keyOf: ((manifest: ConnectorManifest) => string | null) | undefined;
-  /** The counts of the sources that have one, by the id of the source. */
+  readonly #keyOf: ((manifest: ConnectorManifest) => KeyAnswer) | undefined;
+  /** The counts of the sources that have one, by the name they are kept under. */
   readonly #quotas = new Map<string, QuotaRecord>();
   readonly #hosts = new Map<string, HostState>();
   /** Answers by address. A Map keeps the order they were put in, oldest first. */
@@ -348,12 +369,39 @@ export class HttpClient {
 
   /** How much of a source's count is used; null for a source that has none. */
   quotaOf(manifest: ConnectorManifest): QuotaState | null {
+    return this.#quotaFor(manifest, this.#isKeyless(manifest));
+  }
+
+  /**
+   * The count of the requests that sent a key, or, for a source with an
+   * optional key that has none saved, the count of those that sent none
+   * against the app's own cap of a day.
+   */
+  #quotaFor(manifest: ConnectorManifest, keyless: boolean): QuotaState | null {
+    if (keyless) {
+      const { name, next } = quotaPeriod(this.#now(), 'day');
+      const record = this.#counted(keylessQuotaMemoryName(manifest.id), name, KEYLESS_DAILY_CAP);
+      return {
+        period: record.period,
+        used: record.used,
+        ceiling: KEYLESS_DAILY_CAP,
+        resetsAt: next,
+      };
+    }
     const quota = manifest.quota;
     if (quota === undefined) return null;
     const { name, next } = quotaPeriod(this.#now(), quota.period);
     const ceiling = Math.floor(quota.requests * QUOTA_SHARE);
-    const record = this.#counted(manifest.id, name, ceiling);
+    const record = this.#counted(quotaMemoryName(manifest.id), name, ceiling);
     return { period: record.period, used: record.used, ceiling, resetsAt: next };
+  }
+
+  /** True for a source with an optional key when no key is saved. */
+  #isKeyless(manifest: ConnectorManifest): boolean {
+    return (
+      manifest.access === 'key-optional' &&
+      (this.#keyOf?.(manifest) ?? { kind: 'none' }).kind === 'none'
+    );
   }
 
   /**
@@ -361,10 +409,10 @@ export class HttpClient {
    * begun: a clock that is set forward and back again does not bring a used
    * month back, and one that is set back does not empty the month it left.
    */
-  #counted(id: string, period: string, ceiling: number): QuotaRecord {
-    let record = this.#quotas.get(id) ?? this.#recalledCount(id, period, ceiling);
+  #counted(name: string, period: string, ceiling: number): QuotaRecord {
+    let record = this.#quotas.get(name) ?? this.#recalledCount(name, period, ceiling);
     if (period > record.period) record = { period, used: 0 };
-    this.#quotas.set(id, record);
+    this.#quotas.set(name, record);
     return record;
   }
 
@@ -374,12 +422,12 @@ export class HttpClient {
    * a month that is used up: the app does not know how much it asked, and
    * asking on could shut the user's key out at the source.
    */
-  #recalledCount(id: string, period: string, ceiling: number): QuotaRecord {
+  #recalledCount(name: string, period: string, ceiling: number): QuotaRecord {
     const usedUp = { period, used: ceiling };
     if (this.#memory === undefined) return { period, used: 0 };
     let kept: unknown;
     try {
-      kept = this.#memory.load(quotaMemoryName(id));
+      kept = this.#memory.load(name);
     } catch {
       return usedUp;
     }
@@ -401,9 +449,10 @@ export class HttpClient {
    * just before it goes out. Throws when the app's share is used up, and when
    * the count cannot be kept: a count that is lost would let the app ask on.
    */
-  #spend(manifest: ConnectorManifest): void {
-    const state = this.quotaOf(manifest);
+  #spend(manifest: ConnectorManifest, keyless: boolean): void {
+    const state = this.#quotaFor(manifest, keyless);
     if (state === null) return;
+    const memoryName = keyless ? keylessQuotaMemoryName(manifest.id) : quotaMemoryName(manifest.id);
     const lost = new HttpError(
       'quota',
       `The app cannot keep count of what it asks ${manifest.name}, so it does not ask.`,
@@ -413,35 +462,57 @@ export class HttpClient {
     if (state.used >= state.ceiling) {
       throw new HttpError(
         'quota',
-        `${manifest.name} has been asked as often this ${manifest.quota?.period ?? 'month'} as the app allows.`,
+        `${manifest.name} has been asked as often this ${keyless ? 'day' : (manifest.quota?.period ?? 'month')} as the app allows${keyless ? ' without a key of your own' : ''}.`,
         { retryAt: state.resetsAt },
       );
     }
     const record = { period: state.period, used: state.used + 1 };
     try {
-      this.#memory.save(quotaMemoryName(manifest.id), record);
+      this.#memory.save(memoryName, record);
     } catch {
       throw lost;
     }
-    this.#quotas.set(manifest.id, record);
+    this.#quotas.set(memoryName, record);
   }
 
   /**
-   * The key of a source that needs one, for one request. Throws when there is
-   * none, or when it is not something a header can hold.
+   * The key of a source that has one, for one request. Null for a source
+   * with no key, and for one whose key is optional when none is saved: no
+   * header is sent then. Throws when a key is needed and there is none, when
+   * a saved key cannot be read (never a silent fall-back to no key), and when
+   * the key is not something a header can hold.
    */
   #key(manifest: ConnectorManifest): { header: string; value: string } | null {
     if (manifest.auth !== 'apiKey') return null;
-    const value = this.#keyOf?.(manifest) ?? null;
-    if (manifest.keyHeader === undefined || value === null || !KEY.test(value)) {
+    const answer: KeyAnswer = this.#keyOf?.(manifest) ?? { kind: 'none' };
+    if (manifest.keyHeader === undefined) {
       throw new HttpError('key', `${manifest.name} needs your own key.`);
     }
-    return { header: manifest.keyHeader, value };
+    if (answer.kind === 'none') {
+      if (manifest.access === 'key-optional') return null;
+      throw new HttpError('key', `${manifest.name} needs your own key.`);
+    }
+    if (answer.kind === 'unreadable') {
+      throw new HttpError('key', `The key saved for ${manifest.name} cannot be read.`);
+    }
+    if (!KEY.test(answer.value)) {
+      throw new HttpError(
+        'key',
+        `The key saved for ${manifest.name} is not one a request can carry.`,
+      );
+    }
+    return { header: manifest.keyHeader, value: answer.value };
+  }
+
+  /** The name a host's pause and turns are kept under: its own when no key is sent to a key-optional source. */
+  #bucketOf(host: string, keyless: boolean): string {
+    return keyless ? keylessHost(host) : host;
   }
 
   /** Until when a source must be left alone, in Unix milliseconds; null when it may be asked. */
   pausedUntil(manifest: ConnectorManifest): number | null {
-    const until = this.#host(new URL(manifest.baseUrl).host).pausedUntil;
+    const host = new URL(manifest.baseUrl).host;
+    const until = this.#host(this.#bucketOf(host, this.#isKeyless(manifest))).pausedUntil;
     return until > this.#now() ? until : null;
   }
 
@@ -481,18 +552,41 @@ export class HttpClient {
     const forgotten = this.#forgotten;
     try {
       // Without a key there is nothing to wait a turn for.
-      this.#key(manifest);
-      await this.#takeTurn(manifest, url.host, abort.signal);
+      const first = this.#key(manifest);
+      const firstKeyless = first === null && manifest.access === 'key-optional';
+      await this.#takeTurn(manifest, this.#bucketOf(url.host, firstKeyless), abort.signal);
+      // The key is taken now, not kept from before: it may have been removed
+      // or saved while the request waited. Then the request is counted, and goes out.
+      let key = this.#key(manifest);
+      let keyless = key === null && manifest.access === 'key-optional';
+      // A key saved or removed while the request waited: what is sent is
+      // counted, paused and spaced in its own bucket, so it takes a turn there.
+      if (keyless !== firstKeyless) {
+        await this.#takeTurn(manifest, this.#bucketOf(url.host, keyless), abort.signal);
+        const again = this.#key(manifest);
+        const keylessAgain = again === null && manifest.access === 'key-optional';
+        // Changed once more while it waited: asking on could go on forever.
+        if (keylessAgain !== keyless) {
+          throw new HttpError(
+            'paused',
+            `The key for ${manifest.name} changed while the request waited. Try again.`,
+            { retryAt: this.#now() + 1000 },
+          );
+        }
+        key = again;
+        keyless = keylessAgain;
+      }
+      const bucket = this.#bucketOf(url.host, keyless);
+      // The last look, once, just before the request goes out.
       try {
         request.beforeSend?.();
       } catch (error) {
         if (error instanceof HttpError) throw error;
         throw new HttpError('cancelled', 'The request was given up.');
       }
-      // The key is taken now, not kept from before: it may have been removed
-      // while the request waited. Then the request is counted, and goes out.
-      const key = this.#key(manifest);
-      this.#spend(manifest);
+      // Only a request that sends a key counts against the key's quota; one
+      // that sends none counts against the app's own cap of a day.
+      this.#spend(manifest, keyless);
       // A source that is known to be slow is given the time its manifest names.
       const patience =
         manifest.timeoutSeconds === undefined ? this.#timeoutMs : manifest.timeoutSeconds * 1000;
@@ -520,14 +614,14 @@ export class HttpClient {
       if (response.status === 429 || response.status === 503) {
         const asked = retryAfterMs(response.headers.get('retry-after'), this.#now());
         await response.body?.cancel().catch(() => undefined);
-        throw this.#pause(manifest, url.host, asked, response.status);
+        throw this.#pause(manifest, bucket, asked, response.status, keyless);
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
         // "Forbidden" is how a source that names its own pause shuts a client
         // out, or asks it to prove that it is no robot.
         if (response.status === 403 && manifest.pauseSeconds !== undefined) {
-          throw this.#pause(manifest, url.host, null, response.status);
+          throw this.#pause(manifest, bucket, null, response.status, keyless);
         }
         // From a source with a key, "unauthorized" and "forbidden" are about the key.
         if (key !== null && (response.status === 401 || response.status === 403)) {
@@ -553,7 +647,7 @@ export class HttpClient {
         // one is no robot. Asking on would make it worse.
         const page = /^\s*</.test(text) || /html/i.test(response.headers.get('content-type') ?? '');
         if (manifest.pauseSeconds !== undefined && page) {
-          throw this.#pause(manifest, url.host, null, response.status);
+          throw this.#pause(manifest, bucket, null, response.status, keyless);
         }
         // A source with a key that sends its website in place of an answer
         // has not taken the request for one of its API.
@@ -603,6 +697,7 @@ export class HttpClient {
     hostName: string,
     asked: number | null,
     status: number,
+    keyless = false,
   ): HttpError {
     // A source that says "too many" and "ask again now" in one breath is
     // still left alone for the span of its limit.
@@ -618,10 +713,11 @@ export class HttpClient {
     const host = this.#host(hostName);
     host.pausedUntil = Math.max(host.pausedUntil, this.#now() + pause);
     this.#remember(hostName, host);
-    return new HttpError('paused', `${manifest.name} asks to be left alone for a while.`, {
-      status,
-      retryAt: host.pausedUntil,
-    });
+    return new HttpError(
+      'paused',
+      `${manifest.name} asks to be left alone for a while.${keyless ? ' The free allowance shared by everyone who sends no key may be spent; a key of your own avoids this.' : ''}`,
+      { status, retryAt: host.pausedUntil },
+    );
   }
 
   #host(host: string): HostState {

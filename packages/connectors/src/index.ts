@@ -15,7 +15,9 @@ export {
   HttpError,
   addressOf,
   retryAfterMs,
+  KEYLESS_DAILY_CAP,
   QUOTA_SHARE,
+  keylessQuotaMemoryName,
   quotaMemoryName,
   quotaPeriod,
   type HostMemory,
@@ -25,6 +27,7 @@ export {
   type HttpClientOptions,
   type HttpErrorKind,
   type HttpFetch,
+  type KeyAnswer,
   type JsonAnswer,
   type JsonRequest,
   type SourceClient,
@@ -34,6 +37,7 @@ export {
   deepLinkSources,
   familySearchRecordsLinks,
   findAGraveLinks,
+  geniSearchLinks,
   nara1950SearchLinks,
   type DeepLinkSource,
 } from './links';
@@ -63,6 +67,11 @@ export {
   naraWords,
   parseNaraSearch,
 } from './sources/nara-catalog/search';
+export { geniSearchManifest } from './sources/geni-search/manifest';
+export { papersPastManifest } from './sources/papers-past/manifest';
+export { papersPastConnector } from './sources/papers-past/search';
+export { troveManifest } from './sources/trove/manifest';
+export { troveConnector } from './sources/trove/search';
 export { openArchivesManifest } from './sources/open-archives/manifest';
 export {
   OPEN_ARCHIVES_RECORD_URL,

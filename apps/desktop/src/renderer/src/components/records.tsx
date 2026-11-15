@@ -15,6 +15,7 @@ import type {
   RecordSearchProblem,
   RecordSearchSetup,
   RecordSourceInfo,
+  RecordSourceKeyTest,
   TreeState,
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
@@ -71,6 +72,15 @@ function textFormOf(query: TextQuery): TextForm {
     toYear: query.toYear === null ? '' : String(query.toYear),
     state: query.state,
   };
+}
+
+/**
+ * What one source of newspapers and books is sent. The state is for the
+ * Library of Congress only, so Papers Past, Trove and the other sources are
+ * not sent it.
+ */
+function textSentTo(source: RecordSourceInfo, query: TextQuery): TextQuery {
+  return source.id === 'loc' ? query : { ...query, state: '' };
 }
 
 /** What a search asks for: a person, or words. */
@@ -219,6 +229,9 @@ export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeP
               </li>
             ))}
           </ul>
+          Words and years go to DigitalNZ (New Zealand) for Papers Past, with your key if one is
+          saved, which tells DigitalNZ whose search it is. Words, years and your key go to Trove
+          (Australia).
         </li>
         <li>
           <strong>What you type is sent as you type it.</strong> The forms start with the name and
@@ -250,7 +263,7 @@ export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeP
           not ask these itself. A button opens a search there in your own browser, and the name of
           the person, and for some sites their years, are part of the address it opens. That site,
           and your browser&apos;s history, then hold them; if you are signed in there, the site
-          knows who searched.
+          knows who searched. The Geni link carries the first and the last name to the browser.
         </li>
         <li>
           <strong>Living people:</strong> the app does not search for a person who may be living,
@@ -262,7 +275,8 @@ export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeP
           turn it down; what you keep or turn down is saved in the tree&apos;s file, and goes where
           the tree&apos;s folder goes. The app notes when it asked each service, and until when a
           service asked to be left alone, so that it does not ask too often; it does not note what
-          was asked.
+          was asked. A snippet of an article is shown and is not kept. A citation, or a result you
+          keep, keeps the heading, the newspaper, the date, the page and the link.
         </li>
       </ul>
       <div className="dialog-actions">
@@ -319,6 +333,11 @@ export function Result({
       {record.kind === 'person' && record.sex !== null && (
         <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
       )}
+      {record.kind === 'text' && record.excerpt !== undefined && record.excerpt.trim() !== '' && (
+        <div className="record-fact" data-testid="record-excerpt">
+          {record.excerpt}
+        </div>
+      )}
       {fit !== undefined && fitWhy(fit) !== '' && (
         <div className="record-fact muted" data-testid="record-fit-why">
           {fitWhy(fit)}
@@ -372,6 +391,37 @@ export function Result({
 
 /** Keep a result for later, turn it down, or take a turning-down back. */
 type MarkAction = 'keep' | 'decline' | 'allow';
+
+/**
+ * The page Trove's terms ask an app to link where its results are shown.
+ * A fixed address, not one taken from a result or from the source's data.
+ */
+const TROVE_CREDIT_URL = 'https://trove.nla.gov.au/';
+
+/** The credit, ending in one full stop. A credit that already ends in one is left as it is. */
+function creditLine(attribution: string): string {
+  const trimmed = attribution.trim();
+  if (/[!?]$/.test(trimmed)) return trimmed;
+  const text = trimmed.replace(/\.+$/, '');
+  return text === '' ? '' : `${text}.`;
+}
+
+/** The credit line. Where it names Trove, that word links to Trove's own site. */
+function CreditWords({ source }: { source: RecordSourceInfo }) {
+  const text = creditLine(source.attribution);
+  if (source.id !== 'trove') return text;
+  const at = text.indexOf('Trove');
+  if (at < 0) return text;
+  return (
+    <>
+      {text.slice(0, at)}
+      <a href={TROVE_CREDIT_URL} target="_blank" rel="noreferrer">
+        Trove
+      </a>
+      {text.slice(at + 'Trove'.length)}
+    </>
+  );
+}
 
 interface SourceResultsProps {
   source: RecordSourceInfo;
@@ -481,8 +531,8 @@ function SourceResults({
           More results
         </button>
       )}
-      <p className="hint">
-        {source.attribution}.{' '}
+      <p className="hint" data-testid="record-credit">
+        <CreditWords source={source} />{' '}
         <a href={source.termsUrl} target="_blank" rel="noreferrer">
           Terms of use
         </a>
@@ -498,21 +548,29 @@ interface SourceKeyProps {
 }
 
 /**
- * The user's own key for a source that needs one. The key is typed here once
- * and handed to the main process, which keeps it encrypted; this window is
- * never given it back, only told whether one is saved.
+ * The user's own key for a source that asks with one. The key is typed here
+ * once and handed to the main process, which keeps it encrypted; this window
+ * is never given it back, only told whether one is saved. A source that works
+ * without a key is ready while none is saved. One that requires a key is off
+ * until one is added.
  */
 function SourceKey({ source, onSources }: SourceKeyProps) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** What a test of the saved key said. The key itself is not in it. */
+  const [tested, setTested] = useState<Pick<RecordSourceKeyTest, 'outcome' | 'message'> | null>(
+    null,
+  );
   const fits = /^[\x21-\x7e]{8,300}$/.test(typed.trim());
+  const keyPage = source.keyUrl ?? source.termsUrl;
 
   const done = (
     result: Promise<{ ok: true; sources: RecordSourceInfo[] } | { ok: false; message: string }>,
   ) => {
     setBusy(true);
     setProblem(null);
+    setTested(null);
     result
       .then(
         (answer) => {
@@ -534,16 +592,58 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
     done(api.setRecordSourceKey({ sourceId: source.id, key }));
   };
 
+  /** Asks the main process to try the saved key. The key never comes back here. */
+  const testKey = () => {
+    setBusy(true);
+    setProblem(null);
+    setTested(null);
+    api
+      .testRecordSourceKey(source.id)
+      .then(
+        (answer) => {
+          onSources(answer.sources);
+          setTested({ outcome: answer.outcome, message: answer.message });
+        },
+        (failure: unknown) => setProblem(errorMessage(failure)),
+      )
+      .finally(() => setBusy(false));
+  };
+
   const quota = source.quota;
+  /** The count shown is the keyless one: no key of the user's own is saved. */
+  const keyless = source.keyOptional && (source.key === 'missing' || source.key === 'unavailable');
+  const howTo = (
+    <a href={keyPage} target="_blank" rel="noreferrer">
+      How to ask for one
+    </a>
+  );
   return (
     <div className="record-key" data-testid={`record-key-${source.id}`}>
-      <strong>{source.name}</strong> needs a key of your own, which the service gives out for free.{' '}
-      <a href={source.termsUrl} target="_blank" rel="noreferrer">
-        How to ask for one
-      </a>
+      {source.keyOptional && source.key === 'missing' ? (
+        <p data-testid="record-key-state">
+          <strong>{source.name}</strong> is ready. Add your own free key. Without one, Papers Past
+          is asked through a free allowance shared by everyone, which can run out. {howTo}
+        </p>
+      ) : source.key === 'missing' ? (
+        <p data-testid="record-key-state">
+          {source.name} is off until you add a key. It needs a key of your own, which the service
+          gives out for free. {howTo}
+        </p>
+      ) : (
+        <>
+          <strong>{source.name}</strong>{' '}
+          {source.keyOptional
+            ? 'can take a key of your own, which the service gives out for free.'
+            : 'needs a key of your own, which the service gives out for free.'}{' '}
+          {howTo}
+        </>
+      )}
       {source.key === 'saved' && (
         <p data-testid="record-key-state">
           A key is saved, encrypted by Windows for your account. The app does not show it again.{' '}
+          <button type="button" disabled={busy} onClick={testKey} data-testid="record-key-test">
+            Test the key
+          </button>{' '}
           <button
             type="button"
             disabled={busy}
@@ -593,11 +693,23 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
           {problem}
         </p>
       )}
+      {tested !== null && (
+        <p
+          className={tested.outcome === 'accepted' ? 'hint' : 'error'}
+          role={tested.outcome === 'accepted' ? 'status' : 'alert'}
+          data-testid="record-key-tested"
+        >
+          {tested.message}
+        </p>
+      )}
       {quota !== null && (
         <p className="hint" data-testid="record-quota">
           Asked {quota.used.toLocaleString()} of {quota.ceiling.toLocaleString()} times this{' '}
-          {quota.period}, as this app counts it. Every search, and every &quot;More results&quot;,
-          is one. The service allows a little more; the app keeps the rest in hand.
+          {keyless ? `${quota.period} without a key of your own` : quota.period}, as this app counts
+          it. Every search, and every &quot;More results&quot;, is one.{' '}
+          {keyless
+            ? 'This is as often as the app asks on this PC without a key of your own.'
+            : 'The service allows a little more; the app keeps the rest in hand.'}
         </p>
       )}
     </div>
@@ -951,7 +1063,7 @@ export function RecordSearchDialog({
     round.current.text += 1;
     setSentText(typedText);
     for (const source of textSources) {
-      ask({ kind: 'text', query: typedText }, source, 0, round.current.text);
+      ask({ kind: 'text', query: textSentTo(source, typedText) }, source, 0, round.current.text);
     }
   };
 
@@ -1143,7 +1255,9 @@ export function RecordSearchDialog({
               }
             />
             <div className="field">
-              <label htmlFor="record-state">Newspapers of (state)</label>
+              <label htmlFor="record-state">
+                Newspapers of (state) <span className="muted">Library of Congress only</span>
+              </label>
               <select
                 id="record-state"
                 value={textForm.state}
@@ -1201,7 +1315,12 @@ export function RecordSearchDialog({
               onCompare={compare}
               onMark={mark}
               onMore={(source, offset) =>
-                ask({ kind: 'text', query: sentText }, source, offset, round.current.text)
+                ask(
+                  { kind: 'text', query: textSentTo(source, sentText) },
+                  source,
+                  offset,
+                  round.current.text,
+                )
               }
             />
           )}

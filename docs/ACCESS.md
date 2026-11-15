@@ -58,11 +58,11 @@ signed in with your own Claude account.
 Each of these is believed to offer a free key, but the terms were not checked
 on the date above. Confirm before building the connector.
 
-- [ ] Geni (app key, OAuth sign-in)
-- [ ] Digital Public Library of America
-- [ ] Europeana
-- [ ] Trove (National Library of Australia)
-- [ ] DigitalNZ (includes Papers Past)
+- [x] Geni: every API call needs the user's own Geni login and a registered app, and its terms bar keeping answers, so the app only opens Geni's own search in the browser (part 5.4).
+- [ ] Digital Public Library of America (left out in part 5.4)
+- [ ] Europeana (left out in part 5.4)
+- [x] Trove (National Library of Australia): a free key per user by application (about a week); the terms keep a key to whoever obtained it, so each user brings their own (part 5.4).
+- [x] DigitalNZ (includes Papers Past): works without a key on an allowance shared by all; a free personal key is optional (part 5.4).
 
 ## Needed before Phase 6 (release)
 

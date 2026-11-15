@@ -7,6 +7,7 @@ import {
   deepLinkSources,
   familySearchRecordsLinks,
   findAGraveLinks,
+  geniSearchLinks,
   nara1950SearchLinks,
 } from './links';
 import { manifestsByTier } from './registry';
@@ -14,6 +15,10 @@ import { wikitreeManifest } from './sources/wikitree/manifest';
 
 // The people below are made up.
 const full = { given: 'Josiah', surname: 'Marsh', birthYear: 1835, deathYear: 1910 };
+
+/** What was typed, in a query string: Geni's constant `search_type` is not. */
+const valuesOf = (url: URL): string[] =>
+  [...url.searchParams].filter(([name]) => name !== 'search_type').map(([, value]) => value);
 
 describe('links to sites the app never fetches', () => {
   it('makes the address of a search at Find a Grave', () => {
@@ -49,6 +54,37 @@ describe('links to sites the app never fetches', () => {
     expect(url.origin + url.pathname).toBe('https://1950census.archives.gov/search/');
     // Years are not sent: the site searches by name only.
     expect(Object.fromEntries(url.searchParams)).toEqual({ name: 'Josiah Marsh' });
+  });
+
+  it('makes the address of a name search of people at Geni, names only', () => {
+    const url = new URL(geniSearchLinks.buildSearchUrl(full) ?? '');
+    expect(url.protocol).toBe('https:');
+    expect(url.origin).toBe('https://www.geni.com');
+    expect(url.origin + url.pathname).toBe('https://www.geni.com/search');
+    // Years are not sent: only the names are.
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      search_type: 'people',
+      names: 'Josiah Marsh',
+    });
+    expect(url.href).toBe('https://www.geni.com/search?search_type=people&names=Josiah+Marsh');
+  });
+
+  it('asks Geni for one name or the other, cuts a long one, and gives no address for nobody', () => {
+    const only = (given: string, surname: string) =>
+      new URL(
+        geniSearchLinks.buildSearchUrl({ given, surname, birthYear: 1904, deathYear: 1977 }) ?? '',
+      ).searchParams.get('names');
+    expect(only(' Hemi ', '')).toBe('Hemi');
+    expect(only('', ' Rangi ')).toBe('Rangi');
+    expect(only('P'.repeat(140), 'Q'.repeat(140))).toBe(`${'P'.repeat(100)} ${'Q'.repeat(100)}`);
+    for (const [given, surname] of [
+      ['', ''],
+      [' ', '\t'],
+    ] as const) {
+      expect(
+        geniSearchLinks.buildSearchUrl({ given, surname, birthYear: 1904, deathYear: 1977 }),
+      ).toBeNull();
+    }
   });
 
   it('asks the 1950 census for a name, and for nothing when there is none', () => {
@@ -92,7 +128,7 @@ describe('links to sites the app never fetches', () => {
           deathYear: null,
         }) ?? '',
       );
-      expect([...url.searchParams.values()], source.manifest.id).toEqual(['Marsh']);
+      expect(valuesOf(url), source.manifest.id).toEqual(['Marsh']);
       expect(
         source.buildSearchUrl({ given: ' ', surname: '', birthYear: 1835, deathYear: null }),
       ).toBeNull();
@@ -123,7 +159,7 @@ describe('links to sites the app never fetches', () => {
         expect(url.protocol).toBe('https:');
         expect(url.host).toBe(site.host);
         expect(url.username + url.password + url.hash).toBe('');
-        const values = [...url.searchParams.values()];
+        const values = valuesOf(url);
         const clean = typed.trim().replace(/\s+/g, ' ');
         // The typed names stay in the query string, and a year that is none is not sent.
         // Separate name fields send two values; one name field joins the two.

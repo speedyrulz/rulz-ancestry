@@ -282,10 +282,10 @@ describe('the name search of the census, as a link', () => {
 });
 
 describe('the notice', () => {
-  it('is at version 6, and an agreement to the version before no longer counts', async () => {
-    expect(RECORD_SEARCH_NOTICE_VERSION).toBe(6);
+  it('is at version 7, and an agreement to the version before no longer counts', async () => {
+    expect(RECORD_SEARCH_NOTICE_VERSION).toBe(7);
     setSetting(appDb, RECORD_SEARCH_NOTICE_SETTING, '2026-11-14T00:00:00.000Z');
-    setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, '5');
+    setSetting(appDb, RECORD_SEARCH_NOTICE_VERSION_SETTING, '6');
     expect(records.agreed).toBe(false);
     records.agree();
     expect(records.agreed).toBe(true);

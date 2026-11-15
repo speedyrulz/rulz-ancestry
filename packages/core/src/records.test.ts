@@ -10,10 +10,30 @@ import {
   textQueryProblem,
   textQueryWords,
   type TextQuery,
+  type TextRecord,
 } from './records';
 
 const day = (year: number, month: number, date: number) =>
   calendarToJdn('gregorian', year, month, date);
+
+describe('TextRecord', () => {
+  const base: TextRecord = {
+    kind: 'text',
+    connectorId: 'example',
+    key: '1',
+    title: 'A heading',
+    url: 'https://example.org/1',
+    date: '',
+    by: '',
+    about: '',
+  };
+
+  it('may carry an excerpt, and need not', () => {
+    const shown: TextRecord = { ...base, excerpt: 'a short passage' };
+    expect(shown.excerpt).toBe('a short passage');
+    expect(base.excerpt).toBeUndefined();
+  });
+});
 
 describe('queryYear', () => {
   it('gives the year of a full date and of a year', () => {

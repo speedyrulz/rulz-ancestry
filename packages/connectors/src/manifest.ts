@@ -19,7 +19,7 @@ export const connectorManifestSchema = z
     tier: z.enum(['api', 'bulk', 'deeplink']),
     auth: z.enum(['none', 'apiKey', 'oauth2-pkce']),
     /** What the user or project must obtain before the source can be used. */
-    access: z.enum(['open', 'key-required', 'approval-required']),
+    access: z.enum(['open', 'key-required', 'key-optional', 'approval-required']),
     baseUrl: z.string().refine((value) => URL.canParse(value), 'must be a valid URL'),
     /**
      * The site the pages of its records are on, where that is another host
@@ -63,6 +63,22 @@ export const connectorManifestSchema = z
      * identifier and its address, which the app makes itself. Absent means it may.
      */
     mayStoreText: z.boolean().optional(),
+    /**
+     * True when a citation of a record is built only from an allow-list of
+     * bibliographic fields (heading, newspaper, date, page, key and the link
+     * the app makes), with no text of the record, and no excerpt is kept
+     * anywhere. Not with `mayShareWithAi` (the text is not kept to quote) and
+     * not with `mayStoreText: false` (two meanings for one source).
+     */
+    citeOnly: z.boolean().optional(),
+    /** Where a user applies for a key of their own: an HTTPS page. */
+    keyUrl: z
+      .string()
+      .refine(
+        (value) => URL.canParse(value) && new URL(value).protocol === 'https:',
+        'must be an HTTPS URL',
+      )
+      .optional(),
     /**
      * True when what the source returns may be passed on to an AI service,
      * for the optional AI assistant: its own pages were read and allow it, or
@@ -126,6 +142,27 @@ export const connectorManifestSchema = z
         path: ['mayShareWithAi'],
         message:
           'what an AI quotes of a record is kept with its proposal, which a source that bars keeping does not allow',
+      });
+    }
+    if (manifest.citeOnly === true && manifest.mayShareWithAi === true) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['citeOnly'],
+        message: 'a source whose text is not kept cannot be passed on to an AI service',
+      });
+    }
+    if (manifest.citeOnly === true && manifest.mayStoreText === false) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['citeOnly'],
+        message: 'citeOnly and mayStoreText false are two meanings for one source',
+      });
+    }
+    if (manifest.access === 'key-optional' && manifest.auth !== 'apiKey') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['access'],
+        message: 'a source whose key is optional uses an API key',
       });
     }
     if (manifest.auth !== 'none' && manifest.access === 'open') {

@@ -571,6 +571,13 @@ export interface RecordSourceInfo {
    * - "unavailable": it needs one, and this PC cannot keep one safely.
    */
   key: 'none' | 'missing' | 'saved' | 'unreadable' | 'unavailable';
+  /**
+   * True when the source works without a key and a key of the user's own is
+   * a choice (Papers Past): "missing" then means it is asked without one.
+   */
+  keyOptional: boolean;
+  /** Where the user applies for a key of their own; null when the source has no such page. */
+  keyUrl: string | null;
   /** How much of the source's count of requests the app has used; null for a source without one. */
   quota: {
     used: number;
@@ -678,6 +685,21 @@ export interface RecordSourceKeyRequest {
 /** The sources as they stand after a key was saved or removed, or why it was not. */
 export type RecordSourceKeyResult =
   { ok: true; sources: RecordSourceInfo[] } | { ok: false; message: string };
+
+/**
+ * What a test of a saved key found:
+ * - "accepted": the source answered the request that carried it;
+ * - "refused": the source refused the key;
+ * - "quota": the key or the app's share of it is used up for now;
+ * - "failed": the source could not be asked or did not answer in a way that tells.
+ * `message` says it in words for the user (for Papers Past an accepted key
+ * may still be one DigitalNZ ignores).
+ */
+export interface RecordSourceKeyTest {
+  outcome: 'accepted' | 'refused' | 'quota' | 'failed';
+  message: string;
+  sources: RecordSourceInfo[];
+}
 
 export type RecordSearchResult =
   | {
@@ -1901,6 +1923,12 @@ export interface RulzApi {
   /** Removes the saved key of a source. */
   removeRecordSourceKey(sourceId: string): Promise<RecordSourceKeyResult>;
   /**
+   * Tries the saved key of a source with one request that sends a fixed word
+   * and nothing of any person. Needs the record search notice agreed and a
+   * saved key. The key is never handed to the page.
+   */
+  testRecordSourceKey(sourceId: string): Promise<RecordSourceKeyTest>;
+  /**
    * What a search for a person and their ancestors would ask: who, with the
    * name and the years that would be sent for each, who is left out and why,
    * and the sources. Sends nothing. Null when the person is gone.
@@ -2169,6 +2197,7 @@ export const API_METHODS = [
   'openRecordLink',
   'setRecordSourceKey',
   'removeRecordSourceKey',
+  'testRecordSourceKey',
   'planRecordRun',
   'startRecordRun',
   'getRecordRun',

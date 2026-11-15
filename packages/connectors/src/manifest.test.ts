@@ -42,6 +42,27 @@ describe('connectorManifestSchema', () => {
     expect(issuePaths({ ...valid, auth: 'apiKey' })).toContain('access');
   });
 
+  it('allows an optional key only for a source that uses an API key', () => {
+    const optional = { ...valid, auth: 'apiKey', keyHeader: 'x-key', access: 'key-optional' };
+    expect(issuePaths(optional)).toEqual([]);
+    const { keyHeader: _header, ...bare } = valid;
+    expect(issuePaths({ ...bare, access: 'key-optional' })).toEqual(['access']);
+  });
+
+  it('refuses citeOnly with passing on to an AI or with a bar on keeping text', () => {
+    expect(issuePaths({ ...valid, citeOnly: true })).toEqual([]);
+    expect(issuePaths({ ...valid, citeOnly: true, mayShareWithAi: true })).toEqual(['citeOnly']);
+    expect(issuePaths({ ...valid, citeOnly: true, mayStoreText: false })).toEqual(['citeOnly']);
+    expect(issuePaths({ ...valid, citeOnly: true, mayShareWithAi: false })).toEqual([]);
+  });
+
+  it('takes a key address only when it is HTTPS', () => {
+    expect(issuePaths({ ...valid, keyUrl: 'https://example.org/key' })).toEqual([]);
+    expect(issuePaths({ ...valid, keyUrl: 'http://example.org/key' })).toEqual(['keyUrl']);
+    expect(issuePaths({ ...valid, keyUrl: 'javascript:alert(1)' })).toEqual(['keyUrl']);
+    expect(issuePaths({ ...valid, keyUrl: 'not a url' })).toEqual(['keyUrl']);
+  });
+
   it('rejects passing on to an AI what the app never fetches, or may not keep', () => {
     expect(issuePaths({ ...valid, mayShareWithAi: true })).toEqual([]);
     const { rateLimit: _omitted, ...link } = valid;
@@ -101,6 +122,7 @@ describe('registry', () => {
       'find-a-grave',
       'familysearch-records',
       'nara-1950-search',
+      'geni-search',
     ]);
     expect(manifestsByTier('bulk').length).toBe(2);
   });

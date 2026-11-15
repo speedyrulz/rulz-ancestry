@@ -8,6 +8,7 @@ import {
   type HostRecord,
   type QuotaRecord,
   type HttpFetch,
+  type KeyAnswer,
 } from './http';
 import type { ConnectorManifest } from './manifest';
 
@@ -64,6 +65,10 @@ async function failure(promise: Promise<unknown>): Promise<HttpError> {
   }
   throw new Error('the request did not fail');
 }
+
+/** What the app holds of a key: nothing for null, else the key. */
+const held = (key: string | null): KeyAnswer =>
+  key === null ? { kind: 'none' } : { kind: 'key', value: key };
 
 describe('addressOf', () => {
   it('adds the path and the query to the address of the manifest', () => {
@@ -692,12 +697,12 @@ describe('a source that needs the key of the user', () => {
   const KEY = 'canary-key-0123456789';
 
   it('sends the key in its header, and in no address', async () => {
-    const { client, asked } = setup(() => json({ ok: true }), { keyOf: () => KEY }, keyed);
+    const { client, asked } = setup(() => json({ ok: true }), { keyOf: () => held(KEY) }, keyed);
     await client.getJson('search', { params: { q: 'x' } });
     expect(asked[0]?.headers['x-api-key']).toBe(KEY);
     expect(asked[0]?.url).toBe('https://example.org/api/search?q=x');
     // A source without a key is sent none, whatever the app holds.
-    const open = setup(() => json({}), { keyOf: () => KEY });
+    const open = setup(() => json({}), { keyOf: () => held(KEY) });
     await open.client.getJson('a');
     expect(Object.values(open.asked[0]?.headers ?? {})).not.toContain(KEY);
   });
@@ -711,7 +716,7 @@ describe('a source that needs the key of the user', () => {
       'line\r\nInjected: yes',
       'x'.repeat(301),
     ]) {
-      const { client, asked } = setup(() => json({}), { keyOf: () => key }, keyed);
+      const { client, asked } = setup(() => json({}), { keyOf: () => held(key) }, keyed);
       const error = await failure(client.getJson('a'));
       expect(error.kind).toBe('key');
       if (key) expect(error.message).not.toContain(key);
@@ -723,7 +728,7 @@ describe('a source that needs the key of the user', () => {
 
   it('asks for the key anew for each request, and keeps none', async () => {
     let key: string | null = KEY;
-    const { client, asked } = setup(() => json({}), { keyOf: () => key }, keyed);
+    const { client, asked } = setup(() => json({}), { keyOf: () => held(key) }, keyed);
     await client.getJson('a');
     key = null;
     expect((await failure(client.getJson('b'))).kind).toBe('key');
@@ -742,14 +747,18 @@ describe('a source that needs the key of the user', () => {
       // Its website in place of an answer, as a catalog sends without a key.
       () => new Response('<!doctype html><html></html>'),
     ]) {
-      const { client } = setup(answer, { keyOf: () => KEY }, keyed);
+      const { client } = setup(answer, { keyOf: () => held(KEY) }, keyed);
       const error = await failure(client.getJson('a'));
       expect(error.kind).toBe('key');
       expect(error.message).toContain('did not accept the key');
       expect(error.message).not.toContain(KEY);
     }
     // Another error is an error like another.
-    const broken = setup(() => new Response('', { status: 500 }), { keyOf: () => KEY }, keyed);
+    const broken = setup(
+      () => new Response('', { status: 500 }),
+      { keyOf: () => held(KEY) },
+      keyed,
+    );
     expect((await failure(broken.client.getJson('a'))).kind).toBe('status');
   });
 
@@ -761,12 +770,270 @@ describe('a source that needs the key of the user', () => {
     };
     const { client } = setup(
       () => new Response('', { status: 429 }),
-      { keyOf: () => KEY, memory },
+      { keyOf: () => held(KEY), memory },
       { ...keyed, quota: { requests: 100, period: 'month' } },
     );
     await failure(client.getJson('a'));
     expect(written.length).toBeGreaterThan(0);
     expect(written.join('\n')).not.toContain(KEY);
+  });
+});
+
+describe('a source whose key is optional', () => {
+  const optional: ConnectorManifest = {
+    ...source,
+    id: 'optional-source',
+    auth: 'apiKey',
+    access: 'key-optional',
+    keyHeader: 'authentication-token',
+    cacheTtlHours: 0,
+    rateLimit: { requests: 1000, perSeconds: 1, source: 'self-imposed' },
+    quota: { requests: 100, period: 'day' },
+  };
+  const KEY = 'canary-key-0123456789';
+  const NOON = Date.UTC(2026, 10, 15, 12);
+
+  function memoryOf(kept: Record<string, unknown> = {}) {
+    const memory: HostMemory = {
+      load: (name) => kept[name],
+      save: (name, record) => {
+        kept[name] = structuredClone(record);
+      },
+    };
+    return { memory, kept };
+  }
+
+  it('sends no header without a key, and the key when there is one', async () => {
+    const { memory } = memoryOf();
+    let key: KeyAnswer = { kind: 'none' };
+    const { client, asked, clock } = setup(() => json({}), { keyOf: () => key, memory }, optional);
+    clock.now = NOON;
+    await client.getJson('a');
+    expect(Object.keys(asked[0]?.headers ?? {})).not.toContain('authentication-token');
+    key = { kind: 'key', value: KEY };
+    await client.getJson('b');
+    expect(asked[1]?.headers['authentication-token']).toBe(KEY);
+    expect(asked[1]?.url).not.toContain(KEY);
+  });
+
+  it('never falls back to no key for a key that cannot be read, and refuses a malformed one', async () => {
+    const { memory } = memoryOf();
+    for (const answer of [
+      { kind: 'unreadable' },
+      { kind: 'key', value: '' },
+      { kind: 'key', value: 'two words' },
+      { kind: 'key', value: 'line\r\nInjected: yes' },
+    ] as KeyAnswer[]) {
+      const { client, asked } = setup(() => json({}), { keyOf: () => answer, memory }, optional);
+      expect((await failure(client.getJson('a'))).kind).toBe('key');
+      expect(asked).toHaveLength(0);
+    }
+    // A source that needs a key is refused for a key that cannot be read, too.
+    const required: ConnectorManifest = { ...optional, id: 'req', access: 'key-required' };
+    const unreadable = setup(
+      () => json({}),
+      { keyOf: () => ({ kind: 'unreadable' }), memory },
+      required,
+    );
+    expect((await failure(unreadable.client.getJson('a'))).kind).toBe('key');
+  });
+
+  it('counts a request that sent a key apart from one that sent none', async () => {
+    const { memory, kept } = memoryOf();
+    let key: KeyAnswer = { kind: 'none' };
+    const { http, client, clock } = setup(() => json({}), { keyOf: () => key, memory }, optional);
+    clock.now = NOON;
+    await client.getJson('a');
+    await client.getJson('b');
+    expect(kept['quota:optional-source:keyless']).toEqual({ period: '2026-11-15', used: 2 });
+    expect(kept['quota:optional-source']).toBeUndefined();
+    // With no key saved the count reported is the keyless one, against 200.
+    expect(http.quotaOf(optional)).toMatchObject({ used: 2, ceiling: 200, period: '2026-11-15' });
+    key = { kind: 'key', value: KEY };
+    await client.getJson('c');
+    expect(kept['quota:optional-source']).toEqual({ period: '2026-11-15', used: 1 });
+    expect(kept['quota:optional-source:keyless']).toEqual({ period: '2026-11-15', used: 2 });
+    expect(http.quotaOf(optional)).toMatchObject({ used: 1, ceiling: 90 });
+  });
+
+  it('stops keyless requests at 200 a day on this PC, until the next day', async () => {
+    const { memory } = memoryOf();
+    const { http, client, clock, asked } = setup(
+      () => json({}),
+      { keyOf: () => ({ kind: 'none' }), memory },
+      { ...optional, quota: undefined },
+    );
+    clock.now = NOON;
+    for (let index = 0; index < 200; index += 1) await client.getJson(`r${index}`);
+    const error = await failure(client.getJson('one-more'));
+    expect(error.kind).toBe('quota');
+    expect(error.retryAt).toBe(http.quotaOf({ ...optional, quota: undefined })?.resetsAt);
+    expect(asked).toHaveLength(200);
+    // The keyed count is not what stopped it: a key goes on.
+    const keyed = setup(
+      () => json({}),
+      { keyOf: () => held(KEY), memory },
+      { ...optional, quota: undefined },
+    );
+    keyed.clock.now = NOON;
+    await keyed.client.getJson('with-key');
+    expect(keyed.asked).toHaveLength(1);
+    // The next day starts the count again.
+    clock.now = NOON + 24 * 3_600_000;
+    await client.getJson('tomorrow');
+    expect(asked).toHaveLength(201);
+  });
+
+  it('keeps a pause of the keyless requests apart from the keyed ones', async () => {
+    const { memory, kept } = memoryOf();
+    let key: KeyAnswer = { kind: 'none' };
+    let status = 429;
+    const { http, client, clock, asked } = setup(
+      () => (status === 429 ? new Response('', { status }) : json({})),
+      { keyOf: () => key, memory },
+      optional,
+    );
+    clock.now = NOON;
+    const paused = await failure(client.getJson('a'));
+    expect(paused.kind).toBe('paused');
+    expect(paused.message).toContain('shared');
+    expect(kept['example.org:keyless']).toBeDefined();
+    expect(kept['example.org']).toBeUndefined();
+    expect(http.pausedUntil(optional)).not.toBeNull();
+    expect((await failure(client.getJson('b'))).kind).toBe('paused');
+    expect(asked).toHaveLength(1);
+    // A key saved: the keyed requests are not held up by it.
+    key = { kind: 'key', value: KEY };
+    status = 200;
+    expect(http.pausedUntil(optional)).toBeNull();
+    await client.getJson('c');
+    expect(asked).toHaveLength(2);
+    // And a keyed pause leaves the keyless requests alone.
+    status = 429;
+    expect((await failure(client.getJson('d'))).kind).toBe('paused');
+    expect(kept['example.org']).toBeDefined();
+    key = { kind: 'none' };
+    status = 200;
+    expect(http.pausedUntil(optional)).not.toBeNull();
+    clock.now += 24 * 3_600_000;
+    await client.getJson('e');
+  });
+
+  describe('when the key changes while a request waits its turn', () => {
+    const spaced: ConnectorManifest = {
+      ...optional,
+      rateLimit: { requests: 1, perSeconds: 2, source: 'self-imposed' },
+      quota: undefined,
+    };
+
+    /** A client whose waits call `onWait`, with the keyed and the keyless turns each already used once. */
+    function twoSent(first: 'keyless' | 'keyed') {
+      const { memory } = memoryOf();
+      let key: KeyAnswer = first === 'keyless' ? { kind: 'none' } : { kind: 'key', value: KEY };
+      const hooks = { onWait: () => undefined as void };
+      let clockOf: { now: number } = { now: 0 };
+      const made = setup(
+        () => json({}),
+        {
+          keyOf: () => key,
+          memory,
+          wait: (ms, signal) => {
+            if (signal.aborted) return Promise.reject(new HttpError('cancelled', 'given up'));
+            clockOf.now += ms;
+            hooks.onWait();
+            return Promise.resolve();
+          },
+        },
+        spaced,
+      );
+      clockOf = made.clock;
+      return {
+        ...made,
+        hooks,
+        setKey: (next: KeyAnswer) => {
+          key = next;
+        },
+      };
+    }
+
+    it('spaces a request that goes out keyless after the keyless one before it', async () => {
+      const { client, clock, asked, hooks, setKey } = twoSent('keyed');
+      clock.now = NOON;
+      await client.getJson('a'); // keyed, at NOON
+      clock.now = NOON + 1500;
+      setKey({ kind: 'none' });
+      await client.getJson('k1'); // keyless, at NOON + 1500
+      setKey({ kind: 'key', value: KEY });
+      hooks.onWait = () => {
+        hooks.onWait = () => undefined;
+        setKey({ kind: 'none' });
+      };
+      const beforeSend = vi.fn();
+      await client.getJson('b', { beforeSend });
+      expect(beforeSend).toHaveBeenCalledTimes(1);
+      const last = asked[asked.length - 1];
+      expect(last?.url).toContain('/b');
+      expect(Object.keys(last?.headers ?? {})).not.toContain('authentication-token');
+      // The keyed turn was free at NOON + 2000, the keyless one only at NOON + 3500.
+      expect(last?.at).toBe(NOON + 3500);
+    });
+
+    it('spaces a request that goes out keyed after the keyed one before it', async () => {
+      const { client, clock, asked, hooks, setKey } = twoSent('keyless');
+      clock.now = NOON;
+      await client.getJson('k1'); // keyless, at NOON
+      clock.now = NOON + 1500;
+      setKey({ kind: 'key', value: KEY });
+      await client.getJson('a'); // keyed, at NOON + 1500
+      setKey({ kind: 'none' });
+      hooks.onWait = () => {
+        hooks.onWait = () => undefined;
+        setKey({ kind: 'key', value: KEY });
+      };
+      const beforeSend = vi.fn();
+      await client.getJson('b', { beforeSend });
+      expect(beforeSend).toHaveBeenCalledTimes(1);
+      const last = asked[asked.length - 1];
+      expect(last?.headers['authentication-token']).toBe(KEY);
+      expect(last?.at).toBe(NOON + 3500);
+    });
+
+    it('gives up rather than wait on when the key changes again', async () => {
+      const { client, clock, asked, hooks, setKey } = twoSent('keyless');
+      clock.now = NOON;
+      await client.getJson('k1');
+      clock.now = NOON + 1500;
+      setKey({ kind: 'key', value: KEY });
+      await client.getJson('a');
+      setKey({ kind: 'none' });
+      let flips = 0;
+      hooks.onWait = () => {
+        flips += 1;
+        setKey(flips % 2 === 1 ? { kind: 'key', value: KEY } : { kind: 'none' });
+      };
+      const beforeSend = vi.fn();
+      const error = await failure(client.getJson('b', { beforeSend }));
+      expect(error.kind).toBe('paused');
+      expect(error.retryAt).toBeGreaterThan(clock.now);
+      expect(beforeSend).not.toHaveBeenCalled();
+      expect(asked).toHaveLength(2);
+    });
+  });
+
+  it('does not change a source whose key is required', async () => {
+    const required: ConnectorManifest = { ...optional, id: 'req2', access: 'key-required' };
+    const { memory, kept } = memoryOf();
+    const none = setup(() => json({}), { keyOf: () => ({ kind: 'none' }), memory }, required);
+    expect((await failure(none.client.getJson('a'))).kind).toBe('key');
+    const { http, client, clock } = setup(
+      () => json({}),
+      { keyOf: () => held(KEY), memory },
+      required,
+    );
+    clock.now = NOON;
+    await client.getJson('a');
+    expect(kept['quota:req2']).toEqual({ period: '2026-11-15', used: 1 });
+    expect(http.quotaOf(required)).toMatchObject({ used: 1, ceiling: 90 });
   });
 });
 
