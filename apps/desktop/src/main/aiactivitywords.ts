@@ -1,4 +1,6 @@
+import { API_EFFORTS, API_MODELS } from '@rulz/ai';
 import type { AiActivityDetail, AiActivityEntry } from '@rulz/db';
+import type { AiApiEnd } from '../shared/ipc';
 
 /**
  * An entry of the activity log of the AI assistant, as a sentence for the
@@ -39,6 +41,42 @@ const year = (detail: AiActivityDetail, key: string): number | null => {
 
 const of = (number: number, one: string, many: string): string =>
   `${number.toLocaleString('en-US')} ${number === 1 ? one : many}`;
+
+/** The reasons a run of the API ends for; one that is not among them is left out of the sentence. */
+const RUN_ENDS: Readonly<Record<AiApiEnd, true>> = {
+  done: true,
+  stopped: true,
+  'session-ended': true,
+  declined: true,
+  'max-tokens': true,
+  paused: true,
+  unexpected: true,
+  'cap-cost': true,
+  'cap-responses': true,
+  'cap-time': true,
+  'model-changed': true,
+  'key-refused': true,
+  'key-forbidden': true,
+  'rate-limited': true,
+  overloaded: true,
+  network: true,
+  timeout: true,
+  failed: true,
+};
+
+/** A text of the detail when it is one of the known values; otherwise empty. */
+const known = (detail: AiActivityDetail, key: string, values: readonly string[]): string => {
+  const value = text(detail, key);
+  return values.includes(value) ? value : '';
+};
+
+/** An amount of dollars when the detail holds a finite number of zero or more; otherwise null. */
+const dollars = (detail: AiActivityDetail, key: string, digits: number): string | null => {
+  const value = detail[key];
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? `$${value.toFixed(digits)}`
+    : null;
+};
 
 const ENDED: Readonly<Record<string, string>> = {
   stopped: 'you stopped it',
@@ -113,6 +151,17 @@ export function activityWords(entry: AiActivityEntry, names: ActivityNames): str
   const person = () => names.person(text(detail, 'person'));
   const source = () => names.source(text(detail, 'source'));
   switch (entry.kind) {
+    case 'run-started': {
+      const model = known(detail, 'model', API_MODELS);
+      const effort = known(detail, 'effort', API_EFFORTS);
+      const cap = dollars(detail, 'capUsd', 2);
+      return `An API run started${model === '' ? '' : `: ${model}`}${effort === '' ? '' : `, ${effort} effort`}, cap ${cap ?? 'unknown'}.`;
+    }
+    case 'run-ended': {
+      const why = known(detail, 'why', Object.keys(RUN_ENDS));
+      const cost = dollars(detail, 'costUsd', 4);
+      return `The API run ended${why === '' ? '' : ` (${why})`}: ${count(detail, 'responses')} responses; input ${count(detail, 'input')}, cache write ${count(detail, 'cacheWrite')}, cache read ${count(detail, 'cacheRead')}, output ${count(detail, 'output')} tokens; estimated cost ${cost ?? 'unknown'}.${detail['costMayBeHigher'] === true ? ' The cost may be higher.' : ''}`;
+    }
     case 'session-started': {
       const generations = count(detail, 'generations');
       const sources = text(detail, 'sources')

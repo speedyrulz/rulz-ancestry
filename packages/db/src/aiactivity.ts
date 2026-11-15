@@ -19,6 +19,8 @@ import { sql, type Db } from './connection';
 export const AI_ACTIVITY_KINDS = [
   'session-started',
   'session-ended',
+  'run-started',
+  'run-ended',
   'sources-listed',
   'tree-searched',
   'person-read',

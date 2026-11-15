@@ -1075,6 +1075,7 @@ export interface AiSessionPlanRequest {
 }
 
 export interface AiSessionStartRequest extends AiSessionPlanRequest {
+  route: 'app' | 'api';
   sourceIds: string[];
   stamp: string;
 }
@@ -1121,6 +1122,8 @@ export interface AiQuestion {
 
 /** A session as it stands, for the page. */
 export interface AiSessionStatus {
+  route: 'app' | 'api';
+  run: AiRunStatus | null;
   sessionId: string;
   status: 'running' | 'ended';
   ended: AiSessionEnd | null;
@@ -1141,6 +1144,63 @@ export interface AiSessionStatus {
   /** Goes up with every change, so that the page knows when to look again. */
   revision: number;
 }
+
+export type AiApiEnd =
+  | 'done'
+  | 'stopped'
+  | 'session-ended'
+  | 'declined'
+  | 'max-tokens'
+  | 'paused'
+  | 'unexpected'
+  | 'cap-cost'
+  | 'cap-responses'
+  | 'cap-time'
+  | 'model-changed'
+  | 'key-refused'
+  | 'key-forbidden'
+  | 'rate-limited'
+  | 'overloaded'
+  | 'network'
+  | 'timeout'
+  | 'failed';
+
+/** Tokens by kind, as the run counts them. */
+export interface AiApiUsage {
+  input: number;
+  output: number;
+  cacheWrite: number;
+  cacheRead: number;
+}
+
+export interface AiApiProgress {
+  responses: number;
+  usage: AiApiUsage;
+  /** What the run cost so far at the price table's prices: an estimate. */
+  costUsd: number;
+  /** True when a request was cut off after it was sent: Anthropic may bill it. */
+  costMayBeHigher: boolean;
+  lastTool: string | null;
+  /** The model's own text so far, at most {@link API_TEXT_MAX} characters. */
+  text: string;
+  ended: AiApiEnd | null;
+}
+
+export interface AiRunSettings {
+  model: string;
+  effort: string;
+  capUsd: number;
+}
+
+export interface AiRunStatus {
+  id: string;
+  settings: AiRunSettings;
+  progress: AiApiProgress | null;
+  running: boolean;
+}
+
+export type AiKeyState = 'missing' | 'saved' | 'unreadable' | 'unavailable';
+export type AiActionResult = { ok: true } | { ok: false; message: string };
 
 export type AiSessionStartResult =
   | { ok: true; session: AiSessionStatus }
@@ -1694,6 +1754,11 @@ export interface RulzApi {
    * to, and when the tree is no longer as the plan showed it.
    */
   startAiSession(request: AiSessionStartRequest): Promise<AiSessionStartResult>;
+  getAiKeyState(): Promise<AiKeyState>;
+  saveAiKey(key: string): Promise<AiActionResult>;
+  removeAiKey(): Promise<AiKeyState>;
+  startAiRun(settings: AiRunSettings): Promise<AiActionResult>;
+  stopAiRun(): Promise<AiSessionState>;
   /** The session and the count of proposals as they stand. Needs no open tree. */
   getAiSession(): Promise<AiSessionState>;
   /** Ends the session that is under way: no tool gives anything more, and nothing more is sent. */
@@ -1896,6 +1961,11 @@ export const API_METHODS = [
   'turnOffAiAssistant',
   'planAiSession',
   'startAiSession',
+  'getAiKeyState',
+  'saveAiKey',
+  'removeAiKey',
+  'startAiRun',
+  'stopAiRun',
   'getAiSession',
   'stopAiSession',
   'listAiProposals',

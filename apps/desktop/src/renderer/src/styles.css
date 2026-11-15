@@ -1954,6 +1954,43 @@ ul.run-list {
   margin-bottom: 0.2rem;
 }
 
+.ai-api-section {
+  margin-bottom: 1rem;
+}
+
+.ai-run-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.ai-run-controls input[type='number'] {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.ai-run {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ai-run-text {
+  margin: 0.25rem 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* The activity log: the entries of one session close together, a little room between sessions. */
 .ai-log-list {
   list-style: none;

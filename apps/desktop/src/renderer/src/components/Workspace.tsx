@@ -102,7 +102,9 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   // While a session is under way an AI may call at any moment: follow it once
   // a second, one question at a time. An answer that comes after the session
   // was seen to end, or after another answer took its place, is dropped.
-  const aiRunning = ai?.session?.status === 'running';
+  // A run of the user's own API key may outlast its session by a moment: keep
+  // following until the run's last figures are in.
+  const aiRunning = ai?.session?.status === 'running' || ai?.session?.run?.running === true;
   useEffect(() => {
     if (!aiRunning) return undefined;
     let current = true;
@@ -357,6 +359,10 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
             <span>
               An AI session is under way: {countOf(ai.session.calls, 'call', 'calls')},{' '}
               {countOf(ai.session.questions.length, 'question', 'questions')} to services.
+              {ai.session.run !== null &&
+                (ai.session.run.running
+                  ? ` A run is under way (estimated cost $${(ai.session.run.progress?.costUsd ?? 0).toFixed(4)}).`
+                  : ` Estimated cost $${(ai.session.run.progress?.costUsd ?? 0).toFixed(4)}.`)}
             </span>
             <button
               type="button"

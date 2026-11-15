@@ -20,6 +20,7 @@ import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { AiBridgeServer } from './aibridge';
+import { makeApiClient, runApi } from './aiapi';
 import { AiSessionService, type AiConnector } from './aisession';
 import { DEV_PROFILE, USUAL_PROFILES } from '../bridge/profile';
 import { connectorCommandOf } from './connectorcommand';
@@ -444,17 +445,18 @@ if (!app.requestSingleInstanceLock()) {
     // It asks through a session of its own that lives in memory only, so
     // that no cookie and no answer of a source is ever written to disk, and
     // a source cannot tell by a cookie that two searches came from one PC.
+    const secrets = {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (text: string) => safeStorage.encryptString(text).toString('base64'),
+      decrypt: (kept: string) => safeStorage.decryptString(Buffer.from(kept, 'base64')),
+    };
     const records = new RecordSearchService({
       appDb,
       fetch: (url, init) => electronSession.fromPartition(RECORDS_PARTITION).fetch(url, init),
       appVersion: app.getVersion(),
       // A key of the user's own is encrypted by Windows for their account
       // (DPAPI) before it is written to the settings, and never kept as it is.
-      secrets: {
-        available: () => safeStorage.isEncryptionAvailable(),
-        encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-        decrypt: (kept) => safeStorage.decryptString(Buffer.from(kept, 'base64')),
-      },
+      secrets,
     });
 
     const runs = new RecordRun(records);
@@ -471,6 +473,14 @@ if (!app.requestSingleInstanceLock()) {
     const ai: AiSessionService = new AiSessionService(records, {
       appDb,
       bridge,
+      secrets,
+      runApi,
+      makeApiClient: (key) =>
+        makeApiClient(key, (url, init) =>
+          electronSession
+            .fromPartition('ai-api')
+            .fetch(url instanceof URL ? url.toString() : url, init),
+        ),
       connector: findConnector(),
     });
     aiSession = ai;

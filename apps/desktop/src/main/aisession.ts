@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   AI_TOOL_INPUTS,
+  API_MODELS,
+  API_EFFORTS,
+  API_CAP_MIN,
+  API_CAP_MAX,
+  type ApiModel,
+  type ApiEffort,
   NOT_GIVEN,
   RECORD_TEXT_NOTE,
   checkProposal,
@@ -58,13 +64,23 @@ import {
   type AiSessionStartResult,
   type AiSessionStatus,
   type RecordSearchProblem,
+  type AiRunSettings,
+  type AiRunStatus,
+  type AiActionResult,
+  type AiKeyState,
 } from '../shared/ipc';
 import { activityWords } from './aiactivitywords';
 import type { AiBridge } from './aibridge';
+import {
+  firstRequestReserve,
+  type AiApiClient,
+  type AiApiRunOptions,
+  type AiApiProgress,
+} from './aiapi';
 import { keptOpinionJson } from './keptopinion';
 import { whenOf } from './keptrecord';
 import { defaultWait } from './recordrun';
-import { queryOf, type ProposalCopy, type RecordSearchService } from './records';
+import { queryOf, type ProposalCopy, type RecordSearchService, type SecretStore } from './records';
 
 /**
  * A session of the optional AI assistant: the time during which an AI the
@@ -135,8 +151,12 @@ export const AI_NOTICE_VERSION_SETTING = 'aiAssistant.noticeVersion';
  *    same Windows account could do the same during a session, that this app
  *    does not see or limit what else that AI app does, and that a session
  *    ends after two hours at the latest.
+ * 3: after saving a key and starting a run, the app sends the conversation and
+ *    tool results to Anthropic under the user's key and terms. The user pays;
+ *    costs are estimates, caps are the app's, and a sent request may be billed
+ *    even after Stop. The key is encrypted for this account and can be removed.
  */
-export const AI_NOTICE_VERSION = 2;
+export const AI_NOTICE_VERSION = 3;
 
 export { AI_SESSION_MAX_GENERATIONS } from '../shared/ipc';
 
@@ -222,6 +242,9 @@ export interface AiProposal {
 
 export interface AiSessionOptions {
   appDb: Db;
+  secrets?: SecretStore;
+  runApi?: (options: AiApiRunOptions) => Promise<AiApiProgress>;
+  makeApiClient?: (key: string) => AiApiClient;
   /** The clock, replaceable in tests. */
   now?: () => number;
   /** Waits; replaceable in tests. It must reject when the signal aborts. */
@@ -261,6 +284,15 @@ interface SourceLine {
 
 interface Session {
   id: string;
+  route: 'app' | 'api';
+  run:
+    | (AiRunStatus & {
+        abort: AbortController;
+        busy: boolean;
+        /** True once the entry for the end of the run is written: only one is. */
+        written: boolean;
+      })
+    | null;
   tree: Tree;
   treeId: string;
   /** False once the tree the session was started for is no longer the open one. */
@@ -332,6 +364,9 @@ export class AiSessionService {
   readonly #newId: () => string;
   readonly #bridge: AiBridge | null;
   readonly #connector: AiConnector | null;
+  readonly #secrets: SecretStore | undefined;
+  readonly #runApi: AiSessionOptions['runApi'];
+  readonly #makeApiClient: AiSessionOptions['makeApiClient'];
   /** The session that is under way, or the last one that ended. One at a time. */
   #session: Session | null = null;
   /**
@@ -355,6 +390,9 @@ export class AiSessionService {
     this.#newId = options.newId ?? randomUUID;
     this.#bridge = options.bridge ?? null;
     this.#connector = options.connector ?? null;
+    this.#secrets = options.secrets;
+    this.#runApi = options.runApi;
+    this.#makeApiClient = options.makeApiClient;
     this.#bridge?.onClient((client) => this.#connected(client));
     this.#bridge?.onChange(() => {
       if (this.#session !== null) this.#session.revision += 1;
@@ -450,6 +488,8 @@ export class AiSessionService {
       plan,
     });
     if (plan === null) return fail('gone', 'This person is no longer in the tree.');
+    if (request.route !== 'app' && request.route !== 'api')
+      return fail('failed', 'Choose a route.');
     if (!plan.agreed) {
       return fail(
         'notice',
@@ -501,6 +541,8 @@ export class AiSessionService {
     const startedAt = this.#now();
     const session: Session = {
       id: this.#newId(),
+      route: request.route,
+      run: null,
       tree,
       treeId: tree.info().id,
       still,
@@ -544,7 +586,7 @@ export class AiSessionService {
       return fail('failed', ENDED.log);
     }
     // From here on an AI app can reach the session, and only until it ends.
-    this.#bridge?.open();
+    if (session.route === 'app') this.#bridge?.open();
     // The session ends when its time is up, also when nobody asks how it
     // stands: so does the way an AI app reaches it.
     this.#watch = setInterval(() => this.#live(), AI_SESSION_WATCH_MS);
@@ -556,6 +598,173 @@ export class AiSessionService {
   status(): AiSessionStatus | null {
     this.#live();
     return this.#session === null ? null : this.#status(this.#session);
+  }
+
+  #key(): string | null {
+    const kept = getSetting(this.#appDb, 'aiAssistant.apiKey');
+    if (kept === null || this.#secrets?.available() !== true) return null;
+    try {
+      return this.#secrets.decrypt(kept) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  keyState(): AiKeyState {
+    if (this.#secrets?.available() !== true) return 'unavailable';
+    if (getSetting(this.#appDb, 'aiAssistant.apiKey') === null) return 'missing';
+    return this.#key() === null ? 'unreadable' : 'saved';
+  }
+
+  saveKey(key: string): AiActionResult {
+    if (this.#secrets?.available() !== true)
+      return { ok: false, message: 'This PC cannot encrypt the key.' };
+    if (typeof key !== 'string' || key.length > 300 || !/^sk-ant-\S+$/.test(key)) {
+      return { ok: false, message: 'Enter a valid Anthropic key.' };
+    }
+    try {
+      setSetting(this.#appDb, 'aiAssistant.apiKey', this.#secrets.encrypt(key));
+      return { ok: true };
+    } catch {
+      return { ok: false, message: 'The key could not be saved.' };
+    }
+  }
+
+  removeKey(): AiKeyState {
+    // A run that is going does not carry on with a key that was removed.
+    this.stopRun();
+    setSetting(this.#appDb, 'aiAssistant.apiKey', null);
+    return this.keyState();
+  }
+
+  startRun(settings: AiRunSettings): AiActionResult {
+    const fail = (message: string): AiActionResult => ({ ok: false, message });
+    const session = this.#live();
+    if (session === null || session.route !== 'api')
+      return fail('Start a session with your own API key first.');
+    if (session.run?.running === true) return fail('A run is already under way.');
+    const key = this.#key();
+    if (key === null) return fail('Save a readable API key before starting a run.');
+    if (!API_MODELS.includes(settings.model as ApiModel))
+      return fail('Choose a model from the list.');
+    if (!API_EFFORTS.includes(settings.effort as ApiEffort))
+      return fail('Choose an effort from the list.');
+    if (
+      !Number.isFinite(settings.capUsd) ||
+      settings.capUsd < API_CAP_MIN ||
+      settings.capUsd > API_CAP_MAX
+    )
+      return fail('Choose a cap within the allowed range.');
+    const model = settings.model as ApiModel;
+    const effort = settings.effort as ApiEffort;
+    const reserve = firstRequestReserve(model);
+    if (reserve > settings.capUsd)
+      return fail(`This model needs at least $${reserve.toFixed(4)} for its first request.`);
+    if (this.#runApi === undefined || this.#makeApiClient === undefined)
+      return fail('API runs are unavailable.');
+    let client: AiApiClient;
+    try {
+      client = this.#makeApiClient(key);
+    } catch {
+      return fail('The API client could not be started.');
+    }
+    if (!this.#log(session, 'run-started', { model, effort, capUsd: settings.capUsd }))
+      return fail(ENDED.log);
+    const run = {
+      id: randomUUID(),
+      settings: { model, effort, capUsd: settings.capUsd },
+      progress: null as AiApiProgress | null,
+      running: true,
+      abort: new AbortController(),
+      busy: false,
+      written: false,
+    };
+    session.run = run;
+    session.revision += 1;
+    const current = () =>
+      this.#live() === session && session.route === 'api' && session.run === run && run.running;
+    const options: AiApiRunOptions = {
+      client,
+      model,
+      effort,
+      capUsd: settings.capUsd,
+      now: this.#now,
+      signal: AbortSignal.any([session.abort.signal, run.abort.signal]),
+      isCurrent: current,
+      call: (name, input) =>
+        current() && !run.abort.signal.aborted
+          ? this.#call(session, name, input, options.signal)
+          : Promise.resolve(NO_SESSION),
+      onProgress: (progress) => {
+        if (current()) {
+          run.progress = progress;
+          session.revision += 1;
+        }
+      },
+      onRequest: (busy) => {
+        if (session.run === run) {
+          run.busy = busy;
+          session.lastCallAt = this.#now();
+          session.revision += 1;
+        }
+      },
+    };
+    void Promise.resolve()
+      .then(() => this.#runApi!(options))
+      .then((progress) => {
+        run.progress = progress;
+        run.running = false;
+        run.busy = false;
+        session.lastCallAt = this.#now();
+        session.revision += 1;
+        this.#writeRunEnd(session, run, progress.ended, progress.costMayBeHigher);
+      })
+      .catch(() => {
+        run.running = false;
+        run.busy = false;
+        session.revision += 1;
+        this.#writeRunEnd(session, run, 'failed', true);
+      });
+    return { ok: true };
+  }
+
+  /**
+   * Writes the entry for the end of a run, once, from the last progress the
+   * run reported. It holds counts and the reason, never a text.
+   */
+  #writeRunEnd(
+    session: Session,
+    run: NonNullable<Session['run']>,
+    why: string | null,
+    costMayBeHigher: boolean,
+  ): void {
+    if (run.written) return;
+    run.written = true;
+    const progress = run.progress;
+    this.#write(session, 'run-ended', this.#now(), {
+      model: run.settings.model,
+      effort: run.settings.effort,
+      capUsd: run.settings.capUsd,
+      responses: progress?.responses ?? 0,
+      input: progress?.usage.input ?? 0,
+      output: progress?.usage.output ?? 0,
+      cacheWrite: progress?.usage.cacheWrite ?? 0,
+      cacheRead: progress?.usage.cacheRead ?? 0,
+      costUsd: progress?.costUsd ?? 0,
+      why,
+      costMayBeHigher,
+    });
+  }
+
+  stopRun(): void {
+    const session = this.#live();
+    // The run stays the current one until runApi has resolved, so that it reads
+    // the signal and ends as "stopped", not as "session-ended".
+    if (session?.run?.running === true) {
+      session.run.abort.abort();
+      session.lastCallAt = this.#now();
+      session.revision += 1;
+    }
   }
 
   /**
@@ -759,7 +968,17 @@ export class AiSessionService {
    */
   async call(name: string, input: unknown): Promise<AiToolResult> {
     const session = this.#live();
-    if (session === null) return NO_SESSION;
+    if (session === null || session.route !== 'app') return NO_SESSION;
+    return this.#call(session, name, input);
+  }
+
+  async #call(
+    session: Session,
+    name: string,
+    input: unknown,
+    stop?: AbortSignal,
+  ): Promise<AiToolResult> {
+    if (this.#live() !== session) return NO_SESSION;
     session.calls += 1;
     session.revision += 1;
     if (session.calls > AI_SESSION_CALLS) {
@@ -770,14 +989,19 @@ export class AiSessionService {
       return refuse('unknown-tool', 'There is no tool of this name.');
     }
     try {
-      return await this.#run(session, name, input);
+      return await this.#run(session, name, input, stop);
     } catch {
       // Nothing of what went wrong is passed on: it can name a file or hold a text of the tree.
       return refuse('failed', 'The call failed.');
     }
   }
 
-  #run(session: Session, name: AiToolName, input: unknown): Promise<AiToolResult> {
+  #run(
+    session: Session,
+    name: AiToolName,
+    input: unknown,
+    stop?: AbortSignal,
+  ): Promise<AiToolResult> {
     switch (name) {
       case 'get_session':
         return this.#take(name, input, () => this.#getSession(session));
@@ -790,7 +1014,7 @@ export class AiSessionService {
       case 'get_relatives':
         return this.#take(name, input, (given) => this.#getRelatives(session, given.personId));
       case 'search_records':
-        return this.#take(name, input, (given) => this.#searchRecords(session, given));
+        return this.#take(name, input, (given) => this.#searchRecords(session, given, stop));
       case 'get_record':
         return this.#take(name, input, (given) => this.#getRecord(session, given.ref));
       case 'propose_match':
@@ -830,6 +1054,7 @@ export class AiSessionService {
     } else {
       // Where both ends have passed before anybody looked, the earlier one is why it ended.
       const timeUp = session.startedAt + AI_SESSION_MAX_MS;
+      if (session.run?.busy === true) session.lastCallAt = this.#now();
       const idleUp = session.lastCallAt + AI_SESSION_IDLE_MS;
       if (this.#now() >= Math.min(timeUp, idleUp)) {
         this.#end(session, idleUp < timeUp ? 'idle' : 'time', Math.min(timeUp, idleUp));
@@ -846,6 +1071,7 @@ export class AiSessionService {
     session.endedMessage = ENDED[why];
     session.revision += 1;
     session.abort.abort();
+    session.run?.abort.abort();
     // No AI app reaches a session that has ended: the pipe, its key and the file that names them go.
     this.#bridge?.close();
     if (this.#watch !== null) clearInterval(this.#watch);
@@ -859,6 +1085,16 @@ export class AiSessionService {
         proposals: session.proposals.size,
         programs: session.clients,
       });
+    }
+    // A run under way ends with the session. Its entry is written now, from
+    // what it last reported: by the time it settles the log may be gone, or
+    // cleared. A request in flight may still be billed.
+    const run = session.run;
+    if (run?.running === true) {
+      const mayBeHigher = run.busy || run.progress?.costMayBeHigher === true;
+      run.running = false;
+      run.busy = false;
+      this.#writeRunEnd(session, run, 'session-ended', mayBeHigher);
     }
   }
 
@@ -890,6 +1126,19 @@ export class AiSessionService {
   #status(session: Session): AiSessionStatus {
     return {
       sessionId: session.id,
+      route: session.route,
+      run:
+        session.run === null
+          ? null
+          : {
+              id: session.run.id,
+              settings: { ...session.run.settings },
+              progress:
+                session.run.progress === null
+                  ? null
+                  : { ...session.run.progress, usage: { ...session.run.progress.usage } },
+              running: session.run.running,
+            },
       status: session.status,
       ended: session.ended,
       endedMessage: session.endedMessage,
@@ -1023,6 +1272,7 @@ export class AiSessionService {
   async #searchRecords(
     session: Session,
     given: z.infer<(typeof AI_TOOL_INPUTS)['search_records']>,
+    stop?: AbortSignal,
   ): Promise<AiToolResult> {
     const { personId, sourceId, ...asked } = given;
     const source = session.sources.get(sourceId);
@@ -1083,7 +1333,7 @@ export class AiSessionService {
     session.questions.push(question);
     session.revision += 1;
     const turn = source.line
-      .then(() => this.#ask(session, source, question))
+      .then(() => this.#ask(session, source, question, stop))
       .catch((): AiToolResult => {
         // Something failed that should not: the file of the tree can have
         // gone. The question stays counted, since it can have gone out, and
@@ -1110,7 +1360,12 @@ export class AiSessionService {
   }
 
   /** Sends one question when its turn has come, and makes of the answer what the AI is given. */
-  async #ask(session: Session, source: SourceLine, question: AiQuestion): Promise<AiToolResult> {
+  async #ask(
+    session: Session,
+    source: SourceLine,
+    question: AiQuestion,
+    stop?: AbortSignal,
+  ): Promise<AiToolResult> {
     const { personId, sourceId, query } = question;
     const settle = (
       state: AiQuestion['state'],
@@ -1149,14 +1404,23 @@ export class AiSessionService {
     const over = 'The session has ended, so nothing was sent.';
     const dropped = 'The session ended while this question was on its way. Its answer was dropped.';
 
+    // A question that came through the door of a run also ends with the run: Stop cuts the wait short.
+    const signal =
+      stop === undefined ? session.abort.signal : AbortSignal.any([session.abort.signal, stop]);
+    const stopped = 'The run was stopped, so nothing was sent.';
+    const runStopped = (): boolean => stop?.aborted === true && live();
     if (!live()) {
       unsent(over);
       return NO_SESSION;
     }
+    if (runStopped()) {
+      unsent(stopped);
+      return refuse('not-sent', stopped);
+    }
     if (source.lastAt !== null) {
       const due = source.lastAt + this.#gapMs - this.#now();
       try {
-        if (due > 0) await this.#wait(due, session.abort.signal);
+        if (due > 0) await this.#wait(due, signal);
       } catch {
         // The wait was given up: the session ended meanwhile.
       }
@@ -1164,14 +1428,19 @@ export class AiSessionService {
         unsent(over);
         return NO_SESSION;
       }
+      if (runStopped()) {
+        unsent(stopped);
+        return refuse('not-sent', stopped);
+      }
     }
     const result = await this.#records.searchForAi(
       session.tree,
       { personId, sourceId, query },
-      session.abort.signal,
+      signal,
       // The session's own last look, when the request's turn has come.
       () => {
         if (!live()) return problem('cancelled', over);
+        if (runStopped()) return problem('cancelled', stopped);
         const subject = this.#subject(session.tree, personId);
         if (subject === null) return problem('living', NOT_GIVEN.message);
         return checkQuery(query, subject, new Date(this.#now()).getFullYear()).ok
@@ -1183,6 +1452,11 @@ export class AiSessionService {
       },
     );
 
+    if (!result.ok && !result.sent && runStopped()) {
+      // Stopped before it went out: nothing is counted and nothing is written.
+      unsent(stopped);
+      return refuse('not-sent', stopped);
+    }
     if (!result.ok) {
       const { kind, message } = result.problem;
       const { sent } = result;

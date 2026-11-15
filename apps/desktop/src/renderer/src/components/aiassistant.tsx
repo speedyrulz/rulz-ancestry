@@ -1,11 +1,25 @@
+import {
+  API_CAP_DEFAULT,
+  API_CAP_MAX,
+  API_CAP_MIN,
+  API_EFFORTS,
+  API_MODELS,
+  MODEL_PRICES,
+  PRICES_AS_OF,
+  type ApiEffort,
+  type ApiModel,
+} from '../../../../../../packages/ai/src/prices';
 import type { PersonQuery } from '@rulz/core';
 import { useEffect, useRef, useState } from 'react';
 import {
   AI_SESSION_MAX_GENERATIONS,
   type AiActivityInfo,
+  type AiApiEnd,
   type AiAssistantInfo,
   type AiConnectionInfo,
+  type AiKeyState,
   type AiQuestion,
+  type AiRunStatus,
   type AiSessionPlan,
   type AiSessionState,
   type AiSessionStatus,
@@ -41,6 +55,51 @@ const GENERATIONS = [
 ];
 
 const RELATION = ['', 'parent', 'grandparent', 'great-grandparent'];
+
+const MODEL_LABELS: Record<ApiModel, string> = {
+  'claude-opus-5-5': 'Claude Opus 5.5',
+  'claude-sonnet-5-5': 'Claude Sonnet 5.5',
+  'claude-haiku-5-5': 'Claude Haiku 5.5',
+};
+
+const EFFORT_LABELS: Record<ApiEffort, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+};
+
+const KEY_STATE_WORDS: Record<AiKeyState, string> = {
+  missing: 'No key is saved yet (missing).',
+  saved: 'A key is saved, encrypted by Windows for your account. The app does not show it again.',
+  unreadable: 'The saved key is unreadable on this Windows account. Enter it again.',
+  unavailable:
+    'This PC cannot encrypt a key for your Windows account, so saving a key is unavailable.',
+};
+
+const RUN_ENDED_WORDS: Record<AiApiEnd, string> = {
+  done: 'Done: the model finished its turn.',
+  stopped: 'You stopped the run.',
+  'session-ended': 'The session ended.',
+  declined: 'The model declined the request.',
+  'max-tokens': 'A response reached the token limit before finishing.',
+  paused: 'The model paused its turn.',
+  unexpected: 'The model stopped for an unexpected reason.',
+  'cap-cost': 'Stopped before the next request could pass your cost cap.',
+  'cap-responses': 'Reached the limit of 30 responses for one run.',
+  'cap-time': 'Reached the 20-minute time limit for one run.',
+  'model-changed': 'Stopped because Anthropic answered with a different model than asked for.',
+  'key-refused': 'Anthropic did not accept this key.',
+  'key-forbidden': 'This key may not use this model.',
+  'rate-limited': 'Anthropic asked to slow down (rate limit reached).',
+  overloaded: 'Anthropic is overloaded or had a server error.',
+  network: 'Could not reach Anthropic over the network.',
+  timeout: 'A request to Anthropic timed out.',
+  failed: 'The run failed.',
+};
+
+function priceWords(amount: number): string {
+  return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`;
+}
 
 /** A name for the page; "Name not recorded" when the tree has none. */
 const nameOf = (name: string) => (name === '' ? NO_NAME : name);
@@ -92,7 +151,7 @@ function AiNotice({ info, onAgree, onLog, onClose }: NoticeProps) {
           <strong>How an AI app is connected:</strong>{' '}
           {info.canConnect
             ? 'through a connector of this app that you install in your own Claude Desktop, or add to Claude Code. During a session, and only then, the connector reaches this app over a connection between two programs on this PC. It needs a key that this app makes anew for each session and keeps in a file in its own data folder until the session ends. Outside a session nothing listens, and there is no key.'
-            : 'this copy of the app has no connector to hand out, so no AI app can be connected with it. A session can be started and stopped, and nothing will call.'}
+            : 'this copy of the app has no connector to hand out, so no AI app on this PC can be connected with it. Your own API key can still be used (see below).'}
         </li>
         <li data-testid="ai-notice-same-account">
           <strong>What this cannot keep out:</strong> another program that runs under your Windows
@@ -131,6 +190,16 @@ function AiNotice({ info, onAgree, onLog, onClose }: NoticeProps) {
           tools turned on, such as a search of the web, and what it does with them and what it keeps
           of your conversation follow its own settings and rules. This app takes proposals only for
           records it fetched itself.
+        </li>
+        <li data-testid="ai-notice-api-key">
+          <strong>With &ldquo;my own API key&rdquo;:</strong> when you choose to use your own
+          Anthropic API key, this app itself sends to Anthropic, under your own key and
+          Anthropic&apos;s terms and retention, what the tools return (people who are not living,
+          names, dates, places, and the record texts of the sources that allow it) and the
+          conversation. This happens only after you save a key and start a run. You pay Anthropic;
+          the cost this app shows is an estimate from its own price table, and its caps are the
+          app&apos;s own. A request already sent cannot be taken back by Stop and may be billed. The
+          key is kept encrypted for this Windows account and can be removed at any time.
         </li>
         <li>
           <strong>When:</strong> only during a session you start here, for one person and up to
@@ -249,8 +318,8 @@ function ConnectSection({ info }: { info: AiAssistantInfo }) {
   if (!info.canConnect) {
     return (
       <p className="hint" data-testid="ai-no-connection">
-        This copy of the app has no connector to hand out, so no AI app can be connected with it. A
-        session can be started and stopped, and nothing will call.
+        This copy of the app has no connector to hand out, so no AI app on this PC can be connected
+        with it. Your own API key can still be used.
       </p>
     );
   }
@@ -325,6 +394,306 @@ function ConnectSection({ info }: { info: AiAssistantInfo }) {
   );
 }
 
+interface ApiControlsProps {
+  keyState: AiKeyState | null;
+  onKeyState: (state: AiKeyState) => void;
+  model: ApiModel;
+  onModel: (model: ApiModel) => void;
+  effort: ApiEffort;
+  onEffort: (effort: ApiEffort) => void;
+  capText: string;
+  onCapText: (capText: string) => void;
+  inSession: boolean;
+  runRunning: boolean;
+  onStartedRun: () => void;
+}
+
+/** The user's own Anthropic API key and the settings for a run of route C. */
+function ApiControls({
+  keyState,
+  onKeyState,
+  model,
+  onModel,
+  effort,
+  onEffort,
+  capText,
+  onCapText,
+  inSession,
+  runRunning,
+  onStartedRun,
+}: ApiControlsProps) {
+  const keyInputRef = useRef<HTMLInputElement>(null);
+  const [hasKeyText, setHasKeyText] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyProblem, setKeyProblem] = useState<string | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runProblem, setRunProblem] = useState<string | null>(null);
+
+  const saveKey = () => {
+    const raw = keyInputRef.current?.value.trim() ?? '';
+    // Clear the field before the call returns; the key is never kept in React state.
+    if (keyInputRef.current !== null) keyInputRef.current.value = '';
+    setHasKeyText(false);
+    if (raw === '') return;
+    setKeyBusy(true);
+    setKeyProblem(null);
+    api
+      .saveAiKey(raw)
+      .then(
+        (answer) => {
+          if (!answer.ok) {
+            setKeyProblem(answer.message);
+            return;
+          }
+          return api.getAiKeyState().then(onKeyState);
+        },
+        (failure: unknown) => setKeyProblem(errorMessage(failure)),
+      )
+      .finally(() => setKeyBusy(false));
+  };
+
+  const removeKey = () => {
+    setKeyBusy(true);
+    setKeyProblem(null);
+    api
+      .removeAiKey()
+      .then(onKeyState, (failure: unknown) => setKeyProblem(errorMessage(failure)))
+      .finally(() => setKeyBusy(false));
+  };
+
+  const capUsd = Number(capText);
+  const capValid = Number.isFinite(capUsd) && capUsd >= API_CAP_MIN && capUsd <= API_CAP_MAX;
+  const canStartRun = inSession && !runRunning && keyState === 'saved' && capValid && !runBusy;
+
+  const startRun = () => {
+    if (!canStartRun) return;
+    setRunBusy(true);
+    setRunProblem(null);
+    api
+      .startAiRun({ model, effort, capUsd })
+      .then(
+        (answer) => {
+          if (!answer.ok) {
+            setRunProblem(answer.message);
+            return;
+          }
+          onStartedRun();
+        },
+        (failure: unknown) => setRunProblem(errorMessage(failure)),
+      )
+      .finally(() => setRunBusy(false));
+  };
+
+  return (
+    <div className="ai-api-section" data-testid="ai-api-section">
+      <div className="record-key" data-testid="ai-key">
+        <strong>Anthropic API key</strong>
+        <p
+          className={keyState === 'unreadable' || keyState === 'unavailable' ? 'error' : undefined}
+          data-testid="ai-key-state"
+        >
+          {keyState === null ? 'Checking key…' : KEY_STATE_WORDS[keyState]}{' '}
+          {(keyState === 'saved' || keyState === 'unreadable') && (
+            <button
+              type="button"
+              disabled={keyBusy}
+              onClick={removeKey}
+              data-testid="ai-key-remove"
+            >
+              Remove the key
+            </button>
+          )}
+        </p>
+        {keyState !== 'unavailable' && (
+          <form
+            className="record-key-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (hasKeyText && !keyBusy) saveKey();
+            }}
+          >
+            <label htmlFor="ai-key-input">
+              {keyState === 'saved' ? 'Replace key' : 'Your key'}
+            </label>
+            <input
+              ref={keyInputRef}
+              id="ai-key-input"
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={300}
+              onChange={(event) => setHasKeyText(event.target.value.trim() !== '')}
+              data-testid="ai-key-input"
+            />
+            <button type="submit" disabled={!hasKeyText || keyBusy} data-testid="ai-key-save">
+              {keyState === 'saved' ? 'Replace the key' : 'Save the key'}
+            </button>
+          </form>
+        )}
+        {keyProblem !== null && (
+          <p className="error" role="alert" data-testid="ai-key-problem">
+            {keyProblem}
+          </p>
+        )}
+      </div>
+
+      <div className="ai-run-controls" data-testid="ai-run-controls">
+        <div className="field">
+          <label htmlFor="ai-run-model">Model</label>
+          <select
+            id="ai-run-model"
+            value={model}
+            onChange={(event) => onModel(event.target.value as ApiModel)}
+            data-testid="ai-run-model"
+          >
+            {API_MODELS.map((item) => (
+              <option key={item} value={item}>
+                {MODEL_LABELS[item]} ({priceWords(MODEL_PRICES[item].input)} /{' '}
+                {priceWords(MODEL_PRICES[item].output)} per million input / output tokens)
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="ai-run-effort">Effort</label>
+          <select
+            id="ai-run-effort"
+            value={effort}
+            onChange={(event) => onEffort(event.target.value as ApiEffort)}
+            data-testid="ai-run-effort"
+          >
+            {API_EFFORTS.map((item) => (
+              <option key={item} value={item}>
+                {EFFORT_LABELS[item]}
+              </option>
+            ))}
+          </select>
+          <p className="hint" data-testid="ai-effort-hint">
+            At high effort a response can use its whole allowance on thinking before calling a tool,
+            and the run then ends with that response paid for.
+          </p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="ai-run-cap">
+            Cap in dollars (${API_CAP_MIN.toFixed(2)} to ${API_CAP_MAX.toFixed(2)})
+          </label>
+          <input
+            id="ai-run-cap"
+            type="number"
+            min={API_CAP_MIN}
+            max={API_CAP_MAX}
+            step="0.05"
+            value={capText}
+            onChange={(event) => onCapText(event.target.value)}
+            data-testid="ai-run-cap"
+          />
+        </div>
+
+        <p className="hint" data-testid="ai-price-note">
+          Prices as of {PRICES_AS_OF}. Figures shown here are estimates; check Anthropic&apos;s own
+          pages for the bill.
+        </p>
+
+        {runProblem !== null && (
+          <p className="error" role="alert" data-testid="ai-run-problem">
+            {runProblem}
+          </p>
+        )}
+
+        {inSession && !runRunning && (
+          <div className="actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={!canStartRun}
+              onClick={startRun}
+              data-testid="ai-run-start"
+            >
+              Start a run
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Progress and outcome of one API run in a route-C session. */
+function RunView({
+  run,
+  canStopRun,
+  onStopRun,
+}: {
+  run: AiRunStatus;
+  canStopRun: boolean;
+  onStopRun: () => void;
+}) {
+  const progress = run.progress ?? {
+    responses: 0,
+    usage: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+    costUsd: 0,
+    costMayBeHigher: false,
+    lastTool: null,
+    text: '',
+    ended: null,
+  };
+  const modelLabel = MODEL_LABELS[run.settings.model as ApiModel] ?? run.settings.model;
+  return (
+    <div className="ai-run" data-testid="ai-run">
+      <p className="dialog-text" data-testid="ai-run-status">
+        {run.running ? (
+          <>
+            A run is under way ({modelLabel}, {run.settings.effort} effort).{' '}
+            {canStopRun && (
+              <button type="button" className="small" onClick={onStopRun} data-testid="ai-run-stop">
+                Stop the run
+              </button>
+            )}
+          </>
+        ) : (
+          <span data-testid="ai-run-ended">
+            The run ended:{' '}
+            {progress.ended !== null ? RUN_ENDED_WORDS[progress.ended] : 'The run ended.'}
+          </span>
+        )}
+      </p>
+      <ul className="run-list" data-testid="ai-run-figures">
+        <li data-testid="ai-run-responses">
+          Responses so far: {countOf(progress.responses, 'response', 'responses')}
+        </li>
+        <li data-testid="ai-run-tokens">
+          Tokens: {progress.usage.input.toLocaleString()} input,{' '}
+          {progress.usage.cacheWrite.toLocaleString()} cache written,{' '}
+          {progress.usage.cacheRead.toLocaleString()} cache read,{' '}
+          {progress.usage.output.toLocaleString()} output
+        </li>
+        <li data-testid="ai-run-cost">
+          Estimated cost: ${progress.costUsd.toFixed(4)} of ${run.settings.capUsd.toFixed(2)} cap
+          (prices as of {PRICES_AS_OF}; figures are estimates, check Anthropic&apos;s own pages for
+          the bill)
+          {progress.costMayBeHigher && (
+            <span className="error" data-testid="ai-run-cost-higher">
+              {' '}
+              — the cost may be higher: Anthropic may bill a request whose answer did not arrive.
+            </span>
+          )}
+        </li>
+        <li data-testid="ai-run-last-tool">Last tool called: {progress.lastTool ?? 'none yet'}</li>
+      </ul>
+      {progress.text !== '' && (
+        <div className="ai-run-text-box" data-testid="ai-run-text-section">
+          <h3>The AI&apos;s own words (may repeat what a record says)</h3>
+          <p className="ai-run-text" data-testid="ai-run-text">
+            {progress.text}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SessionViewProps {
   session: AiSessionStatus;
   /** How an AI app can reach the session now. */
@@ -333,7 +702,9 @@ interface SessionViewProps {
   /** How many proposals the app holds in memory, of every session. */
   proposals: number;
   onStop: () => void;
+  onStopRun: () => void;
   onOpenInbox: () => void;
+  apiControls: React.ReactNode;
 }
 
 /** The session that is under way, or the last one that ended, with every question it asked. */
@@ -343,7 +714,9 @@ function SessionView({
   maxCalls,
   proposals,
   onStop,
+  onStopRun,
   onOpenInbox,
+  apiControls,
 }: SessionViewProps) {
   const personName = (personId: string) => {
     const person = session.people.find((entry) => entry.personId === personId);
@@ -371,12 +744,12 @@ function SessionView({
           session.endedMessage
         )}
       </p>
-      {session.status === 'running' && connection.problem !== '' && (
+      {session.status === 'running' && session.route === 'app' && connection.problem !== '' && (
         <p className="error" role="alert" data-testid="ai-connection-problem">
           {connection.problem}
         </p>
       )}
-      {session.status === 'running' && connection.problem === '' && (
+      {session.status === 'running' && session.route === 'app' && connection.problem === '' && (
         <p className="dialog-text" data-testid="ai-session-clients">
           {connection.clients.length === 0
             ? 'No AI app is connected to this session yet. One connects when you ask it to work with RulZ Ancestry.'
@@ -390,6 +763,14 @@ function SessionView({
                 .join('; ')}.`}
         </p>
       )}
+      {session.run !== null && (
+        <RunView
+          run={session.run}
+          canStopRun={session.status === 'running'}
+          onStopRun={onStopRun}
+        />
+      )}
+      {session.status === 'running' && session.route === 'api' && apiControls}
       <p className="dialog-text">It is for:</p>
       <ul className="run-list" data-testid="ai-session-people">
         {session.people.map((person) => (
@@ -436,6 +817,9 @@ function SessionView({
 
 interface SessionPlanProps {
   personId: string;
+  route: 'app' | 'api';
+  onRoute: (route: 'app' | 'api') => void;
+  apiControls: React.ReactNode;
   /** Called with the session as it stands once one was started. */
   onStarted: (state: AiSessionState) => void;
   /** Called when a start was refused for want of an agreed notice: the window reads the assistant again. */
@@ -445,7 +829,15 @@ interface SessionPlanProps {
 }
 
 /** Who a new session would be for, and which services it may ask. Nothing starts before "Start session". */
-function SessionPlan({ personId, onStarted, onNotice, ai }: SessionPlanProps) {
+function SessionPlan({
+  personId,
+  route,
+  onRoute,
+  apiControls,
+  onStarted,
+  onNotice,
+  ai,
+}: SessionPlanProps) {
   const [generations, setGenerations] = useState(1);
   const [plan, setPlan] = useState<AiSessionPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -487,6 +879,7 @@ function SessionPlan({ personId, onStarted, onNotice, ai }: SessionPlanProps) {
     setStarting(true);
     api
       .startAiSession({
+        route,
         personId,
         generations,
         sourceIds: chosen.map((source) => source.id),
@@ -526,6 +919,32 @@ function SessionPlan({ personId, onStarted, onNotice, ai }: SessionPlanProps) {
       {plan === null && error === null && <p className="muted">Loading…</p>}
       {plan !== null && (
         <>
+          <fieldset className="options" data-testid="ai-route">
+            <legend>How the AI is reached</legend>
+            <label>
+              <input
+                type="radio"
+                name="ai-route"
+                checked={route === 'app'}
+                onChange={() => onRoute('app')}
+                data-testid="ai-route-app"
+              />
+              <span>An AI app on this PC (Claude Desktop or Claude Code)</span>
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="ai-route"
+                checked={route === 'api'}
+                onChange={() => onRoute('api')}
+                data-testid="ai-route-api"
+              />
+              <span>My own Anthropic API key</span>
+            </label>
+          </fieldset>
+
+          {route === 'api' && apiControls}
+
           <div className="field">
             <label htmlFor="ai-generations">Who the session is for</label>
             <select
@@ -612,9 +1031,9 @@ function SessionPlan({ personId, onStarted, onNotice, ai }: SessionPlanProps) {
               ? 'Tick a service the AI may ask.'
               : eligible.length === 0
                 ? 'Everybody here may be living, so there is nobody a session can be for.'
-                : `A session lets the AI app you connect ask each ticked service at most ${
-                    plan.requestsPerSource
-                  } questions about ${
+                : `A session lets ${
+                    route === 'api' ? 'a run with your key' : 'the AI app you connect'
+                  } ask each ticked service at most ${plan.requestsPerSource} questions about ${
                     eligible.length === 1
                       ? 'this 1 person'
                       : `these ${countOf(eligible.length, 'person', 'people')}`
@@ -669,6 +1088,11 @@ export function AiAssistantDialog({
   const [round, setRound] = useState(0);
   const [showLog, setShowLog] = useState(false);
   const [askOff, setAskOff] = useState(false);
+  const [route, setRoute] = useState<'app' | 'api'>('app');
+  const [keyState, setKeyState] = useState<AiKeyState | null>(null);
+  const [model, setModel] = useState<ApiModel>('claude-opus-5-5');
+  const [effort, setEffort] = useState<ApiEffort>('medium');
+  const [capText, setCapText] = useState(String(API_CAP_DEFAULT));
 
   useEffect(() => {
     let current = true;
@@ -682,6 +1106,12 @@ export function AiAssistantDialog({
       (failure: unknown) => {
         if (current) setError(errorMessage(failure));
       },
+    );
+    api.getAiKeyState().then(
+      (state) => {
+        if (current) setKeyState(state);
+      },
+      () => undefined,
     );
     return () => {
       current = false;
@@ -704,10 +1134,34 @@ export function AiAssistantDialog({
     api.stopAiSession().then(onAi, (failure: unknown) => setError(errorMessage(failure)));
   };
 
+  const stopRun = () => {
+    api.stopAiRun().then(onAi, (failure: unknown) => setError(errorMessage(failure)));
+  };
+
+  const refreshSession = () => {
+    api.getAiSession().then(onAi, (failure: unknown) => setError(errorMessage(failure)));
+  };
+
   // The workspace keeps the session fresh; what this window read on opening is only a start.
   const session = ai?.session ?? null;
   const running = session?.status === 'running';
   const proposals = ai?.proposals ?? 0;
+
+  const apiControls = (
+    <ApiControls
+      keyState={keyState}
+      onKeyState={setKeyState}
+      model={model}
+      onModel={setModel}
+      effort={effort}
+      onEffort={setEffort}
+      capText={capText}
+      onCapText={setCapText}
+      inSession={running && session.route === 'api'}
+      runRunning={session?.run?.running === true}
+      onStartedRun={refreshSession}
+    />
+  );
 
   return (
     <Dialog title="AI assistant" onClose={onClose} testId="ai-assistant" wide>
@@ -750,13 +1204,18 @@ export function AiAssistantDialog({
               maxCalls={info.maxCalls}
               proposals={proposals}
               onStop={stop}
+              onStopRun={stopRun}
               onOpenInbox={onOpenInbox}
+              apiControls={apiControls}
             />
           )}
           {!running && personId !== null && (
             <SessionPlan
               key={personId}
               personId={personId}
+              route={route}
+              onRoute={setRoute}
+              apiControls={apiControls}
               ai={ai}
               onStarted={onAi}
               onNotice={again}

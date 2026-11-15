@@ -311,7 +311,8 @@ Searching for records:
 An optional AI assistant is being built (Phase 4b). Claude is to propose record
 matches for you to confirm, through your own Claude app or your own API key. It
 is off until you turn it on. Claude Desktop and Claude Code on the same PC can
-be connected; your own API key is a later part. **The project owner connected Claude
+be connected, or the app can call Anthropic itself with your own API key
+(built, not yet tried with a real key). **The project owner connected Claude
 Desktop to a session and used it (2026-11-14). Claude Code, with the connector
 its command added, called every tool against a session, and its proposals reached the inbox.** What is there
 now:
@@ -335,6 +336,14 @@ now:
   the app then listens on a connection of this PC that is protected by a key
   made for that session. Another program that runs under your Windows account
   could read that key. The window shows which program is connected.
+- **With your own Anthropic API key** you pick that route when starting a
+  session, paste the key (kept encrypted for your Windows account, never shown
+  again, removable), choose a model (Opus 5.5, Sonnet 5.5 or Haiku 5.5), an
+  effort and a cap in dollars, and start a run. The app stops before a request
+  could pass the cap and shows tokens and an estimated cost from its own dated
+  price table; check Anthropic's Console for the bill. A request already sent
+  may be billed even if you stop it. The key goes only to
+  `https://api.anthropic.com`.
 - **What an AI proposes stands in the inbox,** in a list of its own: the
   record, the app's own label, what the AI says, and the words of the record
   each of its reasons quotes. The app shows a reason only when it found the

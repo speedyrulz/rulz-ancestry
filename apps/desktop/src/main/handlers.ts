@@ -904,6 +904,7 @@ export function createHandlers(
     startAiSession: define<'startAiSession'>(
       z.tuple([
         aiSessionRequest.extend({
+          route: z.enum(['app', 'api']),
           sourceIds: z.array(siteId).min(1).max(10),
           stamp: z.string().regex(/^[0-9a-f]{64}$/),
         }),
@@ -915,6 +916,24 @@ export function createHandlers(
     ),
 
     getAiSession: define<'getAiSession'>(none, () => ai.state()),
+
+    getAiKeyState: define<'getAiKeyState'>(none, () => ai.keyState()),
+    saveAiKey: define<'saveAiKey'>(z.tuple([z.string().max(300)]), (key) => ai.saveKey(key)),
+    removeAiKey: define<'removeAiKey'>(none, () => ai.removeKey()),
+    startAiRun: define<'startAiRun'>(
+      z.tuple([
+        z.strictObject({
+          model: z.string().max(100),
+          effort: z.string().max(20),
+          capUsd: z.number(),
+        }),
+      ]),
+      (settings) => ai.startRun(settings),
+    ),
+    stopAiRun: define<'stopAiRun'>(none, () => {
+      ai.stopRun();
+      return ai.state();
+    }),
 
     stopAiSession: define<'stopAiSession'>(none, () => {
       ai.stop();

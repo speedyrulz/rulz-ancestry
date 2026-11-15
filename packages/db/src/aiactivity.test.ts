@@ -145,6 +145,26 @@ describe('logAiActivity', () => {
     ).toThrow(TypeError);
   });
 
+  it('keeps the entries of an API run, at the start and at the end', () => {
+    const db = appDb();
+    logAiActivity(
+      db,
+      entry({
+        kind: 'run-started',
+        detail: { model: 'claude-haiku-5-5', effort: 'low', capUsd: 0.5 },
+      }),
+    );
+    logAiActivity(
+      db,
+      entry({
+        kind: 'run-ended',
+        at: NOW + 1,
+        detail: { responses: 2, costUsd: 0.01, why: 'done', costMayBeHigher: false },
+      }),
+    );
+    expect(listAiActivity(db).map((row) => row.kind)).toEqual(['run-ended', 'run-started']);
+  });
+
   it('throws a TypeError for a time that is not a whole number of zero or more', () => {
     const db = appDb();
     for (const at of [-1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {

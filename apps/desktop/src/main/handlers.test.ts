@@ -372,6 +372,7 @@ beforeEach(() => {
   let sessions = 0;
   ai = new AiSessionService(records, {
     appDb,
+    secrets,
     connector: {
       file: CONNECTOR_PATH,
       fileFits: true,
@@ -452,6 +453,27 @@ describe('argument checks', () => {
         'startAiSession',
         { personId: MISSING, generations: 1, sourceIds: 'wikitree', stamp: '0'.repeat(64) },
       ],
+      [
+        'startAiSession',
+        {
+          route: 'web',
+          personId: MISSING,
+          generations: 1,
+          sourceIds: ['wikitree'],
+          stamp: '0'.repeat(64),
+        },
+      ],
+      ['saveAiKey'],
+      ['saveAiKey', 1],
+      ['saveAiKey', 'sk-ant-a', 'b'],
+      ['saveAiKey', 'k'.repeat(301)],
+      ['removeAiKey', 'x'],
+      ['getAiKeyState', 'x'],
+      ['startAiRun'],
+      ['startAiRun', { model: 'claude-haiku-5-5', effort: 'low' }],
+      ['startAiRun', { model: 'claude-haiku-5-5', effort: 'low', capUsd: '1' }],
+      ['startAiRun', { model: 'claude-haiku-5-5', effort: 'low', capUsd: 1, extra: true }],
+      ['stopAiRun', 'x'],
       ['getAiSession', 0],
       ['stopAiSession', 'session-1'],
       ['listAiProposals', MISSING],
@@ -4816,6 +4838,7 @@ describe('the AI assistant', () => {
   const begin = async (personId: string, sourceIds: string[] = ['wikitree'], generations = 0) => {
     const plan = await call<AiSessionPlan | null>('planAiSession', { personId, generations });
     return call<AiSessionStartResult>('startAiSession', {
+      route: 'app',
       personId,
       generations,
       sourceIds,
@@ -4936,6 +4959,7 @@ describe('the AI assistant', () => {
     expect(await call('planAiSession', { personId: MISSING, generations: 1 })).toBeNull();
     // A start from a list that is no longer true is refused, with the list as it is now.
     const stale = await call<AiSessionStartResult>('startAiSession', {
+      route: 'app',
       personId: ada,
       generations: 1,
       sourceIds: ['wikitree'],
@@ -4973,6 +4997,45 @@ describe('the AI assistant', () => {
     expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
     // Starting, following and stopping asked nothing of the internet.
     expect(askedOfSources).toEqual([]);
+  });
+
+  it('keeps the key of route C: shape checked, state told, never given back or echoed', async () => {
+    const key = 'sk-ant-test-canary-0000';
+    expect(await call('getAiKeyState')).toBe('missing');
+    expect(await call('saveAiKey', 'not a key')).toMatchObject({ ok: false });
+    expect(await call('saveAiKey', key)).toEqual({ ok: true });
+    expect(await call('getAiKeyState')).toBe('saved');
+    expect(JSON.stringify(await state())).not.toContain(key);
+    expect(JSON.stringify(await info())).not.toContain(key);
+
+    // A key that is too long is refused by the check of the arguments, which does not repeat it.
+    const long = `sk-ant-${'z'.repeat(400)}`;
+    const refused = await errorOf('saveAiKey', long);
+    expect(refused.code).toBe('invalid');
+    expect(JSON.stringify(refused)).not.toContain('zzzz');
+
+    secretsWork.readable = false;
+    expect(await call('getAiKeyState')).toBe('unreadable');
+    secretsWork.readable = true;
+    secretsWork.available = false;
+    expect(await call('getAiKeyState')).toBe('unavailable');
+    expect(await call('saveAiKey', key)).toMatchObject({ ok: false });
+    secretsWork.available = true;
+
+    expect(await call('removeAiKey')).toBe('missing');
+  });
+
+  it('refuses a run where no session on route C is under way, and stopping one is harmless', async () => {
+    const { ada } = await start();
+    const settings = { model: 'claude-haiku-5-5', effort: 'low', capUsd: 1 };
+    expect(await call('saveAiKey', 'sk-ant-test-canary-0000')).toEqual({ ok: true });
+    expect(await call('startAiRun', settings)).toMatchObject({ ok: false });
+    // A session on route A takes no run.
+    expect((await begin(ada)).ok).toBe(true);
+    expect(await call('startAiRun', settings)).toMatchObject({ ok: false });
+    expect(await call<AiSessionState>('stopAiRun')).toMatchObject({
+      session: { status: 'running', route: 'app', run: null },
+    });
   });
 
   it('gives the page no way to call a tool', () => {

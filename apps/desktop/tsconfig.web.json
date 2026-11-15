@@ -6,5 +6,5 @@
     "jsx": "react-jsx",
     "types": []
   },
-  "include": ["src/renderer", "src/shared"]
+  "include": ["src/renderer", "src/shared", "../../packages/ai/src/prices.ts"]
 }

@@ -9,8 +9,10 @@ import {
   deletePerson,
   listAiActivity,
   listNames,
+  logAiActivity,
   listPersonEvents,
   openAppDatabase,
+  getSetting,
   openTree,
   setSetting,
   updateEvent,
@@ -34,7 +36,20 @@ import {
 } from './aisession';
 import type { AiClientInfo } from '../shared/ipc';
 import type { AiBridge } from './aibridge';
+import type * as AiApi from './aiapi';
+import type { AiApiProgress, AiApiRunOptions } from './aiapi';
 import { RecordSearchService } from './records';
+
+/** Lets a test put its own figure in place of what the first request of a run could cost. */
+const reserve = vi.hoisted(() => ({ override: null as number | null }));
+vi.mock('./aiapi', async (original) => {
+  const actual = await original<typeof AiApi>();
+  return {
+    ...actual,
+    firstRequestReserve: (model: Parameters<typeof actual.firstRequestReserve>[0]) =>
+      reserve.override ?? actual.firstRequestReserve(model),
+  };
+});
 
 let appDb: Db;
 let tree: Tree;
@@ -153,7 +168,11 @@ function agreeToBoth(): void {
 /** Starts a session from a person, as the page does: from the plan it was shown. */
 function begin(personId: string, sourceIds: string[] = ['wikitree'], generations = 3) {
   const plan = ai.plan(tree, { personId, generations });
-  return ai.start(tree, { personId, generations, sourceIds, stamp: plan?.stamp ?? '' }, () => open);
+  return ai.start(
+    tree,
+    { route: 'app', personId, generations, sourceIds, stamp: plan?.stamp ?? '' },
+    () => open,
+  );
 }
 
 function started(personId: string, sourceIds: string[] = ['wikitree']): AiSessionStatus {
@@ -354,7 +373,13 @@ describe('starting a session', () => {
 
     const result = ai.start(
       tree,
-      { personId: marten, generations: 3, sourceIds: ['wikitree'], stamp: plan?.stamp ?? '' },
+      {
+        route: 'app',
+        personId: marten,
+        generations: 3,
+        sourceIds: ['wikitree'],
+        stamp: plan?.stamp ?? '',
+      },
       () => open,
     );
 
@@ -399,7 +424,7 @@ describe('starting a session', () => {
     expect(
       ai.start(
         tree,
-        { personId: 'nobody', generations: 0, sourceIds: ['wikitree'], stamp: '' },
+        { route: 'app', personId: 'nobody', generations: 0, sourceIds: ['wikitree'], stamp: '' },
         () => open,
       ),
     ).toMatchObject({ ok: false, problem: { kind: 'gone' }, plan: null });
@@ -2129,5 +2154,679 @@ describe('a session and the way an AI app reaches it', () => {
     expect(without.info()).toMatchObject({ canConnect: false, connectorCommand: '' });
     expect(without.connectorFile).toBeNull();
     expect(without.state().connection).toEqual({ open: false, problem: '', clients: [] });
+  });
+});
+
+describe('a session with the key of the user (route C)', () => {
+  const CANARY = 'sk-ant-test-canary-0000';
+
+  class FakeBridge implements AiBridge {
+    opened = 0;
+    listening = false;
+    open(): void {
+      this.opened += 1;
+      this.listening = true;
+    }
+    close(): void {
+      this.listening = false;
+    }
+    state() {
+      return { open: this.listening, problem: '', clients: [] };
+    }
+    onClient(): void {}
+    onChange(): void {}
+  }
+
+  interface FakeRun {
+    options: AiApiRunOptions;
+    /** What the log held when the run was called. */
+    logged: string[];
+    finish: (progress: AiApiProgress) => void;
+    fail: (error: Error) => void;
+  }
+
+  let bridge: FakeBridge;
+  let encryption: boolean;
+  let runs: FakeRun[];
+  let keysGiven: string[];
+  /** Held waits of the session between two questions; each rejects when its signal aborts. */
+  let holdWaits: boolean;
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  const secrets = {
+    available: () => encryption,
+    encrypt: (text: string) => `enc:${Buffer.from(text).toString('base64')}`,
+    decrypt: (kept: string) => {
+      if (!kept.startsWith('enc:')) throw new Error('not readable');
+      return Buffer.from(kept.slice(4), 'base64').toString();
+    },
+  };
+
+  const final = (
+    ended: AiApiProgress['ended'],
+    extra: Partial<AiApiProgress> = {},
+  ): AiApiProgress => ({
+    responses: 3,
+    usage: { input: 100, output: 50, cacheWrite: 20, cacheRead: 10 },
+    costUsd: 0.0123,
+    costMayBeHigher: false,
+    lastTool: 'get_session',
+    text: 'WORDS OF THE MODEL',
+    ended,
+    ...extra,
+  });
+
+  const SETTINGS = { model: 'claude-haiku-5-5', effort: 'medium', capUsd: 1 };
+
+  beforeEach(() => {
+    bridge = new FakeBridge();
+    encryption = true;
+    runs = [];
+    keysGiven = [];
+    holdWaits = false;
+    reserve.override = null;
+    let sessions = 0;
+    ai = new AiSessionService(records, {
+      appDb,
+      now: () => Date.now() + ahead,
+      wait: (_ms, signal) =>
+        holdWaits
+          ? new Promise<void>((_resolve, reject) => {
+              if (signal.aborted) reject(new Error('given up'));
+              signal.addEventListener('abort', () => reject(new Error('given up')));
+            })
+          : Promise.resolve(),
+      newId: () => {
+        sessions += 1;
+        return `api-${sessions}`;
+      },
+      bridge,
+      secrets,
+      runApi: (options) =>
+        new Promise<AiApiProgress>((resolve, reject) => {
+          runs.push({
+            options,
+            logged: log().map((entry) => entry.kind),
+            finish: resolve,
+            fail: reject,
+          });
+        }),
+      makeApiClient: (key) => {
+        keysGiven.push(key);
+        return { messages: { create: () => Promise.reject(new Error('not used')) } };
+      },
+    });
+  });
+
+  const beginApi = (personId: string) => {
+    const plan = ai.plan(tree, { personId, generations: 1 });
+    return ai.start(
+      tree,
+      {
+        route: 'api',
+        personId,
+        generations: 1,
+        sourceIds: ['wikitree'],
+        stamp: plan?.stamp ?? '',
+      },
+      () => open,
+    );
+  };
+
+  const startedApi = (personId: string): AiSessionStatus => {
+    const result = beginApi(personId);
+    if (!result.ok) throw new Error(result.problem.message);
+    return result.session;
+  };
+
+  /** An agreed session on route C with a saved key. */
+  const ready = () => {
+    const { marten } = family();
+    agreeToBoth();
+    expect(ai.saveKey(CANARY)).toEqual({ ok: true });
+    startedApi(marten);
+    return marten;
+  };
+
+  it('never opens the pipe, and says which route it is', () => {
+    const { marten } = family();
+    agreeToBoth();
+    const session = startedApi(marten);
+    expect(session.route).toBe('api');
+    expect(session.run).toBeNull();
+    expect(bridge.opened).toBe(0);
+    expect(ai.state().connection.open).toBe(false);
+
+    // A session on the other route opens it, as before.
+    ai.stop();
+    expect(begin(marten).ok).toBe(true);
+    expect(ai.status()?.route).toBe('app');
+    expect(bridge.opened).toBe(1);
+  });
+
+  it('is refused at the door of the bridge, which is for route A only', async () => {
+    ready();
+    expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
+    expect(log().filter((entry) => entry.kind === 'sources-listed')).toEqual([]);
+  });
+
+  it('takes a route that is one of the two, and no other', () => {
+    const { marten } = family();
+    agreeToBoth();
+    const plan = ai.plan(tree, { personId: marten, generations: 0 });
+    const request = {
+      personId: marten,
+      generations: 0,
+      sourceIds: ['wikitree'],
+      stamp: plan?.stamp ?? '',
+    };
+    expect(ai.start(tree, { ...request, route: 'other' as 'api' }, () => open)).toMatchObject({
+      ok: false,
+    });
+    expect(ai.status()).toBeNull();
+  });
+
+  describe('the key', () => {
+    it('is saved encrypted, never given back, and can be removed', () => {
+      expect(ai.keyState()).toBe('missing');
+      expect(ai.saveKey(CANARY)).toEqual({ ok: true });
+      expect(ai.keyState()).toBe('saved');
+      expect(JSON.stringify(listAiActivity(appDb, { limit: 500 }))).not.toContain(CANARY);
+      expect(JSON.stringify(ai.state())).not.toContain(CANARY);
+      expect(JSON.stringify(ai.info())).not.toContain(CANARY);
+      expect(getSetting(appDb, 'aiAssistant.apiKey')).not.toContain(CANARY);
+
+      expect(ai.removeKey()).toBe('missing');
+      expect(getSetting(appDb, 'aiAssistant.apiKey')).toBeNull();
+    });
+
+    it('is checked for its shape only', () => {
+      const bad = [
+        '',
+        'sk-ant-',
+        'sk-ant-a b',
+        ' sk-ant-abc',
+        'sk-ant-abc\n',
+        'abc',
+        `sk-ant-${'a'.repeat(300)}`,
+      ];
+      for (const key of bad) {
+        const result = ai.saveKey(key);
+        expect(result.ok, JSON.stringify(key)).toBe(false);
+        expect(JSON.stringify(result)).not.toContain('sk-ant-a');
+      }
+      expect(ai.keyState()).toBe('missing');
+      expect(ai.saveKey(`sk-ant-${'a'.repeat(293)}`)).toEqual({ ok: true });
+    });
+
+    it('is not saved when the PC cannot encrypt, and is then unavailable', () => {
+      encryption = false;
+      expect(ai.keyState()).toBe('unavailable');
+      expect(ai.saveKey(CANARY)).toMatchObject({ ok: false });
+      expect(getSetting(appDb, 'aiAssistant.apiKey')).toBeNull();
+    });
+
+    it('is unreadable when what was kept cannot be decrypted', () => {
+      setSetting(appDb, 'aiAssistant.apiKey', 'not-encrypted-by-us');
+      expect(ai.keyState()).toBe('unreadable');
+    });
+  });
+
+  describe('a run', () => {
+    it('starts in a session on route C with a readable key, and gives the client the key', async () => {
+      ready();
+      expect(ai.startRun(SETTINGS)).toEqual({ ok: true });
+      await flush();
+      expect(runs).toHaveLength(1);
+      expect(keysGiven).toEqual([CANARY]);
+      expect(runs[0]?.options).toMatchObject({
+        model: 'claude-haiku-5-5',
+        effort: 'medium',
+        capUsd: 1,
+      });
+      expect(status().run).toMatchObject({ settings: SETTINGS, running: true, progress: null });
+    });
+
+    it('is refused where there is no session, in a session on route A, or without a key', async () => {
+      const { marten } = family();
+      agreeToBoth();
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      ai.saveKey(CANARY);
+      expect(begin(marten).ok).toBe(true);
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      ai.stop();
+
+      ai.removeKey();
+      startedApi(marten);
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      await flush();
+      expect(runs).toEqual([]);
+      expect(log().some((entry) => entry.kind === 'run-started')).toBe(false);
+    });
+
+    it('is refused with a key that cannot be read, or when encryption is not available', async () => {
+      ready();
+      encryption = false;
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      encryption = true;
+      setSetting(appDb, 'aiAssistant.apiKey', 'garbage');
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      await flush();
+      expect(runs).toEqual([]);
+    });
+
+    it('is refused while another run is under way, and allowed again once it ended', async () => {
+      ready();
+      expect(ai.startRun(SETTINGS).ok).toBe(true);
+      await flush();
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      expect(runs).toHaveLength(1);
+
+      runs[0]?.finish(final('done'));
+      await flush();
+      expect(status()).toMatchObject({ status: 'running' });
+      expect(status().run).toMatchObject({ running: false });
+      expect(ai.startRun(SETTINGS).ok).toBe(true);
+      await flush();
+      expect(runs).toHaveLength(2);
+    });
+
+    it('is refused for a model, an effort or a cap that is not on offer', async () => {
+      ready();
+      const bad = [
+        { ...SETTINGS, model: 'claude-unknown' },
+        { ...SETTINGS, model: '' },
+        { ...SETTINGS, effort: 'max' },
+        { ...SETTINGS, capUsd: 0.1 },
+        { ...SETTINGS, capUsd: 10.01 },
+        { ...SETTINGS, capUsd: Number.NaN },
+        { ...SETTINGS, capUsd: Number.POSITIVE_INFINITY },
+      ];
+      for (const settings of bad) {
+        expect(ai.startRun(settings), JSON.stringify(settings)).toMatchObject({ ok: false });
+      }
+      await flush();
+      expect(runs).toEqual([]);
+      expect(log().some((entry) => entry.kind === 'run-started')).toBe(false);
+    });
+
+    it('is refused when the first request could cost more than the cap, and says how much', async () => {
+      ready();
+      reserve.override = 5;
+      const refused = ai.startRun({ ...SETTINGS, capUsd: 1 });
+      expect(refused).toMatchObject({ ok: false });
+      expect(JSON.stringify(refused)).toContain('$5.0000');
+      expect(ai.startRun({ ...SETTINGS, capUsd: 5 }).ok).toBe(true);
+      await flush();
+      expect(runs).toHaveLength(1);
+    });
+
+    it('writes "run started" before the run is called, with no more than the settings', async () => {
+      ready();
+      ai.startRun({ model: 'claude-sonnet-5-5', effort: 'high', capUsd: 2.5 });
+      await flush();
+      expect(runs[0]?.logged.at(-1)).toBe('run-started');
+      expect(log().find((entry) => entry.kind === 'run-started')).toEqual({
+        kind: 'run-started',
+        model: 'claude-sonnet-5-5',
+        effort: 'high',
+        capUsd: 2.5,
+      });
+    });
+
+    it('does not start when "run started" cannot be written, and the session ends', async () => {
+      ready();
+      appDb.exec('DROP TABLE ai_activity');
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      await flush();
+      expect(runs).toEqual([]);
+      expect(status()).toMatchObject({ status: 'ended', ended: 'log' });
+    });
+
+    it('writes an end entry with the totals and no text, and leaves the session under way', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      runs[0]?.finish(final('cap-cost', { costMayBeHigher: true }));
+      await flush();
+
+      expect(log().find((entry) => entry.kind === 'run-ended')).toEqual({
+        kind: 'run-ended',
+        model: 'claude-haiku-5-5',
+        effort: 'medium',
+        capUsd: 1,
+        responses: 3,
+        input: 100,
+        output: 50,
+        cacheWrite: 20,
+        cacheRead: 10,
+        costUsd: 0.0123,
+        why: 'cap-cost',
+        costMayBeHigher: true,
+      });
+      expect(JSON.stringify(log())).not.toContain('WORDS OF THE MODEL');
+      expect(status()).toMatchObject({ status: 'running', run: { running: false } });
+      expect(status().run?.progress).toMatchObject({ ended: 'cap-cost', responses: 3 });
+    });
+
+    it('is said in words in the activity log', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      runs[0]?.finish(final('done'));
+      await flush();
+      const said = ai.activity({ offset: 0, limit: 50 }, tree).items.map((item) => item.what);
+      expect(said.some((what) => what.startsWith('An API run started: claude-haiku-5-5'))).toBe(
+        true,
+      );
+      expect(said.some((what) => what.startsWith('The API run ended (done)'))).toBe(true);
+    });
+
+    it('ends as stopped when the user stops it, and stays the current run until then', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      ai.stopRun();
+      expect(options.signal.aborted).toBe(true);
+      expect(options.isCurrent()).toBe(true);
+      expect(status().run?.running).toBe(true);
+      // No new run while the old one has not ended, and no tool is given to it.
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      expect(await options.call('get_session', {})).toMatchObject({
+        ok: false,
+        reason: 'no-session',
+      });
+
+      runs[0]?.finish(final('stopped'));
+      await flush();
+      expect(options.isCurrent()).toBe(false);
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({ why: 'stopped' });
+      expect(status().status).toBe('running');
+    });
+
+    it('can be stopped when there is no run to stop, and no session', () => {
+      expect(() => ai.stopRun()).not.toThrow();
+      ready();
+      expect(() => ai.stopRun()).not.toThrow();
+    });
+
+    it('is aborted when the session ends, and its end entry follows the end of the session', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      expect(options.signal.aborted).toBe(false);
+      ai.stop();
+      expect(options.signal.aborted).toBe(true);
+      expect(options.isCurrent()).toBe(false);
+
+      runs[0]?.finish(final('session-ended'));
+      await flush();
+      const kinds = log().map((entry) => entry.kind);
+      expect(kinds.indexOf('session-ended')).toBeLessThan(kinds.indexOf('run-ended'));
+      expect(log().filter((entry) => entry.kind === 'run-ended')).toHaveLength(1);
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({
+        why: 'session-ended',
+      });
+    });
+
+    it('writes an end entry when the run fails to answer at all, with nothing of the error', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      runs[0]?.fail(new Error(`broke with ${CANARY}`));
+      await flush();
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({
+        why: 'failed',
+        costMayBeHigher: true,
+      });
+      expect(JSON.stringify(log())).not.toContain(CANARY);
+      expect(status().run?.running).toBe(false);
+    });
+  });
+
+  describe('the door bound to a run', () => {
+    it('gives the tools of the one door while its run is the current one', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      expect(options.isCurrent()).toBe(true);
+      expect((await options.call('get_session', {})).ok).toBe(true);
+      expect(status().calls).toBe(1);
+      expect(log().some((entry) => entry.kind === 'sources-listed')).toBe(true);
+    });
+
+    it('refuses after the session was replaced by another', async () => {
+      const marten = ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+
+      startedApi(marten);
+      expect(options.isCurrent()).toBe(false);
+      expect(await options.call('get_session', {})).toMatchObject({
+        ok: false,
+        reason: 'no-session',
+      });
+      expect(status().calls).toBe(0);
+    });
+
+    it('refuses after the run was stopped and a new one started, by the old run id', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const old = runs[0] as FakeRun;
+      ai.stopRun();
+      old.finish(final('stopped'));
+      await flush();
+
+      expect(ai.startRun(SETTINGS).ok).toBe(true);
+      await flush();
+      expect(runs).toHaveLength(2);
+      const fresh = runs[1]?.options as AiApiRunOptions;
+      expect(old.options.isCurrent()).toBe(false);
+      expect(await old.options.call('get_session', {})).toMatchObject({
+        ok: false,
+        reason: 'no-session',
+      });
+      expect(fresh.isCurrent()).toBe(true);
+      expect((await fresh.call('get_session', {})).ok).toBe(true);
+      expect(status().calls).toBe(1);
+    });
+  });
+
+  describe('the idle clock', () => {
+    it('does not end the session while a request is in flight, and the two hours still do', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+
+      options.onRequest(true);
+      ahead = AI_SESSION_IDLE_MS * 3;
+      expect(status().status).toBe('running');
+      ahead = AI_SESSION_IDLE_MS * 6;
+      expect(status().status).toBe('running');
+
+      ahead = AI_SESSION_MAX_MS + 1;
+      expect(status()).toMatchObject({ status: 'ended', ended: 'time' });
+    });
+
+    it('counts from the end of the request, and ends the session once none is in flight', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+
+      options.onRequest(true);
+      ahead = AI_SESSION_IDLE_MS * 3;
+      expect(status().status).toBe('running');
+      // The request goes on a while longer, unseen, and the end of it is activity too.
+      ahead += AI_SESSION_IDLE_MS * 0.8;
+      options.onRequest(false);
+      ahead += AI_SESSION_IDLE_MS - 1000;
+      expect(status().status).toBe('running');
+      ahead += 2000;
+      expect(status()).toMatchObject({ status: 'ended', ended: 'idle' });
+    });
+
+    it('ends an idle session with no request in flight, as for route A', () => {
+      ready();
+      ahead = AI_SESSION_IDLE_MS + 1;
+      expect(status()).toMatchObject({ status: 'ended', ended: 'idle' });
+    });
+  });
+
+  describe('Stop, the key and the end of the session while a run is going', () => {
+    const search = (marten: string) => ({
+      personId: marten,
+      sourceId: 'wikitree',
+      given: 'Marten',
+      surname: 'Veldkamp',
+      birthYear: 1850,
+      deathYear: null,
+    });
+
+    it('stops a question that waits for its turn at a source: nothing is sent or counted', async () => {
+      const marten = ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      expect((await options.call('search_records', search(marten))).ok).toBe(true);
+      expect(asked).toHaveLength(1);
+      const before = status();
+
+      holdWaits = true;
+      const second = options.call('search_records', search(marten));
+      await flush();
+      ai.stopRun();
+      expect(await second).toMatchObject({ ok: false, reason: 'not-sent' });
+
+      expect(asked).toHaveLength(1);
+      expect(status().sources).toEqual(before.sources);
+      expect(log().filter((entry) => entry.kind === 'records-searched')).toHaveLength(1);
+      expect(status().status).toBe('running');
+    });
+
+    it('does not send a question after the run was stopped, even when it need not wait', async () => {
+      const marten = ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      ai.stopRun();
+      expect(await options.call('search_records', search(marten))).toMatchObject({ ok: false });
+      expect(asked).toEqual([]);
+      expect(log().filter((entry) => entry.kind === 'records-searched')).toEqual([]);
+    });
+
+    it('stops a run that is going when the key is removed', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      expect(ai.removeKey()).toBe('missing');
+      expect(options.signal.aborted).toBe(true);
+      runs[0]?.finish(final('stopped'));
+      await flush();
+      expect(ai.startRun(SETTINGS)).toMatchObject({ ok: false });
+      expect(runs).toHaveLength(1);
+    });
+
+    it('writes the end entry at once when the session ends, from the last progress, and only one', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      options.onProgress(final(null, { responses: 2, costUsd: 0.5 }));
+      options.onRequest(true);
+      ai.stop();
+
+      // Written before the run settles, and so before anything that could close or clear the log.
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({
+        why: 'session-ended',
+        responses: 2,
+        costUsd: 0.5,
+        input: 100,
+        costMayBeHigher: true,
+      });
+      expect(status().run?.running).toBe(false);
+
+      runs[0]?.finish(final('session-ended'));
+      await flush();
+      expect(log().filter((entry) => entry.kind === 'run-ended')).toHaveLength(1);
+    });
+
+    it('does not say the cost may be higher when the session ends between two requests', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      options.onProgress(final(null));
+      options.onRequest(true);
+      options.onRequest(false);
+      ai.stop();
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({
+        costMayBeHigher: false,
+      });
+    });
+
+    it('writes what the run last reported when it fails to answer, not zeros', async () => {
+      ready();
+      ai.startRun(SETTINGS);
+      await flush();
+      const options = runs[0]?.options as AiApiRunOptions;
+      options.onProgress(final(null, { responses: 4, costUsd: 0.25 }));
+      runs[0]?.fail(new Error('broke'));
+      await flush();
+      expect(log().find((entry) => entry.kind === 'run-ended')).toMatchObject({
+        why: 'failed',
+        responses: 4,
+        costUsd: 0.25,
+        output: 50,
+        costMayBeHigher: true,
+      });
+    });
+  });
+
+  it('says a corrupt entry of a run in words that hold nothing it should not', () => {
+    const { marten } = family();
+    agreeToBoth();
+    startedApi(marten);
+    const write = (kind: 'run-started' | 'run-ended', detail: Record<string, string | number>) =>
+      logAiActivity(appDb, { sessionId: 'api-1', treeId: tree.info().id, kind, at: 1, detail });
+    write('run-started', { model: '<b>x</b>', effort: 'a lot', capUsd: 'plenty' });
+    write('run-ended', { why: 'because', costUsd: -1, responses: 1 });
+    write('run-started', { model: 'claude-haiku-5-5', effort: 'low', capUsd: 0.5 });
+
+    const said = ai.activity({ offset: 0, limit: 50 }, tree).items.map((item) => item.what);
+    expect(said).toContain('An API run started, cap unknown.');
+    expect(said).toContain(
+      'The API run ended: 1 responses; input 0, cache write 0, cache read 0, output 0 tokens; estimated cost unknown.',
+    );
+    expect(said).toContain('An API run started: claude-haiku-5-5, low effort, cap $0.50.');
+    expect(JSON.stringify(said)).not.toContain('<b>');
+  });
+
+  it('keeps the key out of the state, the status, every answer and the log', async () => {
+    const marten = ready();
+    ai.startRun({ ...SETTINGS, model: 'nope' });
+    ai.startRun(SETTINGS);
+    await flush();
+    runs[0]?.finish(final('done'));
+    await flush();
+    ai.saveKey('sk-ant-has white space');
+    const everything = JSON.stringify([
+      ai.state(),
+      ai.status(),
+      ai.info(),
+      ai.keyState(),
+      ai.activity({ offset: 0, limit: 100 }, tree),
+      listAiActivity(appDb, { limit: 500 }),
+      startedApi(marten),
+    ]);
+    expect(everything).not.toContain(CANARY);
+    expect(everything).not.toContain('sk-ant-');
   });
 });

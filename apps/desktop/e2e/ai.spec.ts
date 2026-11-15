@@ -173,6 +173,9 @@ test('the AI assistant is off until its notice is agreed to; a session is listed
   await expect(assistant.getByTestId('ai-notice-other-tools')).toContainText(
     'This app takes proposals only for records it fetched itself',
   );
+  await expect(assistant.getByTestId('ai-notice-api-key')).toContainText(
+    'only after you save a key and start a run',
+  );
   await expect(assistant.getByTestId('ai-notice')).toContainText('2 hours after it started');
   await expect(assistant.getByTestId('ai-notice-sources').locator('li')).toHaveText([
     /^WikiTree: /,
@@ -213,6 +216,7 @@ test('the AI assistant is off until its notice is agreed to; a session is listed
   ]);
   // No session, so nothing listens and there is no key.
   expect(existsSync(join(userDataDir, CONNECTOR_FILE))).toBe(false);
+  await expect(assistant.getByTestId('ai-route-app')).toBeChecked();
   await expect(assistant.getByTestId('ai-plan-people').locator('li')).toHaveText([
     'Josiah Marsh',
     'Ezra Marsh (parent)',
@@ -468,4 +472,52 @@ test('the bridge lists the tools at any time, gives nothing without a session, a
     Object.keys((globalThis as unknown as { rulz: object }).rulz),
   );
   expect(api.filter((method) => /tool|call|propose/i.test(method))).toEqual([]);
+});
+
+test('picks the Anthropic API key route, saves a key, shows the run controls, and removes the key', async ({
+  app,
+  window,
+  userDataDir,
+}) => {
+  const fakeKey = 'sk-ant-test-canary-0000';
+  await answerSources(app);
+  await family(window);
+
+  await window.getByTestId('open-ai-assistant').click();
+  const assistant = window.getByTestId('ai-assistant');
+  await assistant.getByTestId('ai-agree').click();
+  await assistant.getByTestId('record-agree').click();
+
+  await assistant.getByTestId('ai-route-api').check();
+  await expect(assistant.getByTestId('ai-route-api')).toBeChecked();
+  await expect(assistant.getByTestId('ai-key-state')).toContainText('missing');
+
+  const keyInput = assistant.getByTestId('ai-key-input');
+  await expect(keyInput).toHaveAttribute('type', 'password');
+  await keyInput.fill(fakeKey);
+  await assistant.getByTestId('ai-key-save').click();
+
+  await expect(assistant.getByTestId('ai-key-state')).toContainText('saved');
+  await expect(keyInput).toHaveValue('');
+  expect(await window.content()).not.toContain(fakeKey);
+
+  await expect(assistant.getByTestId('ai-run-model')).toHaveValue('claude-opus-5-5');
+  await expect(assistant.getByTestId('ai-run-effort')).toHaveValue('medium');
+  await expect(assistant.getByTestId('ai-effort-hint')).toContainText('thinking');
+  await expect(assistant.getByTestId('ai-run-cap')).toHaveValue('1');
+  await expect(assistant.getByTestId('ai-price-note')).toContainText('2026-11-15');
+
+  await assistant.getByTestId('ai-source-wikitree').check();
+  await assistant.getByTestId('ai-start').click();
+  await expect(assistant.getByTestId('ai-session-status')).toContainText('A session is under way');
+  // A route-C session never opens the connector pipe.
+  expect(existsSync(join(userDataDir, CONNECTOR_FILE))).toBe(false);
+  await expect(assistant.getByTestId('ai-run-start')).toBeEnabled();
+
+  await assistant.getByTestId('ai-key-remove').click();
+  await expect(assistant.getByTestId('ai-key-state')).toContainText('missing');
+  await expect(assistant.getByTestId('ai-run-start')).toBeDisabled();
+
+  await assistant.getByTestId('ai-stop').click();
+  expect(await askedOfInternet(app)).toEqual([]);
 });
