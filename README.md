@@ -312,8 +312,8 @@ An optional AI assistant is being built (Phase 4b). Claude is to propose record
 matches for you to confirm, through your own Claude app or your own API key. It
 is off until you turn it on. Claude Desktop and Claude Code on the same PC can
 be connected; your own API key is a later part. **The project owner connected Claude
-Desktop to a session and used it (2026-11-14). For Claude Code the command
-added the connector; calls from Claude Code were not tried.** What is there
+Desktop to a session and used it (2026-11-14). Claude Code, with the connector
+its command added, called the tools that read against a session the same day.** What is there
 now:
 
 - **"AI assistant" on a person's page** opens its window. Before anything else
