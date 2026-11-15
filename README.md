@@ -311,9 +311,10 @@ Searching for records:
 An optional AI assistant is being built (Phase 4b). Claude is to propose record
 matches for you to confirm, through your own Claude app or your own API key. It
 is off until you turn it on. Claude Desktop and Claude Code on the same PC can
-be connected; your own API key is a later part. **The connection was tried with
-tests that stand in for an AI app, and not yet with Claude itself.** What is
-there now:
+be connected; your own API key is a later part. **The project owner connected Claude
+Desktop to a session and used it (2026-11-14). For Claude Code the command
+added the connector; calls from Claude Code were not tried.** What is there
+now:
 
 - **"AI assistant" on a person's page** opens its window. Before anything else
   it says what turning it on means: what an AI could read of your tree, which
