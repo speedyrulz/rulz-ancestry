@@ -310,8 +310,10 @@ Searching for records:
 
 An optional AI assistant is being built (Phase 4b). Claude is to propose record
 matches for you to confirm, through your own Claude app or your own API key. It
-is off until you turn it on. **No AI can be connected in this version yet;**
-that is the next part. What is there now:
+is off until you turn it on. Claude Desktop and Claude Code on the same PC can
+be connected; your own API key is a later part. **The connection was tried with
+tests that stand in for an AI app, and not yet with Claude itself.** What is
+there now:
 
 - **"AI assistant" on a person's page** opens its window. Before anything else
   it says what turning it on means: what an AI could read of your tree, which
@@ -321,8 +323,15 @@ that is the next part. What is there now:
   records: for one person and up to three generations of their ancestors, at
   the services you tick, with at most 10 questions to each. You start it, a
   line above the tree says so while it is under way, and you can stop it at
-  any time. It also ends after 15 minutes without a call, and when the tree
-  closes. Until an AI can be connected, nothing calls during a session.
+  any time. It also ends after 15 minutes without a call, after two hours at
+  the latest, and when the tree or the app closes.
+- **Connecting an AI app** is in the same window, under "Connect an AI app".
+  For Claude Desktop the app hands out a connector file that you open once.
+  For Claude Code it shows a command to copy, which needs Node.js 18 or later
+  on the PC. The AI app can reach the app only while a session is under way:
+  the app then listens on a connection of this PC that is protected by a key
+  made for that session. Another program that runs under your Windows account
+  could read that key. The window shows which program is connected.
 - **What an AI proposes stands in the inbox,** in a list of its own: the
   record, the app's own label, what the AI says, and the words of the record
   each of its reasons quotes. The app shows a reason only when it found the
@@ -331,7 +340,7 @@ that is the next part. What is there now:
 - **An activity log** on this PC lists every call an AI made: what it asked and
   which records it was given, never the text of a record as a service gave it.
   It does hold the words an AI asked with. You can clear it.
-- **Once an AI is connected,** details of the people being researched go to the
+- **While an AI app is connected,** details of the people being researched go to the
   AI service of the app you connect, which for Claude is Anthropic. See section
   7 of the plan.
 
@@ -371,7 +380,7 @@ apps/desktop          Electron app: main process, preload script, React UI, e2e 
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
 packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
-packages/ai           The rules of the optional AI assistant, to which no AI can be connected yet: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
+packages/ai           The rules of the optional AI assistant: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
 docs/                 Plan and access checklist
 ```
 

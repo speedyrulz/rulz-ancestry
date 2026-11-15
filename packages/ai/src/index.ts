@@ -41,11 +41,14 @@ export {
   AI_TOOL_INPUTS,
   AI_TOOL_NAMES,
   RECORD_TEXT_NOTE,
+  aiToolSpecs,
   type AiTool,
   type AiToolName,
   type AiToolRefusal,
   type AiToolResult,
+  type AiToolSpec,
 } from './tools';
+export { RESEARCH_PROMPT, RESEARCH_PROMPT_NAME, RESEARCH_PROMPT_TITLE } from './prompt';
 export {
   PROPOSAL_CONFIDENCES,
   PROPOSAL_REASONS_MAX,

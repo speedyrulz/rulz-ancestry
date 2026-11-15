@@ -40,21 +40,29 @@ export type ProposalConfidence = (typeof PROPOSAL_CONFIDENCES)[number];
 
 /** What a proposal must look like, for a tool that takes one. */
 export const proposalSchema = z.strictObject({
-  verdict: z.enum(PROPOSAL_VERDICTS),
-  confidence: z.enum(PROPOSAL_CONFIDENCES),
+  verdict: z.enum(PROPOSAL_VERDICTS).describe('Whether the record is of the person.'),
+  confidence: z.enum(PROPOSAL_CONFIDENCES).describe('How sure that is.'),
   reasons: z
     .array(
       z.strictObject({
         /** Whether the reason speaks for the record being of the person, or against it. */
-        side: z.enum(['for', 'against']),
+        side: z
+          .enum(['for', 'against'])
+          .describe('Whether the reason speaks for the record being of the person, or against it.'),
         /** The reason in a sentence. */
-        text: z.string().max(RAW_MAX),
+        text: z.string().max(RAW_MAX).describe('The reason, in a sentence of your own.'),
         /** The words of the record the reason rests on, as they stand there. */
-        quote: z.string().max(RAW_MAX),
+        quote: z
+          .string()
+          .max(RAW_MAX)
+          .describe(
+            'The words of one text of the record that the reason rests on, copied exactly: the whole text, or whole words of it.',
+          ),
       }),
     )
     .min(1)
-    .max(PROPOSAL_REASONS_MAX),
+    .max(PROPOSAL_REASONS_MAX)
+    .describe('One to twelve reasons, with those against where there are any.'),
 });
 
 /** A reason whose quote was found. */

@@ -26,6 +26,7 @@ export const AI_ACTIVITY_KINDS = [
   'records-searched',
   'record-read',
   'proposal-made',
+  'app-connected',
 ] as const;
 export type AiActivityKind = (typeof AI_ACTIVITY_KINDS)[number];
 

@@ -523,7 +523,7 @@ run in the app's main process.
 | `propose_match`                              | Files a hint for the user: the person, the record, a verdict, a confidence and reasons, each reason quoting the record        |
 | `suggest_link`                               | Suggests a Tier C link for the user to open in their own browser (not built)                                                  |
 
-No tool edits the tree, reads a file, runs a command or fetches a URL. Since part 4b.2 the tools work only within a session the user started, and a record is known by a reference that holds within that session; no table of records is stored (see "Phase 4b.2 outcome"). Since part 4b.3 the assistant has its screens: the notice, the window that starts and shows a session, the proposals in the inbox and the activity log (see "Phase 4b.3 outcome"). No AI can be connected before part 4b.4.
+No tool edits the tree, reads a file, runs a command or fetches a URL. Since part 4b.2 the tools work only within a session the user started, and a record is known by a reference that holds within that session; no table of records is stored (see "Phase 4b.2 outcome"). Since part 4b.3 the assistant has its screens: the notice, the window that starts and shows a session, the proposals in the inbox and the activity log (see "Phase 4b.3 outcome"). Since part 4b.4 an AI app on the same PC can reach a session, through a bridge the app hands out (see "Phase 4b.4 outcome").
 
 What this adds to the Phase 4 matching engine:
 
@@ -542,7 +542,7 @@ data in and return plain data, so these tools are thin wrappers around them.
 
 ### How each route connects
 
-- **Route A.** A small stdio MCP server ships with the app, packed as an `.mcpb` file. It forwards each tool call to the running app over a Windows named pipe protected by a per-install secret. The tools therefore run in the app's main process, the tree has one writer, and every rate limit is enforced in one place. The app must be open, and it shows what the AI is doing. The server also supplies the research instructions as an MCP prompt. The Claude directory no longer accepts `.mcpb` submissions, so the file is distributed with the app. To settle when built: how the bridge is packaged and how Claude Code users add it.
+- **Route A.** A small stdio MCP server ships with the app, packed as an `.mcpb` file. It forwards each tool call to the running app over a Windows named pipe protected by a secret (as built in part 4b.4: a new one for each session, and the pipe is there only during a session). The tools therefore run in the app's main process, the tree has one writer, and every rate limit is enforced in one place. The app must be open, and it shows what the AI is doing. The server also supplies the research instructions as an MCP prompt. The Claude directory no longer accepts `.mcpb` submissions, so the file is distributed with the app. As built: the bridge is one file beside the app, and Claude Code users add it with a command the app shows (see "Phase 4b.4 outcome").
 - **Route B.** The app starts `claude -p` with `--mcp-config` and `--strict-mcp-config` (this app's server only), `--tools ""` (no built-in tools, so no file, shell or web access), `--allowedTools` naming this app's tools, `--permission-mode dontAsk`, `--output-format json` with `--json-schema`, `--max-turns`, `--max-budget-usd` and `--no-session-persistence`, in an empty working folder. It cannot use `--bare`, because bare mode does not read the plan sign-in; Anthropic's documentation says bare mode will become the default for `-p` in a future release, which may force a change here. To settle when built: how to keep the user's own Claude Code hooks, plugins and memory out of these runs without `--bare`.
 - **Route C.** The main process calls the Messages API through `@anthropic-ai/sdk`, using the SDK's tool runner over the same tools, with streaming and with prompt caching of the instructions and tool list. The default model is `claude-opus-5-5`, and the user can choose a cheaper one.
 
@@ -958,7 +958,7 @@ Planned on 2026-11-14 from two design views (a Claude Opus subagent and Codex) a
 | 4b.1 | The rules, with no screen: what the tools read of a tree and of a record, the `mayShareWithAi` field, the check of a quote and of a proposal | **Done 2026-11-14** |
 | 4b.2 | An AI session the user starts, for chosen people and sources, with a count of requests and an end; proposals held in memory; an activity log | **Done 2026-11-14** |
 | 4b.3 | The screens: the consent notice, the window that starts a session and shows what it does, with Stop, and the AI's proposals in the inbox     | **Done 2026-11-14** |
-| 4b.4 | Route A: the named pipe, the bridge program, the `.mcpb` file for Claude Desktop, and how Claude Code adds it                                | To do               |
+| 4b.4 | Route A: the named pipe, the bridge program, the `.mcpb` file for Claude Desktop, and how Claude Code adds it                                | **Done 2026-11-14** |
 | 4b.5 | Measuring: the labelled cases of part 4.1 given to Claude offline, and the AI's figures beside the engine's                                  | To do               |
 | 4b.6 | Route C: the user's own API key, the same tools, tokens and cost shown                                                                       | To do               |
 
@@ -1158,6 +1158,80 @@ Not done:
 - **Proposals are not kept across the closing of a tree,** as decided: only a record the user keeps or attaches stays.
 - **The tests of the packaged app were not run on this PC** for this part; the CI run does that.
 - **The windows were checked by eye in seven screenshots,** in light colours and at one window size.
+
+### Phase 4b.4 outcome: the bridge to an AI app (2026-11-14)
+
+Delivered. An AI app on the same PC can now reach a session: Claude Desktop through a connector file the app hands out, Claude Code through a command the app shows. **It was tried with tests that stand in for an AI app, and never with Claude Desktop or Claude Code themselves** (see "Not done").
+
+- **The bridge** (`apps/desktop/src/bridge`, built into one file, `bridge.cjs`) is a small program the AI app starts. To the AI app it is a local tool server that speaks the Model Context Protocol over its standard input and output: it lists the eight tools and the research instructions (the prompt `research_session`), and hands every call to the app. It holds no tree, no record and no rule; the session in the app decides what a call is given. The list of tools is the same whether or not the app is open. A call outside a session comes back as an answer that says what the user has to do.
+- **The pipe** (`apps/desktop/src/main/aibridge.ts`). The app's main process listens on a named pipe of this PC **only while a session is under way**. Each session gets a new random name for the pipe and a new key of 32 bytes. Both are written to the file `ai-connector.json` in the app's data folder when the app listens, and the file is removed when the session ends. A file left by a run that was ended by force is removed when the app starts. Outside a session there is no pipe, no key and no file.
+- **Each side proves that it holds the key, and the key never crosses the pipe** (`apps/desktop/src/bridge/protocol.ts`). The bridge sends a greeting with a random number; the app answers with its own number and a proof (HMAC-SHA256 over the side, the name of the pipe and both numbers); the bridge checks it and sends its own proof with the name the AI app gave itself; the app says "ready". The app sends nothing before it was sent a greeting, and the bridge sends no call to anything that has not proved itself. A message is one line of JSON of at most 1 MiB.
+- **Limits of the pipe:** four programs connected at once, four calls of one program under way at once, four connections on their way to proving themselves. One that has sent no greeting within a second is ended, one that has not proved itself within five seconds too. A program that reads none of its answers is ended when 4 MiB wait for it.
+- **The bridge connects only to a pipe of this PC with the name the app gives its pipes.** A file that names anything else is not followed. A call that may have reached the app is never sent a second time, since a question to a source is counted when it leaves.
+- **For Claude Desktop: a connector file,** `rulz-ancestry.mcpb` (the bridge and a manifest in a zip). The window of the assistant has "Show the connector file"; the user opens the file, and Claude Desktop asks whether to install it. Claude Desktop runs the bridge with the Node.js it brings.
+- **For Claude Code: a command.** The window shows it with a button that copies it: `claude mcp add --scope user --transport stdio rulz-ancestry "--" node "<path>\bridge.cjs"`. Claude Code runs the bridge with the Node.js of the PC (18 or later). A copy of the app that keeps its data in another folder than an installed copy adds that folder to the command. Where the path holds a character a shell would read, no command is offered.
+- **The window of a session** shows whether an AI app is connected, under which name and since when, or that the connection could not be opened. A connection is written to the activity log with the name the program gave itself: the first 20 of a session, and the entry for the end of the session says how often a program connected.
+- **A session now ends after two hours at the latest,** whatever calls come, and when the app is closed. Only a call a tool can take keeps a session from ending for want of calls; one that names no tool, or sends what its tool does not take, is counted and does not. The main process looks every 30 seconds whether the time is up, so the pipe goes also when no window asks.
+- **The notice is at version 2,** so a user who agreed to version 1 is asked again. It says how an AI app connects, that another program under the same Windows account could read the key during a session, and that the app has no say over the other tools of the AI app.
+
+How it is built:
+
+- **The descriptions of the tools are made once** (`aiToolSpecs` in `packages/ai/src/tools.ts`, written to `packages/ai/src/toolspec.json`), so the bridge carries the list without carrying the rules. A test holds the file against the code.
+- **`apps/desktop/scripts/connector.mjs`** builds the bridge into one file with everything it needs, starts it once from an empty folder to show that it stands alone, and packs the connector file. `pnpm build` and the packaging run it. In the packaged app both files lie outside the archive of the app (`asarUnpack`), where another program can read them.
+- **The session knows the pipe only as "what lets an AI app reach it"** (`AiBridge`): it opens it after a session has started and closes it at every end of a session.
+
+Decided while building, by the primary agent, from two design views (a Claude Opus subagent and Codex, neither seeing the other's); the project owner can change any of them:
+
+- **The app listens only during a session, with a new key each time** (Codex's view; Opus was for listening while the assistant is on, with one key kept on the PC). So nothing is open, and no key lies on the disk, while the user is not researching.
+- **Claude Code needs Node.js on the PC.** Not built: shipping a Node.js with the app (Codex), and letting the app's own program be the bridge (Opus), which needs a switch of Electron that lets the program run any script.
+- **The bridge is built on the SDK of the protocol** (both views), 572 kB in one file, and the connector file is packed by the build script itself, without Anthropic's packing tool.
+- **Two hours at the most for a session,** and no call that fails its check keeps one alive.
+- **The hook for the tests of part 4b.3 is gone.** The end-to-end tests start the real bridge as a program of its own and call the tools through it, against the built app and the packaged app.
+- **Turned down from the design views:** a proof on every message with a count (Codex; the pipe is of this PC, and a program that could change a message could read the key); a pipe made by a helper program with access rights of its own (Codex; Node cannot set them, see "Not done"); a limit on calls per second (Opus; the limits of a session hold already).
+
+Reviews: this part was treated as level 3, since it opens a way into the app from another program (a Claude Opus subagent, Codex and Antigravity, each reading the change without the others' views). Every finding was checked against the code. Opus and Codex found the proofs, the check of the pipe's name, the handing over of calls and the packing sound; Antigravity read the bridge and the pipe only.
+
+- **Fixed, found by Opus:**
+  - Whoever can only open the pipe (another account of the PC; Windows lets everyone open a pipe for reading) could hold all four places to wait and so keep the bridge out. A new connection now takes the place of the oldest one that has sent nothing, and a connection has one second for its greeting.
+  - The command for Claude Code had a bare `--`. Windows PowerShell takes that away before a program that was installed as a script sees it (tried on this PC). It is in quotes now, which PowerShell, cmd and bash all pass on.
+  - One call with a name of more than 100 characters, or with more than the pipe takes in a line, made the app end the connection, and every other call under way with it. The bridge answers such a call itself.
+  - A connection the app had turned away was still read, so a second proof could open it. Nothing of it is read any more.
+  - Where the time for want of calls and the two hours had both passed before anybody looked, the log named the two hours. It names the one that came first. Stopping a session that had run out already now says why it had ended.
+  - The bridge said "no session is under way" when something answered on the pipe and then said nothing. It says that now, and asks for another try.
+  - Connections after the 20th were counted and shown nowhere. The end of a session says the count.
+  - An unknown name of a prompt is answered as the protocol asks.
+- **Fixed, found by Codex and by Opus:**
+  - A session ended for time only when something asked how it stands, so the pipe and the file could outlast it. The main process now looks every 30 seconds.
+  - The connector file looks for the app's data in the usual folder only. A copy that keeps its data elsewhere now says so beside the button.
+- **Fixed, found by Codex:**
+  - A program that calls and never reads its answers could make the app hold answers without end. Its connection is ended at 4 MiB.
+  - A path with two backslashes in a row or one at its end is read differently by a POSIX shell. No command is offered for such a path.
+- **Turned down:**
+  - A write to the log could fail after the app has closed its database on quitting (Codex). That write is caught, and nothing depends on it.
+  - A call of an unknown tool outside a session is answered "no session" and not "unknown tool" (Opus). The bridge keeps no rule of its own, and "no session" is true.
+- **Fixed, found by Antigravity** (its first run ended at its time limit with nothing; a second run read the five files of the bridge and the pipe only):
+  - A call made while the bridge was closing could still be sent on a connection that came up a moment later. It is not sent.
+  - A call that met a connection that had just gone was answered "may have been sent" though it was not written. It says now that nothing was sent.
+  - A draft of the file with the key could stay behind where writing it was cut short. It is removed with the file.
+  - Closing after the pipe could not be opened did not tell the page that the problem is gone.
+  - An answer without a value would have been passed on to the AI app without its text.
+- **Turned down, from Antigravity:**
+  - A program that can write to the pipe could hold the places to wait, or answer in the app's place from a file left behind, or send "refused" before any proof. Only the user's own account, administrators and the system can write to the pipe or read that file, and such a program can read the key; that limit is stated.
+  - The bridge leaves at once when the AI app closes its input, with calls under way. The AI app has gone by then.
+  - The check of the protocol's number in the greeting cannot be reached, since the proof covers the number. The file and the app's refusal carry the number as well.
+  - An answer of the session with a message of more than 10,000 characters would end the connection. The session's messages are fixed sentences.
+
+Tests: unit tests went from 1449 to 1517, end-to-end tests stay at 47 (the three of the assistant were written again). The pipe is tried with real named pipes, against stand-ins that hold no key, a wrong key, or speak out of turn. The end-to-end tests start the bridge as a program and go the whole way: session, calls, proposals in the inbox, the end of the session, in the built and in the packaged app.
+
+Not done:
+
+- **Never tried with Claude Desktop or Claude Code.** Whether Claude Desktop takes the connector file as it is, which Node.js it runs it with, whether it hands the bridge the place of the user's data folder, and how each app shows the research instructions is not known. The project owner tries this first.
+- **Another program under the same Windows account can read the key during a session** and call the tools as an AI app would. It could read the tree's files as well. The notice says so.
+- **The access rights of the pipe are Windows's own for a pipe Node makes:** every account may open it for reading, only the user's own account, administrators and the system may write. Node gives no say over them. An account that only reads gets nothing, since the app says nothing before a greeting. By opening the pipe again and again without end it could still keep the bridge out for as long as it does so (Antigravity); the AI is then told that the app did not answer.
+- **The connector file finds an installed copy only,** with its data in the usual folder. The command for Claude Code names the folder where it differs.
+- **How the command is put in quotes** is tried by an end-to-end test for the path of this PC, and by no unit test.
+- **The wording of the notice (version 2) and of the research instructions was written by the primary agent** and read by helpers only. The project owner should read both.
+- **Measuring what an AI proposes** is part 4b.5, and is the project owner's to do in Claude Desktop.
 
 ### Phase 3 breakdown
 

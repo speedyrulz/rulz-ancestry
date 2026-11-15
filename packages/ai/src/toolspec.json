@@ -1,0 +1,213 @@
+[
+  {
+    "name": "get_session",
+    "description": "Says what this session is for: the people of the family tree the user chose, the sources that may be asked, and how many questions are left for each. Call it first. Without a session the user started in the app, no tool gives anything.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_sources",
+    "description": "Lists the sources this session may ask for records, what each one is asked for, the credit line that goes with its records, and how many questions are left for it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "search_tree",
+    "description": "Finds people of the open family tree by name, best match first. People who may be living are never listed.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "A name, or part of one."
+        },
+        "offset": {
+          "description": "How many of the first matches to leave out, to read on.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      },
+      "required": ["query"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_person",
+    "description": "Reads a person of the tree: every name, and their own events with dates and places. Nothing is given of a person who may be living.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "personId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The id of a person of the tree, as get_session and search_tree give it."
+        }
+      },
+      "required": ["personId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_relatives",
+    "description": "Reads who is close to a person of the tree: parents, brothers and sisters, partners and children. A relative who may be living stands as \"Living person\" and nothing more.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "personId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The id of a person of the tree, as get_session and search_tree give it."
+        }
+      },
+      "required": ["personId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "search_records",
+    "description": "Asks one source for records of one person of this session. The name must be a name the tree has for the person, as the tree writes it or in another spelling that differs by a letter or two, with nothing added to it; a year must lie near the year the tree has. Every question counts against the few this session has for the source, and the user sees each one. The answer is the first results of the source, each with a reference for get_record and propose_match.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "given": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "The given names to ask for, as the tree has them."
+        },
+        "surname": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "The last name to ask for, as the tree has it."
+        },
+        "birthYear": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The year of birth to ask for, near the year the tree has; null to leave it out."
+        },
+        "deathYear": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The year of death to ask for, near the year the tree has; null to leave it out."
+        },
+        "personId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The id of a person of the tree, as get_session and search_tree give it."
+        },
+        "sourceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The id of a source, as list_sources gives it."
+        }
+      },
+      "required": ["given", "surname", "birthYear", "deathYear", "personId", "sourceId"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_record",
+    "description": "Gives a record of an earlier answer of search_records again, by its reference.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The reference of a record, as search_records gives it."
+        }
+      },
+      "required": ["ref"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "propose_match",
+    "description": "Files a proposal for the user: whether a record is of the person it was found for, how sure that is, and the reasons for and against. Every reason must quote the record word for word; a reason whose quote is not in the record is dropped. Nothing changes in the tree: the user decides.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["fits", "may-fit", "does-not-fit"],
+          "description": "Whether the record is of the person."
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "How sure that is."
+        },
+        "reasons": {
+          "minItems": 1,
+          "maxItems": 12,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "side": {
+                "type": "string",
+                "enum": ["for", "against"],
+                "description": "Whether the reason speaks for the record being of the person, or against it."
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 4000,
+                "description": "The reason, in a sentence of your own."
+              },
+              "quote": {
+                "type": "string",
+                "maxLength": 4000,
+                "description": "The words of one text of the record that the reason rests on, copied exactly: the whole text, or whole words of it."
+              }
+            },
+            "required": ["side", "text", "quote"],
+            "additionalProperties": false
+          },
+          "description": "One to twelve reasons, with those against where there are any."
+        },
+        "personId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The id of a person of the tree, as get_session and search_tree give it."
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The reference of a record, as search_records gives it."
+        }
+      },
+      "required": ["verdict", "confidence", "reasons", "personId", "ref"],
+      "additionalProperties": false
+    }
+  }
+]

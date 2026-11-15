@@ -1914,6 +1914,30 @@ ul.run-list {
   margin-bottom: 0.4rem;
 }
 
+.ai-connect {
+  margin: 0 0 12px;
+}
+
+.ai-connect summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.ai-connect li {
+  margin: 6px 0;
+}
+
+.ai-command {
+  display: block;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .ai-session {
   margin-bottom: 1rem;
   padding-bottom: 0.75rem;

@@ -69,10 +69,18 @@ export interface QuerySubject {
 
 /** What a question must look like, for a tool that takes one. */
 export const askedQuerySchema = z.strictObject({
-  given: z.string().max(RAW_MAX),
-  surname: z.string().max(RAW_MAX),
-  birthYear: z.number().int().nullable(),
-  deathYear: z.number().int().nullable(),
+  given: z.string().max(RAW_MAX).describe('The given names to ask for, as the tree has them.'),
+  surname: z.string().max(RAW_MAX).describe('The last name to ask for, as the tree has it.'),
+  birthYear: z
+    .number()
+    .int()
+    .nullable()
+    .describe('The year of birth to ask for, near the year the tree has; null to leave it out.'),
+  deathYear: z
+    .number()
+    .int()
+    .nullable()
+    .describe('The year of death to ask for, near the year the tree has; null to leave it out.'),
 });
 
 export type CheckedQuery =

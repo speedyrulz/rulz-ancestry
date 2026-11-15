@@ -185,6 +185,8 @@ export interface Platform {
   openFile(file: string): Promise<void>;
   /** Shows a file in File Explorer, selected in its folder. */
   showFileInFolder(file: string): void;
+  /** Puts a text on the clipboard. */
+  copyText(text: string): void;
 }
 
 type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
@@ -947,6 +949,20 @@ export function createHandlers(
         { offset: 0, limit: AI_ACTIVITY_PAGE_MAX },
         session.isOpen ? session.tree : null,
       );
+    }),
+
+    showAiConnector: define<'showAiConnector'>(none, () => {
+      const file = ai.connectorFile;
+      if (file === null) return false;
+      platform.showFileInFolder(file);
+      return true;
+    }),
+
+    copyAiConnectorCommand: define<'copyAiConnectorCommand'>(none, () => {
+      const { connectorCommand } = ai.info();
+      if (connectorCommand === '') return false;
+      platform.copyText(connectorCommand);
+      return true;
     }),
 
     openRecordLink: define<'openRecordLink'>(

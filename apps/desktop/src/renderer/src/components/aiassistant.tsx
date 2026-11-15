@@ -4,6 +4,7 @@ import {
   AI_SESSION_MAX_GENERATIONS,
   type AiActivityInfo,
   type AiAssistantInfo,
+  type AiConnectionInfo,
   type AiQuestion,
   type AiSessionPlan,
   type AiSessionState,
@@ -87,13 +88,19 @@ function AiNotice({ info, onAgree, onLog, onClose }: NoticeProps) {
         Before you turn it on:
       </p>
       <ul>
-        {!info.canConnect && (
-          <li data-testid="ai-notice-connect">
-            <strong>No AI can be connected in this version yet.</strong> The connection to an AI app
-            comes with a later version. Until then a session can be started and stopped here, and
-            nothing can use it.
-          </li>
-        )}
+        <li data-testid="ai-notice-connect">
+          <strong>How an AI app is connected:</strong>{' '}
+          {info.canConnect
+            ? 'through a connector of this app that you install in your own Claude Desktop, or add to Claude Code. During a session, and only then, the connector reaches this app over a connection between two programs on this PC. It needs a key that this app makes anew for each session and keeps in a file in its own data folder until the session ends. Outside a session nothing listens, and there is no key.'
+            : 'this copy of the app has no connector to hand out, so no AI app can be connected with it. A session can be started and stopped, and nothing will call.'}
+        </li>
+        <li data-testid="ai-notice-same-account">
+          <strong>What this cannot keep out:</strong> another program that runs under your Windows
+          account could read that key during a session and call the same tools: read what an AI
+          could read, and ask the services within the limits of the session. Such a program could
+          read the file of your tree directly as well. This app cannot tell which program holds the
+          key: the name a connected program gives is that program&apos;s own word.
+        </li>
         <li>
           <strong>What an AI can read, during a session you start:</strong> the people of the open
           tree who are not living: their names, the dates and places of their events, and who their
@@ -119,11 +126,18 @@ function AiNotice({ info, onAgree, onLog, onClose }: NoticeProps) {
           services return, go to the AI service behind the app you connect, under your own account
           there and its privacy rules. This app sends them nowhere else.
         </li>
+        <li data-testid="ai-notice-other-tools">
+          <strong>What this app does not see or limit:</strong> the AI app itself. It may have other
+          tools turned on, such as a search of the web, and what it does with them and what it keeps
+          of your conversation follow its own settings and rules. This app takes proposals only for
+          records it fetched itself.
+        </li>
         <li>
           <strong>When:</strong> only during a session you start here, for one person and up to
           three generations of their ancestors, and the services you tick. A session ends when you
           stop it, after {info.idleMinutes} minutes without a call, after {info.maxCalls} calls,
-          when the tree closes, and when the window of the app is loaded again.
+          {info.maxHours === 1 ? ' an hour' : ` ${info.maxHours} hours`} after it started at the
+          latest, when the tree or the app closes, and when the window of the app is loaded again.
         </li>
         <li>
           <strong>What an AI cannot do:</strong> change your tree, read a file or open an address.
@@ -216,8 +230,94 @@ function SearchNotice({ personId, onAgreed, onClose }: SearchNoticeProps) {
   );
 }
 
+/** How this copy of the app is connected to an AI app: done once for each AI app. */
+function ConnectSection({ info }: { info: AiAssistantInfo }) {
+  const [copied, setCopied] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const failed = (failure: unknown) => setProblem(errorMessage(failure));
+  const show = () => {
+    api.showAiConnector().then((shown) => {
+      setProblem(shown ? null : 'This copy of the app has no connector file.');
+    }, failed);
+  };
+  const copy = () => {
+    api.copyAiConnectorCommand().then((done) => {
+      setCopied(done);
+      setProblem(done ? null : 'There is no command to copy.');
+    }, failed);
+  };
+  if (!info.canConnect) {
+    return (
+      <p className="hint" data-testid="ai-no-connection">
+        This copy of the app has no connector to hand out, so no AI app can be connected with it. A
+        session can be started and stopped, and nothing will call.
+      </p>
+    );
+  }
+  return (
+    <details className="ai-connect" data-testid="ai-connect">
+      <summary>Connect an AI app (once for each app)</summary>
+      <ul>
+        <li>
+          <strong>Claude Desktop:</strong>{' '}
+          <button type="button" className="small" onClick={show} data-testid="ai-connector-show">
+            Show the connector file
+          </button>{' '}
+          and open it with a double click. Claude Desktop then asks whether to install it. If Claude
+          says later that the connector does not fit this app, install it again from here.
+          {!info.connectorFileFits && (
+            <span data-testid="ai-connector-other-folder">
+              {' '}
+              This copy of the app keeps its data in another folder than an installed copy does, and
+              the connector file looks in the usual folder only: it will not find a session of this
+              copy.
+            </span>
+          )}
+        </li>
+        <li>
+          <strong>Claude Code:</strong>{' '}
+          {info.connectorCommand === '' ? (
+            <span data-testid="ai-connector-no-command">
+              no command is offered, since the folder this app is in has a character in its name
+              that a command line could read as something else.
+            </span>
+          ) : (
+            <>
+              run this once in a terminal. It needs Node.js 18 or later on this PC.
+              <code className="ai-command" data-testid="ai-connector-command">
+                {info.connectorCommand}
+              </code>
+              <button
+                type="button"
+                className="small"
+                onClick={copy}
+                data-testid="ai-connector-copy"
+              >
+                Copy the command
+              </button>
+              {copied && <span data-testid="ai-connector-copied"> Copied.</span>}
+            </>
+          )}
+        </li>
+      </ul>
+      <p className="hint">
+        The connector reaches this app only while a session is under way. In the AI app, pick the
+        connector&apos;s instructions &ldquo;research_session&rdquo;, or ask it to look for records
+        of the people of your session with RulZ Ancestry.
+      </p>
+      {problem !== null && (
+        <p className="error" role="alert">
+          {problem}
+        </p>
+      )}
+    </details>
+  );
+}
+
 interface SessionViewProps {
   session: AiSessionStatus;
+  /** How an AI app can reach the session now. */
+  connection: AiConnectionInfo;
   maxCalls: number;
   /** How many proposals the app holds in memory, of every session. */
   proposals: number;
@@ -226,7 +326,14 @@ interface SessionViewProps {
 }
 
 /** The session that is under way, or the last one that ended, with every question it asked. */
-function SessionView({ session, maxCalls, proposals, onStop, onOpenInbox }: SessionViewProps) {
+function SessionView({
+  session,
+  connection,
+  maxCalls,
+  proposals,
+  onStop,
+  onOpenInbox,
+}: SessionViewProps) {
   const personName = (personId: string) => {
     const person = session.people.find((entry) => entry.personId === personId);
     return person === undefined ? 'someone' : nameOf(person.name);
@@ -240,7 +347,11 @@ function SessionView({ session, maxCalls, proposals, onStop, onOpenInbox }: Sess
           <>
             A session is under way.
             {session.idleAt !== null &&
-              ` It ends at ${timeOf(session.idleAt)} unless a call comes before.`}{' '}
+              ` It ends at ${timeOf(session.idleAt)} unless a call comes before${
+                session.lastsUntil === null
+                  ? ''
+                  : `, and at ${timeOf(session.lastsUntil)} at the latest`
+              }.`}{' '}
             <button type="button" className="small" onClick={onStop} data-testid="ai-stop">
               Stop
             </button>
@@ -249,6 +360,25 @@ function SessionView({ session, maxCalls, proposals, onStop, onOpenInbox }: Sess
           session.endedMessage
         )}
       </p>
+      {session.status === 'running' && connection.problem !== '' && (
+        <p className="error" role="alert" data-testid="ai-connection-problem">
+          {connection.problem}
+        </p>
+      )}
+      {session.status === 'running' && connection.problem === '' && (
+        <p className="dialog-text" data-testid="ai-session-clients">
+          {connection.clients.length === 0
+            ? 'No AI app is connected to this session yet. One connects when you ask it to work with RulZ Ancestry.'
+            : `Connected now: ${connection.clients
+                .map(
+                  (client) =>
+                    `a program that calls itself "${client.name === '' ? 'nothing' : client.name}"${
+                      client.version === '' ? '' : ` (${client.version})`
+                    }, since ${timeOf(client.since)}`,
+                )
+                .join('; ')}.`}
+        </p>
+      )}
       <p className="dialog-text">It is for:</p>
       <ul className="run-list" data-testid="ai-session-people">
         {session.people.map((person) => (
@@ -363,6 +493,7 @@ function SessionPlan({ personId, onStarted, onNotice, ai }: SessionPlanProps) {
           // Shown at once, then read with the count of proposals as the main process has it.
           onStarted({
             session: result.session,
+            connection: ai?.connection ?? { open: false, problem: '', clients: [] },
             proposals: ai?.proposals ?? 0,
             proposalsRevision: ai?.proposalsRevision ?? 0,
           });
@@ -600,15 +731,11 @@ export function AiAssistantDialog({
 
       {info !== null && info.agreed && info.searchAgreed && (
         <>
-          {!info.canConnect && (
-            <p className="hint" data-testid="ai-no-connection">
-              No AI can be connected in this version yet: the connection to an AI app comes with a
-              later version. A session can be started and stopped, and nothing will call.
-            </p>
-          )}
+          <ConnectSection info={info} />
           {session !== null && (
             <SessionView
               session={session}
+              connection={ai?.connection ?? info.connection}
               maxCalls={info.maxCalls}
               proposals={proposals}
               onStop={stop}

@@ -1,10 +1,11 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   nativeImage,
@@ -18,7 +19,9 @@ import {
 import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
-import { AiSessionService } from './aisession';
+import { PROFILE_ENV } from '../bridge/protocol';
+import { AiBridgeServer } from './aibridge';
+import { AiSessionService, type AiConnector } from './aisession';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
 import { RecordRun } from './recordrun';
@@ -37,6 +40,7 @@ const appUrl = devServerUrl ?? pathToFileURL(rendererFile).href;
 let mainWindow: BrowserWindow | undefined;
 let appDb: Db | undefined;
 let appDbPath = '';
+let aiSession: AiSessionService | undefined;
 let treeSession: TreeSession | undefined;
 let gazetteer: GazetteerService | undefined;
 let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
@@ -101,22 +105,50 @@ const BACKGROUND_SWITCH = 'background-window';
 /** Far enough to the left and above to be on no screen. */
 const OFF_SCREEN = -20_000;
 
-/**
- * The switch the end-to-end tests of the AI assistant start the app with.
- * This version has no way to connect an AI to a session, so a test stands in
- * for one: with the switch, the main process hands a test the function that
- * takes a call of a tool, under `AI_TEST_CALL`.
- *
- * It is honoured only by an app that is not packaged. An installed copy is
- * packaged, and no switch makes it otherwise, so nobody can turn this on in
- * the app as it is shipped. The function is put where only code that already
- * runs in the main process can reach it: there is no channel to it from the
- * page, and nothing listens for it from outside the app.
- */
-const AI_TEST_SWITCH = 'e2e-ai-tools';
+/** The folder of the app's data as a bridge takes it to be when nothing tells it otherwise. */
+const USUAL_PROFILE = 'RulZ Ancestry';
 
-/** Where a test finds the function; see {@link AI_TEST_SWITCH}. */
-const AI_TEST_CALL = Symbol.for('rulz.e2e.aiCall');
+/**
+ * What this copy of the app hands out so that an AI app can be connected:
+ * the connector file for Claude Desktop, and the command that adds the same
+ * bridge to Claude Code. Both are made by the build (`scripts/connector.mjs`)
+ * and lie beside the app's code; in the packaged app they are kept outside
+ * its archive, since another program has to read them. Null when they are
+ * not there, as in a copy that was started without being built whole.
+ *
+ * The bridge looks for the app's data in the usual folder. Where this copy
+ * keeps its data elsewhere (a copy that is not packaged, or one started with
+ * a folder of its own), the command says where.
+ */
+function findConnector(): AiConnector | null {
+  const dir = join(app.getAppPath(), 'out', 'connector').replace(
+    /([\\/])app\.asar([\\/])/,
+    '$1app.asar.unpacked$2',
+  );
+  const file = join(dir, 'rulz-ancestry.mcpb');
+  const bridge = join(dir, 'bridge.cjs');
+  if (!existsSync(file) || !existsSync(bridge)) return null;
+  const profile = app.getPath('userData');
+  const usual = join(app.getPath('appData'), USUAL_PROFILE);
+  // A path in double quotes, as PowerShell, cmd and a POSIX shell all take it.
+  // One that holds a character a shell would read is not offered at all, and
+  // neither is one with two backslashes in a row or one at its end, which a
+  // POSIX shell reads as one backslash or as a quote that does not close.
+  const quoted = (path: string): string | null =>
+    /^[^"$`%!\r\n]+$/.test(path) && !path.includes('\\\\') && !path.endsWith('\\')
+      ? `"${path}"`
+      : null;
+  const bridgeArg = quoted(bridge);
+  const profileArg = quoted(`${PROFILE_ENV}=${profile}`);
+  const fileFits = profile.toLowerCase() === usual.toLowerCase();
+  if (bridgeArg === null || profileArg === null) return { file, fileFits, command: '' };
+  const env = fileFits ? '' : `--env ${profileArg} `;
+  return {
+    file,
+    fileFits,
+    command: `claude mcp add --scope user --transport stdio ${env}rulz-ancestry "--" node ${bridgeArg}`,
+  };
+}
 
 function createMainWindow(): BrowserWindow {
   const background = app.commandLine.hasSwitch(BACKGROUND_SWITCH);
@@ -257,6 +289,10 @@ const platform: Platform = {
   showFileInFolder(file) {
     shell.showItemInFolder(file);
   },
+
+  copyText(text) {
+    clipboard.writeText(text);
+  },
 };
 
 /** The longest side of the small pictures shown in lists, in pixels. */
@@ -374,6 +410,10 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit());
 
+  // A session ends with the app, while its end can still be written to the
+  // log. The pipe an AI app reached it by goes with it.
+  app.on('before-quit', () => aiSession?.stop('quit'));
+
   app.on('will-quit', () => {
     // Backs up the open tree if it changed, then closes it.
     const closed = treeSession?.shutdown();
@@ -436,13 +476,20 @@ if (!app.requestSingleInstanceLock()) {
     const runs = new RecordRun(records);
     // The optional AI assistant. It is off until the user turns it on, and
     // its tools give nothing outside a session the user started.
-    const ai = new AiSessionService(records, { appDb });
-    if (!app.isPackaged && app.commandLine.hasSwitch(AI_TEST_SWITCH)) {
-      (globalThis as unknown as Record<symbol, unknown>)[AI_TEST_CALL] = (
-        name: string,
-        input: unknown,
-      ) => ai.call(name, input);
-    }
+    // An AI app reaches a session through the bridge, over a pipe of this PC
+    // that is there only while a session is under way.
+    const bridge = new AiBridgeServer({
+      dir: app.getPath('userData'),
+      call: (name, input) => ai.call(name, input),
+    });
+    // A file left by a run that was ended by force names a pipe that is gone.
+    bridge.forgetFile();
+    const ai: AiSessionService = new AiSessionService(records, {
+      appDb,
+      bridge,
+      connector: findConnector(),
+    });
+    aiSession = ai;
     registerIpc(treeSession, gazetteer, records, ai, runs);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();

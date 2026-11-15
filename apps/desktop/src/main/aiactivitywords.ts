@@ -44,6 +44,8 @@ const ENDED: Readonly<Record<string, string>> = {
   stopped: 'you stopped it',
   page: 'the window of the app was loaded again',
   idle: 'no call came for a while',
+  time: 'it lasted as long as a session may',
+  quit: 'the app was closed',
   'tree-closed': 'the tree was closed',
   withdrawn: 'the assistant was turned off',
   replaced: 'another session was started',
@@ -128,11 +130,13 @@ export function activityWords(entry: AiActivityEntry, names: ActivityNames): str
     }
     case 'session-ended': {
       const why = ENDED[text(detail, 'why')];
+      const programs = count(detail, 'programs');
       return [
         why === undefined ? 'The session ended.' : `The session ended: ${why}.`,
         ` ${of(count(detail, 'calls'), 'call', 'calls')},`,
         ` ${of(count(detail, 'questions'), 'question', 'questions')} to services,`,
         ` ${of(count(detail, 'proposals'), 'proposal', 'proposals')}.`,
+        programs > 0 ? ` Programs connected to it ${of(programs, 'time', 'times')}.` : '',
       ].join('');
     }
     case 'sources-listed':
@@ -174,6 +178,16 @@ export function activityWords(entry: AiActivityEntry, names: ActivityNames): str
       return `The AI was given record ${key} of ${source()}, found for ${person()}${
         text(detail, 'by') === 'get' ? ', once more' : ''
       }.`;
+    }
+    case 'app-connected': {
+      // The name is what the program called itself, and nothing checked it.
+      const name = text(detail, 'name');
+      const version = text(detail, 'version');
+      return name === ''
+        ? 'A program connected to the session. It gave no name.'
+        : `A program connected to the session. It calls itself "${name}"${
+            version === '' ? '' : ` (version ${version})`
+          }.`;
     }
     case 'proposal-made': {
       if (detail['accepted'] !== true) {

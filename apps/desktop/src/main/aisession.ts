@@ -45,6 +45,7 @@ import {
   AI_SESSION_MAX_GENERATIONS,
   type AiActivityPage,
   type AiAssistantInfo,
+  type AiClientInfo,
   type AiProposalRef,
   type AiQuestion,
   type AiSessionState,
@@ -59,6 +60,7 @@ import {
   type RecordSearchProblem,
 } from '../shared/ipc';
 import { activityWords } from './aiactivitywords';
+import type { AiBridge } from './aibridge';
 import { keptOpinionJson } from './keptopinion';
 import { whenOf } from './keptrecord';
 import { defaultWait } from './recordrun';
@@ -127,8 +129,14 @@ export const AI_NOTICE_VERSION_SETTING = 'aiAssistant.noticeVersion';
  *    records of the people of the session under the limits of a question,
  *    and reads the results. All of that goes to the AI service of the user's
  *    own app.
+ * 2: an AI app can now be connected. Added: how (a connector the user
+ *    installs in their own Claude app, which reaches this app over a pipe of
+ *    this PC while a session is under way), that another program under the
+ *    same Windows account could do the same during a session, that this app
+ *    does not see or limit what else that AI app does, and that a session
+ *    ends after two hours at the latest.
  */
-export const AI_NOTICE_VERSION = 1;
+export const AI_NOTICE_VERSION = 2;
 
 export { AI_SESSION_MAX_GENERATIONS } from '../shared/ipc';
 
@@ -141,6 +149,15 @@ export const AI_SESSION_CALLS = 500;
 /** A session ends when no call came for this long, in milliseconds. */
 export const AI_SESSION_IDLE_MS = 15 * 60 * 1000;
 
+/** A session ends this long after it started at the latest, in milliseconds, whatever calls come. */
+export const AI_SESSION_MAX_MS = 2 * 60 * 60 * 1000;
+
+/** How often the app looks whether a session has run out of time when nothing else asks, in milliseconds. */
+const AI_SESSION_WATCH_MS = 30 * 1000;
+
+/** How many programs that connect to one session are written to the activity log. More are counted only. */
+export const AI_SESSION_CLIENTS_LOGGED = 20;
+
 /** The least time between the end of one question to a source and the next to it, in milliseconds. */
 export const AI_SESSION_GAP_MS = 1000;
 
@@ -151,12 +168,19 @@ export const AI_SESSION_GAP_MS = 1000;
  */
 export const AI_PROPOSALS_HELD = 1000;
 
-/**
- * Whether this version of the app has a way to connect an AI to a session.
- * It has none yet: the bridge to an AI app is part 4b.4 of the plan. A
- * session can be started and stopped, and only a test calls a tool.
- */
-export const AI_CAN_CONNECT = false;
+/** What this copy of the app hands out so that an AI app can be connected. */
+export interface AiConnector {
+  /** The connector file for Claude Desktop. */
+  file: string;
+  /**
+   * False when this copy of the app keeps its data in another folder than
+   * the usual one. The connector file looks in the usual folder only, so it
+   * does not find a session of this copy.
+   */
+  fileFits: boolean;
+  /** The command that adds the connector to Claude Code. */
+  command: string;
+}
 
 export type {
   AiQuestion,
@@ -204,6 +228,10 @@ export interface AiSessionOptions {
   gapMs?: number;
   /** Makes the name of a session; replaceable in tests. */
   newId?: () => string;
+  /** Lets an AI app reach a session. Without it a session can be started, and nothing outside the app can call. */
+  bridge?: AiBridge;
+  /** What this copy of the app hands out for connecting an AI app; null when it has none. */
+  connector?: AiConnector | null;
 }
 
 /** A record a search of the session brought, as it is kept for `get_record` and `propose_match`. */
@@ -250,6 +278,8 @@ interface Session {
   found: Map<string, Found>;
   refs: Map<string, string>;
   proposals: Map<string, AiProposal>;
+  /** How many programs connected to it and proved themselves. */
+  clients: number;
   revision: number;
 }
 
@@ -257,6 +287,8 @@ const ENDED: Record<AiSessionEnd, string> = {
   stopped: 'You stopped the session.',
   page: 'The window of the app was loaded again, so the session ended.',
   idle: 'No call came for a while, so the session ended.',
+  time: 'The session lasted as long as one may, so it ended.',
+  quit: 'The app was closed, so the session ended.',
   'tree-closed': 'The tree was closed, so the session ended.',
   withdrawn: 'The AI assistant was turned off, so the session ended.',
   replaced: 'Another session was started in its place.',
@@ -296,6 +328,8 @@ export class AiSessionService {
   readonly #wait: (ms: number, signal: AbortSignal) => Promise<void>;
   readonly #gapMs: number;
   readonly #newId: () => string;
+  readonly #bridge: AiBridge | null;
+  readonly #connector: AiConnector | null;
   /** The session that is under way, or the last one that ended. One at a time. */
   #session: Session | null = null;
   /**
@@ -307,6 +341,8 @@ export class AiSessionService {
   #earlier: AiProposal[] = [];
   /** Goes up whenever the proposals change. */
   #proposalsRevision = 0;
+  /** Looks from time to time whether the session that is under way has run out of time. */
+  #watch: NodeJS.Timeout | null = null;
 
   constructor(records: RecordSearchService, options: AiSessionOptions) {
     this.#records = records;
@@ -315,6 +351,12 @@ export class AiSessionService {
     this.#wait = options.wait ?? defaultWait;
     this.#gapMs = options.gapMs ?? AI_SESSION_GAP_MS;
     this.#newId = options.newId ?? randomUUID;
+    this.#bridge = options.bridge ?? null;
+    this.#connector = options.connector ?? null;
+    this.#bridge?.onClient((client) => this.#connected(client));
+    this.#bridge?.onChange(() => {
+      if (this.#session !== null) this.#session.revision += 1;
+    });
     // A press for a proposed record acts on the reading the proposal is about.
     records.useProposals((tree, request) => this.#copyOf(tree, request));
   }
@@ -486,6 +528,7 @@ export class AiSessionService {
       found: new Map(),
       refs: new Map(),
       proposals: new Map(),
+      clients: 0,
       revision: 1,
     };
     this.#session = session;
@@ -498,6 +541,12 @@ export class AiSessionService {
     if (!logged) {
       return fail('failed', ENDED.log);
     }
+    // From here on an AI app can reach the session, and only until it ends.
+    this.#bridge?.open();
+    // The session ends when its time is up, also when nobody asks how it
+    // stands: so does the way an AI app reaches it.
+    this.#watch = setInterval(() => this.#live(), AI_SESSION_WATCH_MS);
+    this.#watch.unref();
     return { ok: true, session: this.#status(session) };
   }
 
@@ -553,6 +602,7 @@ export class AiSessionService {
   state(): AiSessionState {
     return {
       session: this.status(),
+      connection: this.#bridge?.state() ?? { open: false, problem: '', clients: [] },
       proposals: this.proposals().length,
       proposalsRevision: this.#proposalsRevision,
     };
@@ -564,13 +614,40 @@ export class AiSessionService {
       ...this.state(),
       agreed: this.agreed,
       searchAgreed: this.#records.agreed,
-      canConnect: AI_CAN_CONNECT,
+      canConnect: this.#connector !== null,
+      connectorCommand: this.#connector?.command ?? '',
+      connectorFileFits: this.#connector?.fileFits ?? false,
       sources: this.#records.aiSources(),
       requestsPerSource: AI_SESSION_REQUESTS,
       idleMinutes: AI_SESSION_IDLE_MS / 60_000,
       maxCalls: AI_SESSION_CALLS,
+      maxHours: AI_SESSION_MAX_MS / 3_600_000,
       logDays: AI_ACTIVITY_KEEP_DAYS,
     };
+  }
+
+  /** The connector file for Claude Desktop; null when this copy of the app has none. */
+  get connectorFile(): string | null {
+    return this.#connector?.file ?? null;
+  }
+
+  /**
+   * A program connected to the session and proved that it holds the key of
+   * the session. The log gets an entry for the first few; a program that
+   * connects over and over cannot fill the log.
+   */
+  #connected(client: AiClientInfo): void {
+    const session = this.#live();
+    if (session === null) return;
+    session.clients += 1;
+    session.revision += 1;
+    if (session.clients <= AI_SESSION_CLIENTS_LOGGED) {
+      this.#log(session, 'app-connected', {
+        name: cleanText(client.name, 60),
+        version: cleanText(client.version, 30),
+        number: session.clients,
+      });
+    }
   }
 
   /**
@@ -652,9 +729,11 @@ export class AiSessionService {
    * Ends the session that is under way: no tool gives anything more, and
    * nothing more is sent. What it proposed stays. 'page' when it is ended
    * not by the user but because the page that shows it was loaded again or
-   * is gone.
+   * is gone, 'quit' when the app is closing.
    */
-  stop(why: 'stopped' | 'page' = 'stopped'): void {
+  stop(why: 'stopped' | 'page' | 'quit' = 'stopped'): void {
+    // A session that had run out of time before this ended for that reason.
+    this.#live();
     if (this.#session !== null) this.#end(this.#session, why);
   }
 
@@ -683,7 +762,6 @@ export class AiSessionService {
       this.#end(session, 'calls');
       return NO_SESSION;
     }
-    session.lastCallAt = this.#now();
     if (typeof name !== 'string' || !isToolName(name)) {
       return refuse('unknown-tool', 'There is no tool of this name.');
     }
@@ -726,6 +804,10 @@ export class AiSessionService {
     if (!parsed.success) {
       return refuse('input', `This is not what ${name} takes. Look at what it asks for.`);
     }
+    // Only a call a tool can take puts off the end of the session: one that
+    // names no tool, or sends what its tool does not take, keeps nothing alive.
+    const session = this.#session;
+    if (session !== null && session.status === 'running') session.lastCallAt = this.#now();
     return then(parsed.data as z.infer<(typeof AI_TOOL_INPUTS)[N]>);
   }
 
@@ -741,8 +823,13 @@ export class AiSessionService {
       this.#end(session, 'tree-closed');
     } else if (!this.agreed || !this.#records.agreed) {
       this.#end(session, 'withdrawn');
-    } else if (this.#now() - session.lastCallAt >= AI_SESSION_IDLE_MS) {
-      this.#end(session, 'idle', session.lastCallAt + AI_SESSION_IDLE_MS);
+    } else {
+      // Where both ends have passed before anybody looked, the earlier one is why it ended.
+      const timeUp = session.startedAt + AI_SESSION_MAX_MS;
+      const idleUp = session.lastCallAt + AI_SESSION_IDLE_MS;
+      if (this.#now() >= Math.min(timeUp, idleUp)) {
+        this.#end(session, idleUp < timeUp ? 'idle' : 'time', Math.min(timeUp, idleUp));
+      }
     }
     return session.status === 'running' ? session : null;
   }
@@ -755,6 +842,10 @@ export class AiSessionService {
     session.endedMessage = ENDED[why];
     session.revision += 1;
     session.abort.abort();
+    // No AI app reaches a session that has ended: the pipe, its key and the file that names them go.
+    this.#bridge?.close();
+    if (this.#watch !== null) clearInterval(this.#watch);
+    this.#watch = null;
     // The log is tried once more, except when it is the log that failed.
     if (why !== 'log') {
       this.#write(session, 'session-ended', at, {
@@ -762,6 +853,7 @@ export class AiSessionService {
         calls: session.calls,
         questions: session.questions.length,
         proposals: session.proposals.size,
+        programs: session.clients,
       });
     }
   }
@@ -799,6 +891,7 @@ export class AiSessionService {
       endedMessage: session.endedMessage,
       startedAt: session.startedAt,
       idleAt: session.status === 'running' ? session.lastCallAt + AI_SESSION_IDLE_MS : null,
+      lastsUntil: session.status === 'running' ? session.startedAt + AI_SESSION_MAX_MS : null,
       people: session.people.map((person) => ({ ...person })),
       sources: [...session.sources].map(([id, source]) => ({
         id,

@@ -21,14 +21,19 @@ import {
 } from '@rulz/db';
 import {
   AI_NOTICE_SETTING,
+  AI_NOTICE_VERSION,
   AI_NOTICE_VERSION_SETTING,
   AI_SESSION_CALLS,
   AI_SESSION_GAP_MS,
+  AI_SESSION_CLIENTS_LOGGED,
   AI_SESSION_IDLE_MS,
+  AI_SESSION_MAX_MS,
   AI_SESSION_REQUESTS,
   AiSessionService,
   type AiSessionStatus,
 } from './aisession';
+import type { AiClientInfo } from '../shared/ipc';
+import type { AiBridge } from './aibridge';
 import { RecordSearchService } from './records';
 
 let appDb: Db;
@@ -251,11 +256,11 @@ describe('the notice of the AI assistant', () => {
 
   it('does not count when it was agreed to in an earlier wording, or is no number', () => {
     setSetting(appDb, AI_NOTICE_SETTING, '2026-11-14T00:00:00.000Z');
-    for (const version of ['0', '', '1.5', 'latest']) {
+    for (const version of ['0', '1', '', '1.5', 'latest']) {
       setSetting(appDb, AI_NOTICE_VERSION_SETTING, version);
       expect(ai.agreed, version).toBe(false);
     }
-    setSetting(appDb, AI_NOTICE_VERSION_SETTING, '1');
+    setSetting(appDb, AI_NOTICE_VERSION_SETTING, String(AI_NOTICE_VERSION));
     expect(ai.agreed).toBe(true);
   });
 
@@ -444,7 +449,7 @@ describe('starting a session', () => {
     expect(second.sessionId).toBe('session-2');
     expect(second.questions).toEqual([]);
     expect(log().filter((entry) => entry.kind === 'session-ended')).toEqual([
-      { kind: 'session-ended', why: 'replaced', calls: 1, questions: 1, proposals: 0 },
+      { kind: 'session-ended', why: 'replaced', calls: 1, questions: 1, proposals: 0, programs: 0 },
     ]);
   });
 });
@@ -1722,7 +1727,7 @@ describe('the proposals the user is shown', () => {
 });
 
 describe('the assistant as the page is told of it', () => {
-  it('says whether it is on, what a session may ask, and that nothing can connect yet', () => {
+  it('says whether it is on, what a session may ask, and that it has no connector unless it was given one', () => {
     expect(ai.info()).toMatchObject({
       agreed: false,
       searchAgreed: false,
@@ -1835,5 +1840,292 @@ describe('the activity log as the user reads it', () => {
     // A session that is under way goes on, and writes into the empty log.
     expect(await ai.call('list_sources', {})).toMatchObject({ ok: true });
     expect(ai.activity({ offset: 0, limit: 50 }, tree).total).toBe(1);
+  });
+});
+
+describe('a session and the way an AI app reaches it', () => {
+  /** Stands in for the pipe: notes when it is opened and closed, and lets a test connect a program. */
+  class FakeBridge implements AiBridge {
+    opened = 0;
+    closed = 0;
+    listening = false;
+    clients: AiClientInfo[] = [];
+    #client: (client: AiClientInfo) => void = () => undefined;
+    #change: () => void = () => undefined;
+    open(): void {
+      this.opened += 1;
+      this.listening = true;
+    }
+    close(): void {
+      this.closed += 1;
+      this.listening = false;
+      this.clients = [];
+    }
+    state() {
+      return { open: this.listening, problem: '', clients: this.clients };
+    }
+    onClient(listener: (client: AiClientInfo) => void): void {
+      this.#client = listener;
+    }
+    onChange(listener: () => void): void {
+      this.#change = listener;
+    }
+    connect(name: string, version = '1.0'): void {
+      const client = { name, version, since: 5 };
+      this.clients = [...this.clients, client];
+      this.#client(client);
+      this.#change();
+    }
+  }
+
+  let bridge: FakeBridge;
+
+  beforeEach(() => {
+    bridge = new FakeBridge();
+    let sessions = 0;
+    ai = new AiSessionService(records, {
+      appDb,
+      now: () => Date.now() + ahead,
+      wait: () => Promise.resolve(),
+      newId: () => {
+        sessions += 1;
+        return `bridged-${sessions}`;
+      },
+      bridge,
+      connector: {
+        file: 'C:\\app\\rulz-ancestry.mcpb',
+        fileFits: false,
+        command: 'claude mcp add rulz-ancestry',
+      },
+    });
+  });
+
+  it('can be reached from the start of a session, and not before', () => {
+    const { marten } = family();
+    expect(ai.state().connection).toEqual({ open: false, problem: '', clients: [] });
+    // Turning the assistant on opens nothing, and neither does a start that is refused.
+    ai.agree();
+    expect(begin(marten).ok).toBe(false);
+    expect(bridge.opened).toBe(0);
+
+    agreeToBoth();
+    started(marten);
+    expect(bridge.opened).toBe(1);
+    expect(ai.state().connection.open).toBe(true);
+  });
+
+  it('cannot be reached once it has ended, however it ended', async () => {
+    const { marten } = family();
+    agreeToBoth();
+
+    started(marten);
+    ai.stop();
+    expect(bridge.listening).toBe(false);
+
+    started(marten);
+    expect(bridge.listening).toBe(true);
+    ahead = AI_SESSION_IDLE_MS;
+    expect(status().ended).toBe('idle');
+    expect(bridge.listening).toBe(false);
+
+    started(marten);
+    for (let call = 0; call <= AI_SESSION_CALLS; call += 1) await ai.call('get_session', {});
+    expect(status().ended).toBe('calls');
+    expect(bridge.listening).toBe(false);
+
+    started(marten);
+    open = false;
+    expect(status().ended).toBe('tree-closed');
+    expect(bridge.listening).toBe(false);
+    open = true;
+
+    started(marten);
+    ai.withdraw();
+    expect(bridge.listening).toBe(false);
+  });
+
+  it('gets a new way in when another session takes its place', () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    const closedBefore = bridge.closed;
+    started(marten);
+    expect(bridge.closed).toBe(closedBefore + 1);
+    expect(bridge.opened).toBe(2);
+    expect(bridge.listening).toBe(true);
+  });
+
+  it('notes a program that connects, by the name it gives itself', () => {
+    const { marten } = family();
+    agreeToBoth();
+    const { revision } = started(marten);
+
+    bridge.connect('  Claude\nDesktop  ', '0.9');
+    expect(status().revision).toBeGreaterThan(revision);
+    expect(ai.state().connection.clients).toEqual([
+      { name: '  Claude\nDesktop  ', version: '0.9', since: 5 },
+    ]);
+    expect(log().at(-1)).toEqual({
+      kind: 'app-connected',
+      name: 'Claude Desktop',
+      version: '0.9',
+      number: 1,
+    });
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toBe(
+      'A program connected to the session. It calls itself "Claude Desktop" (version 0.9).',
+    );
+    bridge.connect('', '');
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toBe(
+      'A program connected to the session. It gave no name.',
+    );
+  });
+
+  it('writes only the first few programs that connect to the log', () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    for (let index = 0; index < AI_SESSION_CLIENTS_LOGGED + 30; index += 1) {
+      bridge.connect(`program ${index}`);
+    }
+    expect(log().filter((entry) => entry.kind === 'app-connected')).toHaveLength(
+      AI_SESSION_CLIENTS_LOGGED,
+    );
+    // The session goes on.
+    expect(status().status).toBe('running');
+  });
+
+  it('notes nothing of a program outside a session', () => {
+    const { marten } = family();
+    agreeToBoth();
+    bridge.connect('early');
+    started(marten);
+    ai.stop();
+    const entries = log().length;
+    bridge.connect('late');
+    expect(log()).toHaveLength(entries);
+  });
+
+  it('ends after two hours at the latest, whatever calls come', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    const { startedAt, lastsUntil } = started(marten);
+    expect(lastsUntil).toBe(startedAt + AI_SESSION_MAX_MS);
+    expect(AI_SESSION_MAX_MS).toBe(2 * 60 * 60 * 1000);
+
+    // A call every ten minutes keeps it from ending for want of calls.
+    for (ahead = 0; ahead < AI_SESSION_MAX_MS - 1000; ahead += 10 * 60 * 1000) {
+      expect((await ai.call('get_session', {})).ok).toBe(true);
+    }
+    ahead = AI_SESSION_MAX_MS;
+    expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
+    expect(status()).toMatchObject({
+      status: 'ended',
+      ended: 'time',
+      endedMessage: 'The session lasted as long as one may, so it ended.',
+      lastsUntil: null,
+    });
+    expect(bridge.listening).toBe(false);
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toContain(
+      'The session ended: it lasted as long as a session may.',
+    );
+  });
+
+  it('is not kept alive by a call that names no tool, or sends what its tool does not take', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    const { idleAt } = started(marten);
+    ahead = AI_SESSION_IDLE_MS - 1000;
+    expect(await ai.call('keep_alive', {})).toMatchObject({ ok: false, reason: 'unknown-tool' });
+    expect(await ai.call('get_person', { id: marten })).toMatchObject({
+      ok: false,
+      reason: 'input',
+    });
+    expect(await ai.call('get_session', { more: 1 })).toMatchObject({ ok: false, reason: 'input' });
+    expect(status().idleAt).toBe(idleAt);
+    // They are counted all the same.
+    expect(status().calls).toBe(3);
+
+    ahead += 1000;
+    expect(status()).toMatchObject({ status: 'ended', ended: 'idle' });
+  });
+
+  it('ends with the app, and says so', () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    ai.stop('quit');
+    expect(status()).toMatchObject({
+      status: 'ended',
+      ended: 'quit',
+      endedMessage: 'The app was closed, so the session ended.',
+    });
+    expect(bridge.listening).toBe(false);
+    expect(log().at(-1)).toMatchObject({ kind: 'session-ended', why: 'quit' });
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toContain(
+      'The session ended: the app was closed.',
+    );
+  });
+
+  it('says that it ended for want of calls when that came first, however late anybody looks', () => {
+    const { marten } = family();
+    agreeToBoth();
+    const { idleAt } = started(marten);
+    ahead = AI_SESSION_MAX_MS + 60 * 60 * 1000;
+    expect(status()).toMatchObject({ status: 'ended', ended: 'idle' });
+    expect(log().at(-1)).toMatchObject({ kind: 'session-ended', why: 'idle' });
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.at).toBe(idleAt);
+  });
+
+  it('says why it had ended already when it is stopped after its time', () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    ahead = AI_SESSION_IDLE_MS;
+    ai.stop('quit');
+    expect(log().at(-1)).toMatchObject({ kind: 'session-ended', why: 'idle' });
+  });
+
+  it('ends when its time is up, also when nobody asks how it stands', () => {
+    vi.useFakeTimers();
+    try {
+      const { marten } = family();
+      agreeToBoth();
+      started(marten);
+      vi.advanceTimersByTime(AI_SESSION_IDLE_MS - 60 * 1000);
+      expect(bridge.listening).toBe(true);
+      vi.advanceTimersByTime(2 * 60 * 1000);
+      expect(bridge.listening).toBe(false);
+      expect(log().at(-1)).toMatchObject({ kind: 'session-ended', why: 'idle' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says at its end how often a program connected to it', () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    bridge.connect('one');
+    bridge.connect('two');
+    ai.stop();
+    expect(log().at(-1)).toMatchObject({ kind: 'session-ended', programs: 2 });
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toContain(
+      'Programs connected to it 2 times.',
+    );
+  });
+
+  it('tells the page what it hands out for connecting an AI app', () => {
+    expect(ai.info()).toMatchObject({
+      canConnect: true,
+      connectorCommand: 'claude mcp add rulz-ancestry',
+      connectorFileFits: false,
+      maxHours: 2,
+    });
+    expect(ai.connectorFile).toBe('C:\\app\\rulz-ancestry.mcpb');
+
+    const without = new AiSessionService(records, { appDb });
+    expect(without.info()).toMatchObject({ canConnect: false, connectorCommand: '' });
+    expect(without.connectorFile).toBeNull();
+    expect(without.state().connection).toEqual({ open: false, problem: '', clients: [] });
   });
 });

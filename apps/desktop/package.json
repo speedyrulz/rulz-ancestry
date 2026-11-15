@@ -10,17 +10,18 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/connector.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false && tsc --noEmit -p tsconfig.e2e.json --composite false",
     "test:e2e": "playwright test --project=built",
     "test:e2e:packaged": "playwright test --project=packaged",
-    "package": "electron-vite build && electron-builder --win nsis --x64 --publish never",
-    "package:dir": "electron-vite build && electron-builder --win --x64 --dir --publish never"
+    "package": "electron-vite build && node scripts/connector.mjs && electron-builder --win nsis --x64 --publish never",
+    "package:dir": "electron-vite build && node scripts/connector.mjs && electron-builder --win --x64 --dir --publish never"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@playwright/test": "^1.65.0",
     "@rulz/ai": "workspace:*",
     "@rulz/connectors": "workspace:*",

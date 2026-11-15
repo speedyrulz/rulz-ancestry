@@ -18,6 +18,9 @@ files:
 # Native binaries cannot be loaded from inside the asar archive.
 asarUnpack:
   - '**/*.node'
+  # The connector of the optional AI assistant: an AI app reads these two
+  # files from outside the app, so they cannot lie inside its archive.
+  - 'out/connector/**'
 
 # better-sqlite3 13 uses N-API prebuilt binaries that work in Electron as-is,
 # so there is nothing to recompile against Electron's headers.

@@ -16,7 +16,11 @@ export default defineConfig({
         test: {
           name: 'unit',
           // The desktop app's main-process modules that do not need Electron are tested here too.
-          include: ['packages/*/src/**/*.test.ts', 'apps/desktop/src/main/**/*.test.ts'],
+          include: [
+            'packages/*/src/**/*.test.ts',
+            'apps/desktop/src/main/**/*.test.ts',
+            'apps/desktop/src/bridge/**/*.test.ts',
+          ],
           exclude: [...configDefaults.exclude, ...TIMED],
           sequence: { groupOrder: 0 },
         },

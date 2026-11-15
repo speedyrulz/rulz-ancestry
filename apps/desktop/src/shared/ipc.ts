@@ -1087,7 +1087,16 @@ export interface AiSessionStartRequest extends AiSessionPlanRequest {
  * could not be written.
  */
 export type AiSessionEnd =
-  'stopped' | 'page' | 'idle' | 'tree-closed' | 'withdrawn' | 'replaced' | 'calls' | 'log';
+  | 'stopped'
+  | 'page'
+  | 'idle'
+  | 'time'
+  | 'tree-closed'
+  | 'withdrawn'
+  | 'replaced'
+  | 'calls'
+  | 'log'
+  | 'quit';
 
 /** One question an AI put to a source, as the page shows it. */
 export interface AiQuestion {
@@ -1120,6 +1129,8 @@ export interface AiSessionStatus {
   startedAt: number;
   /** When it ends unless a call comes; null once it has ended. */
   idleAt: number | null;
+  /** When it ends at the latest, whatever comes; null once it has ended. */
+  lastsUntil: number | null;
   /** The people it is for. */
   people: AiSessionPerson[];
   sources: { id: string; name: string; used: number; limit: number }[];
@@ -1204,8 +1215,32 @@ export interface AiProposalItem extends AiProposalRef {
   readAt: number;
 }
 
+/**
+ * A program that is connected to a session. An AI app starts the app's
+ * bridge, and the bridge passes on what that app calls itself: the name is
+ * that program's own word, and nothing checks it.
+ */
+export interface AiClientInfo {
+  name: string;
+  version: string;
+  /** Since when it is connected, in Unix milliseconds. */
+  since: number;
+}
+
+/** How an AI app can reach the session at this moment. */
+export interface AiConnectionInfo {
+  /** True while the app listens for the bridge of an AI app: only while a session is under way. */
+  open: boolean;
+  /** Why the app does not listen though a session is under way; empty otherwise. */
+  problem: string;
+  /** The programs that are connected now. */
+  clients: AiClientInfo[];
+}
+
 /** The session and the proposals as they stand, for the line in the top bar and for the windows that follow them. */
 export interface AiSessionState {
+  /** How an AI app can reach the session. */
+  connection: AiConnectionInfo;
   /** The session that is under way, or the last one that ended since the tree was opened; null when there was none. */
   session: AiSessionStatus | null;
   /** How many proposals the app holds in memory. */
@@ -1220,8 +1255,17 @@ export interface AiAssistantInfo extends AiSessionState {
   agreed: boolean;
   /** Whether the user agreed to the notice of the search for records. */
   searchAgreed: boolean;
-  /** False while this version of the app has no way to connect an AI to a session. */
+  /** False when this copy of the app has no connector to hand out (one that was not built whole). */
   canConnect: boolean;
+  /** The command that adds the connector to Claude Code, for the user to copy; empty when there is none. */
+  connectorCommand: string;
+  /**
+   * False when the connector file does not find this copy of the app: the
+   * file looks for the app's data in the usual folder, and this copy keeps
+   * its data elsewhere (a copy that is not installed, or one started with a
+   * folder of its own).
+   */
+  connectorFileFits: boolean;
   /** The sources a session may ask, with what each is sent. */
   sources: RecordSourceInfo[];
   /** How many questions a session may send to one source. */
@@ -1230,6 +1274,8 @@ export interface AiAssistantInfo extends AiSessionState {
   idleMinutes: number;
   /** How many calls of a tool a session takes in all. */
   maxCalls: number;
+  /** After how many hours a session ends at the latest. */
+  maxHours: number;
   /** How many days the activity log keeps an entry. */
   logDays: number;
 }
@@ -1654,6 +1700,14 @@ export interface RulzApi {
   listAiActivity(request: { offset: number; limit: number }): Promise<AiActivityPage>;
   /** Removes every entry of the activity log. */
   clearAiActivity(): Promise<AiActivityPage>;
+  /**
+   * Shows the connector file for Claude Desktop in File Explorer, selected
+   * in its folder, for the user to open. False when this copy of the app has
+   * none.
+   */
+  showAiConnector(): Promise<boolean>;
+  /** Puts the command that adds the connector to Claude Code on the clipboard. False when there is none. */
+  copyAiConnectorCommand(): Promise<boolean>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -1842,6 +1896,8 @@ export const API_METHODS = [
   'dismissAiProposal',
   'listAiActivity',
   'clearAiActivity',
+  'showAiConnector',
+  'copyAiConnectorCommand',
   'getChart',
   'getRelationship',
   'findDuplicates',

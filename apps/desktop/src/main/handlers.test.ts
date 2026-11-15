@@ -268,6 +268,11 @@ let filesDialogs: number;
 /** The files handed to another program, and those shown in File Explorer. */
 let openedFiles: string[];
 let shownFiles: string[];
+let copied: string[];
+
+/** What the app hands out for connecting an AI app, as these tests have it. */
+const CONNECTOR_PATH = 'C:\\app\\out\\connector\\rulz-ancestry.mcpb';
+const CONNECTOR_COMMAND = 'claude mcp add rulz-ancestry -- node bridge.cjs';
 
 const platform: Platform = {
   openInBrowser: (url) => {
@@ -295,6 +300,9 @@ const platform: Platform = {
   openFile: (file) => {
     openedFiles.push(file);
     return Promise.resolve();
+  },
+  copyText: (text) => {
+    copied.push(text);
   },
   showFileInFolder: (file) => {
     shownFiles.push(file);
@@ -364,6 +372,7 @@ beforeEach(() => {
   let sessions = 0;
   ai = new AiSessionService(records, {
     appDb,
+    connector: { file: CONNECTOR_PATH, fileFits: true, command: CONNECTOR_COMMAND },
     // The session does not wait between two questions in these tests.
     wait: (_ms, signal) =>
       signal.aborted ? Promise.reject(new Error('given up')) : Promise.resolve(),
@@ -383,6 +392,7 @@ beforeEach(() => {
   filesDialogs = 0;
   openedFiles = [];
   shownFiles = [];
+  copied = [];
 });
 
 afterEach(async () => {
@@ -4872,12 +4882,14 @@ describe('the AI assistant', () => {
     if (!filed.ok) throw new Error(filed.message);
   };
 
-  it('is off until its notice is agreed to, and says that nothing can connect to it yet', async () => {
+  it('is off until its notice is agreed to, and says what it hands out to connect an AI app', async () => {
     // It can be asked about before any tree is open.
     expect(await info()).toMatchObject({
       agreed: false,
       searchAgreed: false,
-      canConnect: false,
+      canConnect: true,
+      connectorCommand: CONNECTOR_COMMAND,
+      maxHours: 2,
       session: null,
       proposals: 0,
       requestsPerSource: 10,
@@ -5376,5 +5388,41 @@ describe('the AI assistant', () => {
       total: 1,
       items: [{ thisTree: true, what: 'The AI asked which services it may ask.' }],
     });
+  });
+});
+
+describe('connecting an AI app', () => {
+  it('shows the connector file in its folder, and puts the command on the clipboard', async () => {
+    expect(await call<AiAssistantInfo>('getAiAssistant')).toMatchObject({
+      canConnect: true,
+      connectorCommand: CONNECTOR_COMMAND,
+      connection: { open: false, problem: '', clients: [] },
+    });
+    expect(await call<boolean>('showAiConnector')).toBe(true);
+    expect(shownFiles).toEqual([CONNECTOR_PATH]);
+    expect(await call<boolean>('copyAiConnectorCommand')).toBe(true);
+    expect(copied).toEqual([CONNECTOR_COMMAND]);
+  });
+
+  it('does neither in a copy of the app that has no connector', async () => {
+    const without = createHandlers(
+      session,
+      platform,
+      gazetteer,
+      records,
+      new AiSessionService(records, { appDb }),
+      runs,
+    );
+    expect(await without.showAiConnector()).toBe(false);
+    expect(await without.copyAiConnectorCommand()).toBe(false);
+    expect(shownFiles).toEqual([]);
+    expect(copied).toEqual([]);
+  });
+
+  it('take nothing from the page: not a file to show, not a text to copy', async () => {
+    await expect(call('showAiConnector', 'C:\\Windows\\win.ini')).rejects.toThrow();
+    await expect(call('copyAiConnectorCommand', 'some text')).rejects.toThrow();
+    expect(shownFiles).toEqual([]);
+    expect(copied).toEqual([]);
   });
 });

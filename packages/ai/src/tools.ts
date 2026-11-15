@@ -16,9 +16,21 @@ import { askedQuerySchema } from './query';
 /** The longest id or reference a tool takes, in characters. */
 const ID_MAX = 64;
 
-const personId = z.string().min(1).max(ID_MAX);
-const sourceId = z.string().min(1).max(ID_MAX);
-const ref = z.string().min(1).max(ID_MAX);
+const personId = z
+  .string()
+  .min(1)
+  .max(ID_MAX)
+  .describe('The id of a person of the tree, as get_session and search_tree give it.');
+const sourceId = z
+  .string()
+  .min(1)
+  .max(ID_MAX)
+  .describe('The id of a source, as list_sources gives it.');
+const ref = z
+  .string()
+  .min(1)
+  .max(ID_MAX)
+  .describe('The reference of a record, as search_records gives it.');
 
 /** What every answer with texts of a record says with it. */
 export const RECORD_TEXT_NOTE =
@@ -28,8 +40,14 @@ export const AI_TOOL_INPUTS = {
   get_session: z.strictObject({}),
   list_sources: z.strictObject({}),
   search_tree: z.strictObject({
-    query: z.string().max(200),
-    offset: z.number().int().min(0).max(100_000).optional(),
+    query: z.string().max(200).describe('A name, or part of one.'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000)
+      .optional()
+      .describe('How many of the first matches to leave out, to read on.'),
   }),
   get_person: z.strictObject({ personId }),
   get_relatives: z.strictObject({ personId }),
@@ -72,6 +90,29 @@ export const AI_TOOLS: readonly AiTool[] = AI_TOOL_NAMES.map((name) => ({
   description: DESCRIPTIONS[name],
   input: AI_TOOL_INPUTS[name],
 }));
+
+/** A tool as a program that connects an AI lists it: what it takes as a JSON Schema. */
+export interface AiToolSpec {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * The tools as they are listed for an AI app. `toolspec.json` holds exactly
+ * this, so that the program that stands between an AI app and this app (the
+ * bridge of route A) can list the tools without loading this package; a test
+ * holds the file against this function.
+ */
+export function aiToolSpecs(): AiToolSpec[] {
+  return AI_TOOLS.map((tool) => {
+    const { $schema: _dialect, ...inputSchema } = z.toJSONSchema(tool.input) as Record<
+      string,
+      unknown
+    >;
+    return { name: tool.name, description: tool.description, inputSchema };
+  });
+}
 
 /**
  * Why a tool gave nothing:

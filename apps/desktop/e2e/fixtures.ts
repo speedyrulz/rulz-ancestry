@@ -31,7 +31,19 @@ interface AppFixtures {
 }
 
 const desktopDir = resolve(import.meta.dirname, '..');
-const packagedExe = join(desktopDir, 'release', 'win-unpacked', 'RulZ Ancestry.exe');
+const packagedDir = join(desktopDir, 'release', 'win-unpacked');
+const packagedExe = join(packagedDir, 'RulZ Ancestry.exe');
+
+/**
+ * The bridge of the optional AI assistant as the app hands it out: the one
+ * file an AI app starts. In the packaged app it lies outside the archive of
+ * the app's code.
+ */
+export function bridgeFile(appTarget: AppTarget): string {
+  return appTarget === 'packaged'
+    ? join(packagedDir, 'resources', 'app.asar.unpacked', 'out', 'connector', 'bridge.cjs')
+    : join(desktopDir, 'out', 'connector', 'bridge.cjs');
+}
 
 /**
  * The tests open the app's window beyond the edge of the screen, without
