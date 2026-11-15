@@ -19,6 +19,9 @@ export const RECORD_MARK_LIMIT = 5000;
 /** How long the JSON of a kept record may be, in characters. */
 export const RECORD_MARK_JSON_MAX = 16_384;
 
+/** How long the JSON of what an AI said of a kept record may be, in characters. */
+export const RECORD_MARK_AI_JSON_MAX = 16_384;
+
 const TITLE_MAX = 500;
 const URL_MAX = 2000;
 
@@ -38,6 +41,11 @@ export interface RecordMark {
   url: string;
   /** The record as it was read; null for one that was turned down, and where the terms bar keeping it. */
   recordJson: string | null;
+  /**
+   * What an AI said of the record, as JSON, when it was kept from a proposal
+   * of the AI assistant; null otherwise. See `schema/011-record-mark-reasons.ts`.
+   */
+  aiJson: string | null;
   /** When the record was read from the source, in Unix milliseconds. */
   readAt: number;
   /** When the user kept it or turned it down. */
@@ -52,6 +60,12 @@ export interface RecordMarkInput {
   url: string;
   /** Left out, or null, for a result that is turned down. */
   recordJson?: string | null;
+  /**
+   * What an AI said of the record, for one that is kept from a proposal. Left
+   * out, or null, otherwise: a mark that is written again without it loses
+   * what it had, since that was said of another reading of the record.
+   */
+  aiJson?: string | null;
   readAt: number;
   markedAt: number;
 }
@@ -65,12 +79,13 @@ interface Row {
   title: string;
   url: string;
   record_json: string | null;
+  ai_json: string | null;
   read_at: number;
   marked_at: number;
 }
 
 const COLUMNS =
-  'id, person_id, source_id, record_key, state, title, url, record_json, read_at, marked_at';
+  'id, person_id, source_id, record_key, state, title, url, record_json, ai_json, read_at, marked_at';
 
 function markOf(row: Row): RecordMark {
   return {
@@ -82,6 +97,7 @@ function markOf(row: Row): RecordMark {
     title: row.title,
     url: row.url,
     recordJson: row.record_json,
+    aiJson: row.ai_json,
     readAt: row.read_at,
     markedAt: row.marked_at,
   };
@@ -128,11 +144,18 @@ function setMark(
   if (recordJson !== null && recordJson.length > RECORD_MARK_JSON_MAX) {
     throw new TreeRuleError('this record is too long to keep');
   }
+  // Written with every mark, so that what an AI said of one reading of a
+  // record never stays beside another reading, or beside a turning-down.
+  const aiJson = state === 'kept' ? (input.aiJson ?? null) : null;
+  if (aiJson !== null && aiJson.length > RECORD_MARK_AI_JSON_MAX) {
+    throw new TreeRuleError('what the AI said of this record is too long to keep');
+  }
   const values = {
     state,
     title: input.title.slice(0, TITLE_MAX),
     url: input.url.slice(0, URL_MAX),
     recordJson,
+    aiJson,
     readAt: input.readAt,
     markedAt: input.markedAt,
   };
@@ -148,16 +171,18 @@ function setMark(
       sql(
         tree.db,
         `INSERT INTO record_mark
-           (id, person_id, source_id, record_key, state, title, url, record_json, read_at, marked_at)
+           (id, person_id, source_id, record_key, state, title, url, record_json, ai_json,
+            read_at, marked_at)
          VALUES
-           (@id, @personId, @sourceId, @key, @state, @title, @url, @recordJson, @readAt, @markedAt)`,
+           (@id, @personId, @sourceId, @key, @state, @title, @url, @recordJson, @aiJson,
+            @readAt, @markedAt)`,
       ).run({ id: newId(), personId, sourceId: input.sourceId, key: input.key, ...values });
     } else {
       sql(
         tree.db,
         `UPDATE record_mark
          SET state = @state, title = @title, url = @url, record_json = @recordJson,
-             read_at = @readAt, marked_at = @markedAt
+             ai_json = @aiJson, read_at = @readAt, marked_at = @markedAt
          WHERE id = @id`,
       ).run({ id: existing.id, ...values });
     }
@@ -169,7 +194,8 @@ function setMark(
 
 /**
  * Keeps a result for a person, to look at later. One that was kept before is
- * kept as it is read now; one that was turned down is kept again.
+ * kept as it is read now; one that was turned down is kept again. What an AI
+ * said of it is kept with it when it is handed in, and goes otherwise.
  */
 export function keepRecord(tree: Tree, personId: string, input: RecordMarkInput): RecordMark {
   return setMark(tree, 'Keep a record for later', personId, 'kept', input);

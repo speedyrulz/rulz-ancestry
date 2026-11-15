@@ -16,6 +16,8 @@ export type AppTarget = 'built' | 'packaged';
 export interface AppOptions {
   /** Which form of the app to launch; set per project in playwright.config.ts. */
   appTarget: AppTarget;
+  /** Switches the app is started with besides its own; none unless a file of tests says otherwise. */
+  appArgs: string[];
 }
 
 interface AppFixtures {
@@ -39,15 +41,20 @@ const packagedExe = join(desktopDir, 'release', 'win-unpacked', 'RulZ Ancestry.e
 const windowArgs = process.env['RULZ_E2E_SHOW'] === '1' ? [] : ['--background-window'];
 
 /** Starts the app with the given profile folder. Tests that restart the app call this again. */
-export function launchApp(appTarget: AppTarget, userDataDir: string): Promise<ElectronApplication> {
-  const userData = `--user-data-dir=${userDataDir}`;
+export function launchApp(
+  appTarget: AppTarget,
+  userDataDir: string,
+  appArgs: string[] = [],
+): Promise<ElectronApplication> {
+  const args = [`--user-data-dir=${userDataDir}`, ...windowArgs, ...appArgs];
   return appTarget === 'packaged'
-    ? electron.launch({ executablePath: packagedExe, args: [userData, ...windowArgs] })
-    : electron.launch({ args: [desktopDir, userData, ...windowArgs], cwd: desktopDir });
+    ? electron.launch({ executablePath: packagedExe, args })
+    : electron.launch({ args: [desktopDir, ...args], cwd: desktopDir });
 }
 
 export const test = base.extend<AppOptions & AppFixtures>({
   appTarget: ['built', { option: true }],
+  appArgs: [[], { option: true }],
 
   // Playwright requires the first argument to be an object destructuring pattern.
   // eslint-disable-next-line no-empty-pattern
@@ -58,8 +65,8 @@ export const test = base.extend<AppOptions & AppFixtures>({
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
   },
 
-  app: async ({ appTarget, userDataDir }, use) => {
-    const app = await launchApp(appTarget, userDataDir);
+  app: async ({ appTarget, userDataDir, appArgs }, use) => {
+    const app = await launchApp(appTarget, userDataDir, appArgs);
     await use(app);
     // A test may already have closed the app to restart it.
     await app.close().catch(() => undefined);

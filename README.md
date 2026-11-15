@@ -308,12 +308,32 @@ Searching for records:
   browser: you paste its address, and the app keeps the address and the day.
   It does not fetch the page.
 
-An optional AI assistant is planned (Phase 4b). Claude proposes record matches
-for you to confirm, through your own Claude app or your own API key. It is off by
-default, and while it is on, details of the people being researched are sent to
-Anthropic. Its rules and its sessions are written and tested, but the app has
-no screen for it and no connection to Claude yet, so it cannot be used. See
-section 7 of the plan.
+An optional AI assistant is being built (Phase 4b). Claude is to propose record
+matches for you to confirm, through your own Claude app or your own API key. It
+is off until you turn it on. **No AI can be connected in this version yet;**
+that is the next part. What is there now:
+
+- **"AI assistant" on a person's page** opens its window. Before anything else
+  it says what turning it on means: what an AI could read of your tree, which
+  services it could ask and within which limits, where that goes, and what is
+  kept.
+- **A session** is the time during which an AI app you connect may look for
+  records: for one person and up to three generations of their ancestors, at
+  the services you tick, with at most 10 questions to each. You start it, a
+  line above the tree says so while it is under way, and you can stop it at
+  any time. It also ends after 15 minutes without a call, and when the tree
+  closes. Until an AI can be connected, nothing calls during a session.
+- **What an AI proposes stands in the inbox,** in a list of its own: the
+  record, the app's own label, what the AI says, and the words of the record
+  each of its reasons quotes. The app shows a reason only when it found the
+  quote in the record. Nothing changes in your tree until you keep or attach a
+  record. A record you keep for later takes the AI's reasons along.
+- **An activity log** on this PC lists every call an AI made: what it asked and
+  which records it was given, never the text of a record as a service gave it.
+  It does hold the words an AI asked with. You can clear it.
+- **Once an AI is connected,** details of the people being researched go to the
+  AI service of the app you connect, which for Claude is Anthropic. See section
+  7 of the plan.
 
 The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
 architecture, data sources, development guide and changelog. It is updated after
@@ -351,7 +371,7 @@ apps/desktop          Electron app: main process, preload script, React UI, e2e 
 packages/core         Domain logic with no Electron dependency (ids, dates, reading and writing GEDCOM, chart layout, relationship names, duplicate scoring, kinds of file)
 packages/db           The tree database: schema migrations, queries, undo and redo, search, backups, GEDCOM and GEDZip import and export, chart data, relationships, duplicates and merging, sources and citations, the media folder, zip archives
 packages/connectors   One folder per data source, each with a manifest of its limits and terms
-packages/ai           The rules of the optional AI assistant, which the app does not start yet: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
+packages/ai           The rules of the optional AI assistant, to which no AI can be connected yet: what it may read of a tree and of a record, its tools, the limits on what it may ask a source, and the check of what it proposes
 docs/                 Plan and access checklist
 ```
 

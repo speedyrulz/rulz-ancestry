@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GedcomImportInfo, MergeInfo, TreeState } from '../../../shared/ipc';
+import type { AiSessionState, GedcomImportInfo, MergeInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { countOf, formatWhen } from '../format';
+import { AiAssistantDialog } from './aiassistant';
 import { ChartView } from './ChartView';
 import { AddPersonDialog, BackupsDialog } from './dialogs';
 import { DuplicatesDialog, mergeSummary } from './duplicates';
@@ -45,6 +46,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   const [importNotice, setImportNotice] = useState(imported !== null);
   const [dialog, setDialog] = useState<
     | 'add-person'
+    | 'ai-assistant'
     | 'backups'
     | 'duplicates'
     | 'export'
@@ -59,6 +61,78 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   const [view, setView] = useState<'person' | 'chart'>('person');
   const [busy, setBusy] = useState(false);
   const searchBox = useRef<HTMLInputElement>(null);
+  /**
+   * The session of the AI assistant and the count of its proposals. Kept here,
+   * in one place, so that the line in the notice bar, the inbox and the
+   * assistant's window all show the same.
+   */
+  const [ai, setAi] = useState<AiSessionState | null>(null);
+  /** Whether the inbox opens at what the AI proposed: it does when it is opened from the assistant's window. */
+  const [inboxAtProposals, setInboxAtProposals] = useState(false);
+
+  /**
+   * Takes over how the session and the proposals stand, from whichever window
+   * or question learnt it. The count of the changes of the proposals only
+   * goes up, so an answer with a lower one was on its way while something
+   * newer arrived (a proposal was forgotten meanwhile), and is left aside.
+   */
+  const takeAi = useCallback(
+    (state: AiSessionState) =>
+      setAi((now) =>
+        now !== null && state.proposalsRevision < now.proposalsRevision ? now : state,
+      ),
+    [],
+  );
+
+  // A session belongs to the tree that is open: read it again for another tree.
+  useEffect(() => {
+    let current = true;
+    api.getAiSession().then(
+      (state) => {
+        if (current) takeAi(state);
+      },
+      // The line in the notice bar is a help; without it the rest still works.
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [tree.id, takeAi]);
+
+  // While a session is under way an AI may call at any moment: follow it once
+  // a second, one question at a time. An answer that comes after the session
+  // was seen to end, or after another answer took its place, is dropped.
+  const aiRunning = ai?.session?.status === 'running';
+  useEffect(() => {
+    if (!aiRunning) return undefined;
+    let current = true;
+    let asking = false;
+    const timer = setInterval(() => {
+      if (asking) return;
+      asking = true;
+      api
+        .getAiSession()
+        .then(
+          (state) => {
+            if (current) takeAi(state);
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          asking = false;
+        });
+    }, 1000);
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [aiRunning, takeAi]);
+
+  const stopAi = () => {
+    api
+      .stopAiSession()
+      .then(takeAi, (failure: unknown) => setNotice({ text: errorMessage(failure), error: true }));
+  };
 
   useEffect(() => {
     document.title = `${tree.name} - RulZ Ancestry`;
@@ -219,10 +293,17 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           <button
             type="button"
             title="Results of searches for records that you kept to look at later"
-            onClick={() => setDialog('inbox')}
+            onClick={() => {
+              setInboxAtProposals(false);
+              setDialog('inbox');
+            }}
             data-testid="open-inbox"
           >
-            {tree.inbox === 0 ? 'Inbox' : `Inbox (${tree.inbox.toLocaleString()})`}
+            {ai === null || ai.proposals === 0
+              ? tree.inbox === 0
+                ? 'Inbox'
+                : `Inbox (${tree.inbox.toLocaleString()})`
+              : `Inbox (${tree.inbox.toLocaleString()} + ${ai.proposals.toLocaleString()} proposed)`}
           </button>
           <button
             type="button"
@@ -271,6 +352,25 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
       </header>
 
       <div className="notice-bar" aria-live="polite">
+        {ai?.session?.status === 'running' && (
+          <p className="notice ai-line" role="status" data-testid="ai-session-line">
+            <span>
+              An AI session is under way: {countOf(ai.session.calls, 'call', 'calls')},{' '}
+              {countOf(ai.session.questions.length, 'question', 'questions')} to services.
+            </span>
+            <button
+              type="button"
+              className="small"
+              onClick={() => setDialog('ai-assistant')}
+              data-testid="ai-session-show"
+            >
+              Show
+            </button>
+            <button type="button" className="small" onClick={stopAi} data-testid="ai-session-stop">
+              Stop
+            </button>
+          </p>
+        )}
         {imported !== null && importNotice && (
           <p className="notice" role="status" data-testid="import-notice">
             <span>
@@ -352,6 +452,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
               onProblem={showProblem}
               onChart={() => setView('chart')}
               onMerged={showMerged}
+              onAiAssistant={() => setDialog('ai-assistant')}
             />
           )}
         </main>
@@ -392,11 +493,26 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
         <RecordInboxDialog
           tree={tree}
           personId={selectedId}
+          ai={ai}
+          onAi={takeAi}
+          startAt={inboxAtProposals ? 'proposals' : 'kept'}
           onTree={onTree}
           onSelect={(personId) => {
             setSelectedId(personId);
             setView('person');
             setDialog(null);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'ai-assistant' && (
+        <AiAssistantDialog
+          personId={selectedId}
+          ai={ai}
+          onAi={takeAi}
+          onOpenInbox={() => {
+            setInboxAtProposals(true);
+            setDialog('inbox');
           }}
           onClose={() => setDialog(null)}
         />

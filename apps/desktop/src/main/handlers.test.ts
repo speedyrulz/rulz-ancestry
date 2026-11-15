@@ -14,6 +14,12 @@ import {
 } from '@rulz/db';
 import {
   API_METHODS,
+  type AiActivityPage,
+  type AiAssistantInfo,
+  type AiProposalItem,
+  type AiSessionPlan,
+  type AiSessionStartResult,
+  type AiSessionState,
   type AppInfo,
   type AttachRecordResult,
   type ChartInfo,
@@ -52,6 +58,7 @@ import {
   type TakeRecordFactsResult,
   type TreeState,
 } from '../shared/ipc';
+import { AiSessionService } from './aisession';
 import { GazetteerService } from './gazetteer';
 import { RECORD_RUN_GAP_MS, RecordRun } from './recordrun';
 import {
@@ -79,6 +86,8 @@ const TEXT = { words: 'Ada Test', phrase: true, fromYear: 1850, toYear: 1911, st
 let gazetteer: GazetteerService;
 let records: RecordSearchService;
 let runs: RecordRun;
+/** The AI assistant. A test calls its tools as an AI would; no handler does. */
+let ai: AiSessionService;
 /** How long a search for several people waited each time, in milliseconds. It does not wait in these tests. */
 let waits: number[];
 /** What a test does while such a search waits; it is told how many waits there were. */
@@ -352,7 +361,18 @@ beforeEach(() => {
       if (signal.aborted) throw new Error('given up');
     },
   });
-  handlers = createHandlers(session, platform, gazetteer, records, runs);
+  let sessions = 0;
+  ai = new AiSessionService(records, {
+    appDb,
+    // The session does not wait between two questions in these tests.
+    wait: (_ms, signal) =>
+      signal.aborted ? Promise.reject(new Error('given up')) : Promise.resolve(),
+    newId: () => {
+      sessions += 1;
+      return `session-${sessions}`;
+    },
+  });
+  handlers = createHandlers(session, platform, gazetteer, records, ai, runs);
   pickedFolder = null;
   pickedFile = null;
   savePath = null;
@@ -368,6 +388,8 @@ beforeEach(() => {
 afterEach(async () => {
   runs.clear();
   await runs.idle();
+  ai.clear();
+  await ai.idle();
   gazetteer.close();
   await gazetteer.idle();
   session.shutdown();
@@ -396,6 +418,52 @@ describe('argument checks', () => {
       ['getPersonLife', 'not-an-id'],
       ['getPersonLife', MISSING, 'extra argument'],
       ['getRecordSearch', 'not-an-id'],
+      ['getAiAssistant', 1],
+      ['agreeToAiAssistant', true],
+      ['turnOffAiAssistant', 'now'],
+      ['planAiSession', { personId: MISSING }],
+      ['planAiSession', { personId: MISSING, generations: 4 }],
+      ['planAiSession', { personId: MISSING, generations: -1 }],
+      ['planAiSession', { personId: MISSING, generations: 1, sourceIds: ['wikitree'] }],
+      [
+        'startAiSession',
+        { personId: MISSING, generations: 1, sourceIds: [], stamp: '0'.repeat(64) },
+      ],
+      [
+        'startAiSession',
+        { personId: MISSING, generations: 1, sourceIds: ['wikitree'], stamp: 'x' },
+      ],
+      [
+        'startAiSession',
+        { personId: MISSING, generations: 1, sourceIds: 'wikitree', stamp: '0'.repeat(64) },
+      ],
+      ['getAiSession', 0],
+      ['stopAiSession', 'session-1'],
+      ['listAiProposals', MISSING],
+      ['dismissAiProposal', { sessionId: 'session-1' }],
+      ['dismissAiProposal', { sessionId: 'session-1', ref: 'the first' }],
+      ['dismissAiProposal', { sessionId: 'a session', ref: 'r1' }],
+      ['dismissAiProposal', { sessionId: 'session-1', ref: 'r1', personId: MISSING }],
+      ['listAiActivity'],
+      ['listAiActivity', { offset: 0, limit: 0 }],
+      ['listAiActivity', { offset: 0, limit: 201 }],
+      ['listAiActivity', { offset: -1, limit: 10 }],
+      ['clearAiActivity', 'all'],
+      ['keepRecord', { personId: MISSING, sourceId: 'wikitree', key: 'k', from: 'proposal' }],
+      [
+        'keepRecord',
+        {
+          personId: MISSING,
+          sourceId: 'wikitree',
+          key: 'k',
+          from: 'proposal',
+          proposal: {
+            sessionId: 'session-1',
+            ref: 'r1',
+            record: { title: 'A record of the page' },
+          },
+        },
+      ],
       ['agreeToRecordSearch', true],
       ['cancelRecordSearch', 'now'],
       ['searchRecordTexts', { personId: MISSING, sourceId: 'loc', offset: 0 }],
@@ -3694,6 +3762,8 @@ describe('results kept for later, and results turned down', () => {
         readAt: found.fetchedAt,
         markedAt: expect.any(Number),
         problem: '',
+        ai: null,
+        aiProblem: '',
       },
     ]);
     expect(listed.items[0]?.markedAt).toBeGreaterThanOrEqual(before);
@@ -3849,6 +3919,8 @@ describe('results kept for later, and results turned down', () => {
         readAt: expect.any(Number),
         markedAt: expect.any(Number),
         problem: '',
+        ai: null,
+        aiProblem: '',
       },
     ]);
     expect(session.tree.db.prepare('SELECT record_json FROM record_mark').pluck().get()).toBeNull();
@@ -4688,5 +4760,621 @@ describe('a search for several people in one go', () => {
         key: 'Test-90001',
       }),
     ).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+});
+
+describe('the AI assistant', () => {
+  /** What WikiTree answers here: one profile of someone made up. */
+  const profile = (extra: object = {}) =>
+    new Response(
+      JSON.stringify([
+        {
+          status: 0,
+          matches: [
+            {
+              Id: 1,
+              Name: 'Test-90001',
+              FirstName: 'Ada',
+              LastNameAtBirth: 'Test',
+              LastNameCurrent: 'Test',
+              BirthDate: '1850-03-12',
+              DeathDate: '1910-00-00',
+              BirthLocation: 'Ashford, Vermont',
+              Gender: 'Female',
+              IsLiving: 0,
+              Privacy: 60,
+              ...extra,
+            },
+          ],
+          total: 1,
+        },
+      ]),
+    );
+  const URL_OF_RECORD = 'https://www.wikitree.com/wiki/Test-90001';
+  const REF = { sourceId: 'wikitree', key: 'Test-90001' };
+  /** The proposal the tests make, as the page names it. */
+  const NAMED = { sessionId: 'session-1', ref: 'r1' };
+  const PROPOSED = { ...REF, from: 'proposal', proposal: NAMED };
+
+  const info = () => call<AiAssistantInfo>('getAiAssistant');
+  const state = () => call<AiSessionState>('getAiSession');
+  const begin = async (personId: string, sourceIds: string[] = ['wikitree'], generations = 0) => {
+    const plan = await call<AiSessionPlan | null>('planAiSession', { personId, generations });
+    return call<AiSessionStartResult>('startAiSession', {
+      personId,
+      generations,
+      sourceIds,
+      stamp: plan?.stamp ?? STAMP,
+    });
+  };
+  const proposals = () => call<AiProposalItem[]>('listAiProposals');
+  const inbox = (kind: 'kept' | 'declined' = 'kept') =>
+    call<RecordInboxPage>('listRecordInbox', { state: kind, personId: null, offset: 0, limit: 50 });
+  const keep = (personId: string, ref: object = PROPOSED) =>
+    call<MarkRecordResult>('keepRecord', { personId, ...ref });
+  const pageOf = (personId: string) => call<PersonPage>('getPersonPage', personId);
+  /** What the tree's file holds of an AI's reasons, as text. */
+  const keptReasons = () =>
+    session.tree.db.prepare('SELECT ai_json FROM record_mark').pluck().get() as string | null;
+  /** Writes into the tree's file as another program could, past everything the app checks. */
+  const tamper = (statement: string, ...values: (string | number | null)[]) => {
+    const db = session.tree.db;
+    db.exec("UPDATE change_state SET mode = 'replay'");
+    try {
+      db.prepare(statement).run(...values);
+    } finally {
+      db.exec("UPDATE change_state SET mode = 'idle'");
+    }
+  };
+
+  /** A tree with Ada Test, both notices agreed to, and WikiTree answering with her profile. */
+  const start = async () => {
+    await openNewTree();
+    await call('agreeToRecordSearch');
+    await call('agreeToAiAssistant');
+    answerOf = () => profile();
+    const ada = await addPerson('Ada', { birthDate: '12 MAR 1850', deathDate: '1910' });
+    return { ada };
+  };
+
+  /**
+   * A session for Ada in which the AI was given her profile and proposed
+   * that it is hers: with one reason that quotes the record, and one that
+   * quotes words the record does not have. A test calls the tools as an AI
+   * would; the page has no way to.
+   */
+  const proposed = async (ada: string, verdict = 'fits') => {
+    const started = await begin(ada);
+    if (!started.ok) throw new Error(started.problem.message);
+    const found = await ai.call('search_records', {
+      personId: ada,
+      sourceId: 'wikitree',
+      given: 'Ada',
+      surname: 'Test',
+      birthYear: 1850,
+      deathYear: null,
+    });
+    if (!found.ok) throw new Error(found.message);
+    const filed = await ai.call('propose_match', {
+      personId: ada,
+      ref: 'r1',
+      verdict,
+      confidence: 'high',
+      reasons: [
+        {
+          side: verdict === 'does-not-fit' ? 'against' : 'for',
+          text: 'The town is the one the tree has for her family.',
+          quote: 'ashford, vermont',
+        },
+        { side: 'for', text: 'The record names her husband.', quote: 'Josiah Marsh' },
+      ],
+    });
+    if (!filed.ok) throw new Error(filed.message);
+  };
+
+  it('is off until its notice is agreed to, and says that nothing can connect to it yet', async () => {
+    // It can be asked about before any tree is open.
+    expect(await info()).toMatchObject({
+      agreed: false,
+      searchAgreed: false,
+      canConnect: false,
+      session: null,
+      proposals: 0,
+      requestsPerSource: 10,
+      idleMinutes: 15,
+      maxCalls: 500,
+      logDays: 90,
+    });
+    expect((await info()).sources.map((source) => source.id).sort()).toEqual([
+      'open-archives',
+      'wikidata',
+      'wikitree',
+    ]);
+    await openNewTree();
+    const ada = await addPerson('Ada', { birthDate: '1850' });
+
+    const refused = await begin(ada);
+    expect(refused).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    expect((await call<AiAssistantInfo>('agreeToAiAssistant')).agreed).toBe(true);
+    // The notice of the search must be agreed to as well.
+    expect(await begin(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    await call('agreeToRecordSearch');
+    expect(await begin(ada)).toMatchObject({ ok: true });
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('starts a session from the plan the page was shown, follows it and stops it', async () => {
+    const { ada } = await start();
+    const plan = await call<AiSessionPlan | null>('planAiSession', {
+      personId: ada,
+      generations: 1,
+    });
+    expect(plan).toMatchObject({
+      agreed: true,
+      searchAgreed: true,
+      people: [{ personId: ada, name: 'Ada Test', generation: 0, leftOut: null }],
+      requestsPerSource: 10,
+      idleMinutes: 15,
+    });
+    expect(await call('planAiSession', { personId: MISSING, generations: 1 })).toBeNull();
+    // A start from a list that is no longer true is refused, with the list as it is now.
+    const stale = await call<AiSessionStartResult>('startAiSession', {
+      personId: ada,
+      generations: 1,
+      sourceIds: ['wikitree'],
+      stamp: STAMP,
+    });
+    expect(stale).toMatchObject({
+      ok: false,
+      problem: { kind: 'changed' },
+      plan: { stamp: plan?.stamp },
+    });
+    // And so is one for a source a session may not ask.
+    expect(await begin(ada, ['loc'])).toMatchObject({ ok: false, problem: { kind: 'source' } });
+
+    const started = await begin(ada, ['wikitree', 'wikidata']);
+    expect(started).toMatchObject({
+      ok: true,
+      session: {
+        sessionId: 'session-1',
+        status: 'running',
+        people: [{ personId: ada }],
+        sources: [
+          { id: 'wikitree', used: 0, limit: 10 },
+          { id: 'wikidata', used: 0, limit: 10 },
+        ],
+        calls: 0,
+        questions: [],
+        proposals: 0,
+      },
+    });
+    expect(await state()).toMatchObject({ session: { status: 'running' }, proposals: 0 });
+
+    expect(await call<AiSessionState>('stopAiSession')).toMatchObject({
+      session: { status: 'ended', ended: 'stopped', endedMessage: 'You stopped the session.' },
+    });
+    expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
+    // Starting, following and stopping asked nothing of the internet.
+    expect(askedOfSources).toEqual([]);
+  });
+
+  it('gives the page no way to call a tool', () => {
+    expect(API_METHODS.filter((method) => /tool|call|propose|ask/i.test(method))).toEqual([]);
+  });
+
+  it('lists what the AI proposed, with the record as it was given and held against the tree', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    const asked = askedOfSources.length;
+
+    expect(await state()).toMatchObject({ proposals: 1, session: { proposals: 1 } });
+    expect(await proposals()).toEqual([
+      {
+        sessionId: 'session-1',
+        ref: 'r1',
+        personId: ada,
+        personName: 'Ada Test',
+        sourceId: 'wikitree',
+        sourceName: 'WikiTree',
+        key: 'Test-90001',
+        title: 'Ada Test',
+        url: URL_OF_RECORD,
+        record: expect.objectContaining({ key: 'Test-90001', kind: 'person', sex: 'F' }),
+        fit: expect.objectContaining({ band: 'strong' }),
+        ai: {
+          verdict: 'fits',
+          confidence: 'high',
+          reasons: [
+            {
+              side: 'for',
+              text: 'The town is the one the tree has for her family.',
+              // The words as they stand in the record.
+              quote: 'Ashford, Vermont',
+              field: 'birth place',
+            },
+          ],
+          proposedAt: expect.any(Number),
+        },
+        // The reason whose quote is not in the record is counted, and not shown.
+        dropped: 1,
+        mark: null,
+        keptAsProposed: false,
+        attached: false,
+        mayBeLiving: false,
+        readAt: expect.any(Number),
+      },
+    ]);
+    expect(JSON.stringify(await proposals())).not.toContain('Josiah Marsh');
+    // Listing sent nothing, and nothing is in the tree.
+    expect(askedOfSources).toHaveLength(asked);
+    expect((await inbox()).total).toBe(0);
+  });
+
+  it('puts what the AI says does not fit last', async () => {
+    const { ada } = await start();
+    await proposed(ada, 'does-not-fit');
+    await proposed(ada, 'may-fit');
+    await proposed(ada, 'does-not-fit');
+
+    expect((await proposals()).map((item) => [item.sessionId, item.ai.verdict])).toEqual([
+      ['session-2', 'may-fit'],
+      ['session-3', 'does-not-fit'],
+      ['session-1', 'does-not-fit'],
+    ]);
+  });
+
+  it('keeps a proposed record with what the AI said of it, as one step that Undo takes back', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    const asked = askedOfSources.length;
+    const [item] = await proposals();
+
+    const kept = await keep(ada);
+    if (!kept.ok) throw new Error(kept.problem.message);
+    expect(kept.tree).toMatchObject({ inbox: 1, undo: 'Keep a record for later' });
+
+    const listed = await inbox();
+    expect(listed.items).toMatchObject([
+      {
+        personId: ada,
+        key: 'Test-90001',
+        record: item?.record,
+        readAt: item?.readAt,
+        canAttach: true,
+        problem: '',
+        ai: {
+          verdict: 'fits',
+          confidence: 'high',
+          reasons: [
+            {
+              side: 'for',
+              text: 'The town is the one the tree has for her family.',
+              quote: 'Ashford, Vermont',
+              field: 'birth place',
+            },
+          ],
+          proposedAt: item?.ai.proposedAt,
+        },
+        aiProblem: '',
+      },
+    ]);
+    // The reason that did not pass the check is not in the tree's file.
+    expect(keptReasons()).not.toContain('Josiah Marsh');
+    // The proposal stays listed, and says that the result is kept as it was proposed.
+    expect(await proposals()).toMatchObject([{ ref: 'r1', mark: 'kept', keptAsProposed: true }]);
+
+    const undone = await call<TreeState>('undo');
+    expect(undone.inbox).toBe(0);
+    expect((await inbox()).total).toBe(0);
+    expect(await proposals()).toMatchObject([{ ref: 'r1', mark: null, keptAsProposed: false }]);
+    const redone = await call<TreeState>('redo');
+    expect(redone.inbox).toBe(1);
+    expect((await inbox()).items[0]?.ai?.reasons).toHaveLength(1);
+    // None of this asked anything of the internet.
+    expect(askedOfSources).toHaveLength(asked);
+  });
+
+  it('keeps, cites and compares the reading the AI was given, whatever a later search reads', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    // The source says something else now, and a search of the user reads that.
+    answerOf = () => profile({ BirthLocation: 'Elders, Noordland' });
+    const later = await call<RecordSearchResult>('searchRecords', {
+      personId: ada,
+      sourceId: 'wikitree',
+      query: { given: 'Ada', surname: 'Test', birthYear: null, deathYear: null },
+      offset: 0,
+    });
+    expect(JSON.stringify(later)).toContain('Elders, Noordland');
+
+    const compared = await call<CompareRecordResult>('compareRecord', {
+      personId: ada,
+      ...PROPOSED,
+    });
+    expect(JSON.stringify(compared)).toContain('Ashford, Vermont');
+    expect(JSON.stringify(compared)).not.toContain('Elders, Noordland');
+
+    const kept = await keep(ada);
+    expect(kept.ok).toBe(true);
+    const [held] = (await inbox()).items;
+    expect(JSON.stringify(held?.record)).toContain('Ashford, Vermont');
+    expect(held?.ai?.reasons.map((reason) => reason.quote)).toEqual(['Ashford, Vermont']);
+
+    const attached = await call<AttachRecordResult>('attachRecord', { personId: ada, ...PROPOSED });
+    if (!attached.ok) throw new Error(attached.problem.message);
+    const citation = (await pageOf(ada)).citations.find(({ id }) => id === attached.citationId);
+    expect(citation?.text).toContain('Ashford, Vermont');
+    expect(await proposals()).toMatchObject([{ mark: 'kept', attached: true }]);
+
+    // Kept again as the search reads it now, the result loses what the AI
+    // said: that was said of the other reading.
+    expect((await keep(ada, REF)).ok).toBe(true);
+    const [again] = (await inbox()).items;
+    expect(JSON.stringify(again?.record)).toContain('Elders, Noordland');
+    expect(again).toMatchObject({ ai: null, aiProblem: '' });
+    expect(keptReasons()).toBeNull();
+    // The proposal says so: what is kept is not what it proposed, and it can be kept in its place.
+    expect(await proposals()).toMatchObject([{ mark: 'kept', keptAsProposed: false }]);
+    expect((await keep(ada)).ok).toBe(true);
+    expect(await proposals()).toMatchObject([{ mark: 'kept', keptAsProposed: true }]);
+    expect(JSON.stringify((await inbox()).items[0]?.record)).toContain('Ashford, Vermont');
+    expect((await inbox()).total).toBe(1);
+  });
+
+  it('says of each proposal about one record whether it is the one the tree keeps', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    await proposed(ada, 'may-fit');
+    const second = { ...REF, from: 'proposal', proposal: { sessionId: 'session-2', ref: 'r1' } };
+
+    expect((await keep(ada, second)).ok).toBe(true);
+
+    // Both are about the same record of the same person, and the tree has one mark of it.
+    expect(
+      (await proposals()).map((item) => [item.sessionId, item.mark, item.keptAsProposed]),
+    ).toEqual([
+      ['session-2', 'kept', true],
+      ['session-1', 'kept', false],
+    ]);
+    expect((await inbox()).items[0]?.ai?.verdict).toBe('may-fit');
+    // Keeping the other puts what it said in the place of that, as one step.
+    expect((await keep(ada)).ok).toBe(true);
+    expect((await inbox()).items[0]?.ai?.verdict).toBe('fits');
+    expect((await inbox()).total).toBe(1);
+    await call('undo');
+    expect((await inbox()).items[0]?.ai?.verdict).toBe('may-fit');
+  });
+
+  it('takes facts over from the record a proposal is about', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+
+    const compared = await call<CompareRecordResult>('compareRecord', {
+      personId: ada,
+      ...PROPOSED,
+    });
+    if (!compared.ok) throw new Error(compared.problem.message);
+    const death = compared.comparison.facts.find((fact) => fact.type === 'death');
+    const birth = compared.comparison.facts.find((fact) => fact.type === 'birth');
+    const target = birth?.targets[0];
+    expect(target?.place).toMatchObject({ tree: '', record: 'Ashford, Vermont', canTake: true });
+    expect(death).toBeDefined();
+
+    const taken = await call<TakeRecordFactsResult>('takeRecordFacts', {
+      personId: ada,
+      ...PROPOSED,
+      stamp: compared.comparison.stamp,
+      takes: [{ type: 'birth', eventId: target?.eventId ?? null, date: false, place: true }],
+    });
+    if (!taken.ok) throw new Error(taken.problem.message);
+    expect(taken.comparison?.attached).toBe(true);
+    const page = await pageOf(ada);
+    expect(page.events.find((event) => event.type === 'birth')?.placeText).toBe('Ashford, Vermont');
+  });
+
+  it('acts on a proposal only as it is named, and never on another copy in its place', async () => {
+    const { ada } = await start();
+    const edith = await addPerson('Edith', { birthDate: '1850' });
+    await proposed(ada);
+    // The search of the session showed the same record, so there is a copy to fall back on. It is not used.
+    const named = (proposal: object, extra: object = {}) =>
+      keep(ada, { ...REF, from: 'proposal', proposal, ...extra });
+
+    for (const result of [
+      await named({ sessionId: 'session-9', ref: 'r1' }),
+      await named({ sessionId: 'session-1', ref: 'r2' }),
+      await named(NAMED, { key: 'Test-90002' }),
+      await named(NAMED, { sourceId: 'wikidata' }),
+      await keep(edith),
+      await call<MarkRecordResult>('declineRecord', { personId: edith, ...PROPOSED }),
+    ]) {
+      expect(result).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    }
+    expect(
+      await call<AttachRecordResult>('attachRecord', {
+        personId: ada,
+        ...REF,
+        from: 'proposal',
+        proposal: { sessionId: 'session-9', ref: 'r1' },
+      }),
+    ).toMatchObject({ ok: false, problem: { kind: 'record' } });
+    // A proposal is named exactly when the copy that is meant is a proposal's.
+    expect((await errorOf('keepRecord', { personId: ada, ...REF, from: 'proposal' })).code).toBe(
+      'invalid',
+    );
+    expect((await errorOf('keepRecord', { personId: ada, ...REF, proposal: NAMED })).code).toBe(
+      'invalid',
+    );
+    expect(
+      (await errorOf('attachRecord', { personId: ada, ...REF, from: 'inbox', proposal: NAMED }))
+        .code,
+    ).toBe('invalid');
+    expect((await inbox()).total).toBe(0);
+    expect((await inbox('declined')).total).toBe(0);
+
+    // Once it is forgotten, it cannot be acted on either.
+    expect(await call<AiSessionState>('dismissAiProposal', NAMED)).toMatchObject({ proposals: 0 });
+    expect(await proposals()).toEqual([]);
+    expect(await keep(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+
+  it('turns a proposed record down like any result, and keeps none of the reasons', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    expect((await keep(ada)).ok).toBe(true);
+
+    const declined = await call<MarkRecordResult>('declineRecord', { personId: ada, ...PROPOSED });
+    if (!declined.ok) throw new Error(declined.problem.message);
+
+    expect(declined.tree.inbox).toBe(0);
+    expect((await inbox('declined')).items).toMatchObject([
+      { key: 'Test-90001', record: null, ai: null, aiProblem: '' },
+    ]);
+    expect(keptReasons()).toBeNull();
+    expect(await proposals()).toMatchObject([{ mark: 'declined' }]);
+    // Undo brings back what was kept, with what the AI said.
+    await call('undo');
+    expect((await inbox()).items[0]?.ai?.verdict).toBe('fits');
+  });
+
+  it('shows no reason that a file holds and the kept record does not have', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    expect((await keep(ada)).ok).toBe(true);
+    const held = JSON.parse(keptReasons() ?? '') as { reasons: object[] };
+
+    // Words put beside the record as if it said them.
+    tamper(
+      'UPDATE record_mark SET ai_json = ?',
+      JSON.stringify({
+        ...held,
+        reasons: [
+          ...held.reasons,
+          { side: 'for', text: 'The record says who her father was.', quote: 'daughter of Ezra' },
+        ],
+      }),
+    );
+    const [extra] = (await inbox()).items;
+    expect(extra?.ai?.reasons.map((reason) => reason.quote)).toEqual(['Ashford, Vermont']);
+
+    // With no reason left that quotes the record, nothing of the AI is shown. The record stays usable.
+    tamper(
+      'UPDATE record_mark SET ai_json = ?',
+      JSON.stringify({
+        ...held,
+        reasons: [{ side: 'for', text: 'She is the one.', quote: 'daughter of Ezra' }],
+      }),
+    );
+    const [none] = (await inbox()).items;
+    expect(none).toMatchObject({ ai: null, canAttach: true, problem: '' });
+    expect(none?.aiProblem).toContain('cannot be shown');
+    expect(JSON.stringify(none)).not.toContain('daughter of Ezra');
+
+    tamper('UPDATE record_mark SET ai_json = ?', '<script>');
+    expect((await inbox()).items[0]).toMatchObject({ ai: null, canAttach: true });
+  });
+
+  it('lists a proposal for someone who came to count as living, and still sends nothing', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    const asked = askedOfSources.length;
+
+    await call('updatePerson', ada, { living: true });
+
+    expect(await proposals()).toMatchObject([{ personId: ada, mayBeLiving: true }]);
+    expect((await keep(ada)).ok).toBe(true);
+    expect((await inbox()).items[0]).toMatchObject({ mayBeLiving: true });
+    // The session gives the AI nothing of them any more.
+    expect(await ai.call('get_record', { ref: 'r1' })).toMatchObject({ ok: false });
+    expect(askedOfSources).toHaveLength(asked);
+  });
+
+  it('forgets the session and what it proposed when the tree closes', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+
+    await call('closeTree');
+
+    expect(await state()).toMatchObject({ session: null, proposals: 0 });
+    expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
+    expect((await errorOf('listAiProposals')).code).toBe('no-tree');
+    expect((await errorOf('planAiSession', { personId: ada, generations: 0 })).code).toBe(
+      'no-tree',
+    );
+  });
+
+  it('forgets them too when a backup is put in the place of the tree', async () => {
+    const { ada } = await start();
+    const backup = await call<{ created: { name: string } | null }>('backupNow');
+    await proposed(ada);
+    expect((await state()).proposals).toBe(1);
+
+    await call('restoreBackup', backup.created?.name ?? '');
+
+    expect(await state()).toMatchObject({ session: null, proposals: 0 });
+    expect(await proposals()).toEqual([]);
+    expect(await keep(ada)).toMatchObject({ ok: false, problem: { kind: 'record' } });
+  });
+
+  it('ends the session and forgets the proposals when it is turned off; what the tree keeps stays', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    expect((await keep(ada)).ok).toBe(true);
+
+    const off = await call<AiAssistantInfo>('turnOffAiAssistant');
+
+    expect(off).toMatchObject({ agreed: false, session: null, proposals: 0 });
+    expect(await proposals()).toEqual([]);
+    expect(await begin(ada)).toMatchObject({ ok: false, problem: { kind: 'notice' } });
+    // The kept result keeps its reasons, and the log is still there to read.
+    expect((await inbox()).items[0]?.ai?.verdict).toBe('fits');
+    const log = await call<AiActivityPage>('listAiActivity', { offset: 0, limit: 50 });
+    expect(log.items[0]?.what).toBe(
+      'The session ended: the assistant was turned off. 2 calls, 1 question to services, 1 proposal.',
+    );
+  });
+
+  it('hands the activity log over in words, with or without an open tree, and clears it', async () => {
+    const { ada } = await start();
+    await proposed(ada);
+    await call('stopAiSession');
+
+    const log = await call<AiActivityPage>('listAiActivity', { offset: 0, limit: 50 });
+    expect(log.total).toBe(5);
+    expect(log.items.map((item) => item.what).reverse()).toEqual([
+      'A session started for Ada Test: 1 person. It may ask WikiTree.',
+      'The AI asked WikiTree for "Ada Test", born 1850, for Ada Test: 1 record given.',
+      'The AI was given record Test-90001 of WikiTree, found for Ada Test.',
+      'The AI proposed that record Test-90001 of WikiTree is of Ada Test, and said it is sure: 1 reason passed the check, 1 did not.',
+      'The session ended: you stopped it. 2 calls, 1 question to services, 1 proposal.',
+    ]);
+    expect(log.items.every((item) => item.thisTree)).toBe(true);
+    // No text of the record, and no word of a reason.
+    expect(JSON.stringify(log)).not.toContain('Ashford');
+    expect(JSON.stringify(log)).not.toContain('town');
+
+    await call('closeTree');
+    const closed = await call<AiActivityPage>('listAiActivity', { offset: 0, limit: 2 });
+    expect(closed.total).toBe(5);
+    expect(closed.items).toHaveLength(2);
+    expect(JSON.stringify(closed)).not.toContain('Ada');
+
+    expect(await call<AiActivityPage>('clearAiActivity')).toEqual({ items: [], total: 0 });
+    expect((await call<AiActivityPage>('listAiActivity', { offset: 0, limit: 50 })).total).toBe(0);
+  });
+
+  it('clears the log under a session that is under way, which then writes into the empty log', async () => {
+    const { ada } = await start();
+    expect((await begin(ada)).ok).toBe(true);
+
+    expect(await call<AiActivityPage>('clearAiActivity')).toEqual({ items: [], total: 0 });
+    expect(await state()).toMatchObject({ session: { status: 'running' } });
+    expect(await ai.call('list_sources', {})).toMatchObject({ ok: true });
+
+    // What it writes next is an entry of the open tree, and is shown as one.
+    expect(await call<AiActivityPage>('listAiActivity', { offset: 0, limit: 50 })).toMatchObject({
+      total: 1,
+      items: [{ thisTree: true, what: 'The AI asked which services it may ask.' }],
+    });
   });
 });

@@ -13,7 +13,7 @@ import {
   type ConnectorManifest,
 } from '@rulz/connectors';
 import type { EventRecord, PersonRecord, TextRecord } from '@rulz/core';
-import { mayShareWithAi, sharedRecordOf } from './record';
+import { mayShareWithAi, recordTextsOf, sharedRecordOf } from './record';
 
 const marriage: EventRecord = {
   connectorId: 'open-archives',
@@ -282,5 +282,20 @@ describe('a record as an AI assistant gets it', () => {
         reason: 'not-of-source',
       });
     }
+  });
+});
+
+describe('the texts of a record, for checking a quote on the screen of the user', () => {
+  it('are those that are passed on, for a source whose records are', () => {
+    const shared = sharedRecordOf(marriage, openArchivesManifest);
+    expect(shared.ok && shared.record).toEqual(recordTextsOf(marriage, openArchivesManifest));
+  });
+
+  it('are made whatever the terms of the source say, since nothing of them is passed on', () => {
+    const { mayShareWithAi: _left, ...unread } = openArchivesManifest;
+    expect(sharedRecordOf(marriage, unread).ok).toBe(false);
+    expect(recordTextsOf(marriage, unread).fields).toEqual(
+      recordTextsOf(marriage, openArchivesManifest).fields,
+    );
   });
 });

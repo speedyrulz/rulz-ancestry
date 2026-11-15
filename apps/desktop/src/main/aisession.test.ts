@@ -6,6 +6,7 @@ import {
   addPersonEvent,
   createFamily,
   createPerson,
+  deletePerson,
   listAiActivity,
   listNames,
   listPersonEvents,
@@ -487,6 +488,34 @@ describe('outside a session', () => {
     }
     expect(status()).toMatchObject({ status: 'ended', ended: 'stopped', idleAt: null, calls: 0 });
     expect(asked).toEqual([]);
+  });
+
+  it('is where a session is once the page that shows it is gone, and it says that this is why', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    await ai.call('search_records', question(marten));
+    await ai.call('propose_match', {
+      personId: marten,
+      ref: 'r1',
+      verdict: 'fits',
+      confidence: 'high',
+      reasons: [{ side: 'for', text: 'He was born in the same place.', quote: 'Zwolle' }],
+    });
+
+    ai.stop('page');
+
+    expect(await ai.call('get_session', {})).toMatchObject({ ok: false, reason: 'no-session' });
+    expect(status()).toMatchObject({
+      status: 'ended',
+      ended: 'page',
+      endedMessage: 'The window of the app was loaded again, so the session ended.',
+    });
+    // What it proposed stays for the user to look at.
+    expect(ai.proposals()).toHaveLength(1);
+    expect(ai.activity({ offset: 0, limit: 1 }, tree).items[0]?.what).toBe(
+      'The session ended: the window of the app was loaded again. 2 calls, 1 question to services, 1 proposal.',
+    );
   });
 
   it('is where a session is once its tree closed', async () => {
@@ -1569,5 +1598,242 @@ describe('a record read again, and a proposal about it', () => {
     ai.clear();
     expect(ai.proposals()).toEqual([]);
     expect(ai.status()).toBeNull();
+  });
+});
+
+describe('the proposals the user is shown', () => {
+  const proposal = (personId: string, ref: string, extra: object = {}) => ({
+    personId,
+    ref,
+    verdict: 'fits',
+    confidence: 'high',
+    reasons: [{ side: 'for', text: 'He was born in the same place.', quote: 'Zwolle' }],
+    ...extra,
+  });
+
+  /** A session for one person with one proposal about the first record WikiTree gave. */
+  async function proposedIn(personId: string): Promise<void> {
+    started(personId);
+    await ai.call('search_records', question(personId));
+    valueOf(await ai.call('propose_match', proposal(personId, 'r1')));
+  }
+
+  it('hold the record as it read when the AI was given it, and when it was read', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+
+    const [held] = ai.proposals();
+    expect(held).toMatchObject({
+      sessionId: 'session-1',
+      ref: 'r1',
+      external: {
+        connectorId: 'wikitree',
+        key: 'Veldkamp-90001',
+        kind: 'person',
+        url: 'https://www.wikitree.com/wiki/Veldkamp-90001',
+      },
+    });
+    expect(Math.abs((held?.readAt ?? 0) - Date.now())).toBeLessThan(60_000);
+    expect(ai.proposal({ sessionId: 'session-1', ref: 'r1' })).toEqual(held);
+    // Another session, or another reference, names nothing.
+    expect(ai.proposal({ sessionId: 'session-2', ref: 'r1' })).toBeNull();
+    expect(ai.proposal({ sessionId: 'session-1', ref: 'r2' })).toBeNull();
+  });
+
+  it('stay when another session starts, and are told apart by their session', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+    const before = ai.state().proposalsRevision;
+
+    ahead += 1000;
+    await proposedIn(marten);
+
+    expect(ai.proposals().map(({ sessionId, ref }) => [sessionId, ref])).toEqual([
+      ['session-2', 'r1'],
+      ['session-1', 'r1'],
+    ]);
+    expect(ai.state()).toMatchObject({ proposals: 2, session: { sessionId: 'session-2' } });
+    expect(ai.state().proposalsRevision).toBeGreaterThan(before);
+    // The session itself counts its own.
+    expect(status().proposals).toBe(1);
+
+    ai.clear();
+    expect(ai.proposals()).toEqual([]);
+    expect(ai.state()).toMatchObject({ session: null, proposals: 0 });
+  });
+
+  it('are all forgotten when the assistant is turned off', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+    await proposedIn(marten);
+
+    ai.withdraw();
+
+    expect(ai.proposals()).toEqual([]);
+    expect(ai.state().session).toBeNull();
+  });
+
+  it('can be forgotten one at a time, of the session or of one before it', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+    await proposedIn(marten);
+    const before = ai.state().proposalsRevision;
+
+    expect(ai.dismiss({ sessionId: 'session-1', ref: 'r1' })).toBe(true);
+    expect(ai.proposals().map(({ sessionId }) => sessionId)).toEqual(['session-2']);
+    expect(ai.state().proposalsRevision).toBe(before + 1);
+    // Forgetting it again, or one that never was, changes nothing.
+    expect(ai.dismiss({ sessionId: 'session-1', ref: 'r1' })).toBe(false);
+    expect(ai.dismiss({ sessionId: 'session-9', ref: 'r1' })).toBe(false);
+    expect(ai.state().proposalsRevision).toBe(before + 1);
+
+    expect(ai.dismiss({ sessionId: 'session-2', ref: 'r1' })).toBe(true);
+    expect(ai.proposals()).toEqual([]);
+    // Nothing of it reached the tree.
+    expect(tree.db.prepare('SELECT count(*) FROM record_mark').pluck().get()).toBe(0);
+  });
+
+  it('are not listed for someone who is no longer in the tree, and come back with them', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+
+    deletePerson(tree, marten);
+    expect(ai.proposals()).toEqual([]);
+    expect(ai.state().proposals).toBe(0);
+
+    tree.undo();
+    expect(ai.proposals()).toHaveLength(1);
+  });
+
+  it('are not listed once the tree is no longer the open one', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    await proposedIn(marten);
+
+    open = false;
+
+    expect(ai.proposals()).toEqual([]);
+  });
+});
+
+describe('the assistant as the page is told of it', () => {
+  it('says whether it is on, what a session may ask, and that nothing can connect yet', () => {
+    expect(ai.info()).toMatchObject({
+      agreed: false,
+      searchAgreed: false,
+      canConnect: false,
+      session: null,
+      proposals: 0,
+      requestsPerSource: AI_SESSION_REQUESTS,
+      idleMinutes: 15,
+      maxCalls: AI_SESSION_CALLS,
+      logDays: 90,
+    });
+    expect(
+      ai
+        .info()
+        .sources.map((source) => source.id)
+        .sort(),
+    ).toEqual(['open-archives', 'wikidata', 'wikitree']);
+
+    agreeToBoth();
+    expect(ai.info()).toMatchObject({ agreed: true, searchAgreed: true });
+  });
+});
+
+describe('the activity log as the user reads it', () => {
+  it('says in words what was asked and given, with names of the open tree and no text of a record', async () => {
+    const { marten, tessel } = family();
+    agreeToBoth();
+    started(marten);
+    await ai.call('get_session', {});
+    await ai.call('search_tree', { query: 'Veldkamp' });
+    await ai.call('get_person', { personId: marten });
+    await ai.call('get_person', { personId: tessel });
+    await ai.call('get_relatives', { personId: 'nobody' });
+    await ai.call('search_records', question(marten));
+    await ai.call('search_records', question(marten, { surname: 'Brouwer' }));
+    await ai.call('get_record', { ref: 'r9' });
+    await ai.call('propose_match', {
+      personId: marten,
+      ref: 'r1',
+      verdict: 'may-fit',
+      confidence: 'low',
+      reasons: [
+        { side: 'for', text: 'He was born in the same place.', quote: 'Zwolle' },
+        { side: 'for', text: 'The record names his wife.', quote: 'Jikke Zandstra' },
+      ],
+    });
+    ai.stop();
+
+    const page = ai.activity({ offset: 0, limit: 50 }, tree);
+    expect(page.total).toBe(page.items.length);
+    expect(page.items.every((item) => item.thisTree && item.sessionId === 'session-1')).toBe(true);
+    expect(page.items.map((item) => item.what).reverse()).toEqual([
+      'A session started for Marten Veldkamp and 2 generations of their ancestors: 3 people. It may ask WikiTree.',
+      'The AI asked what the session is for.',
+      'The AI searched the tree for "Veldkamp": 3 people given.',
+      'The AI read Marten Veldkamp.',
+      'The AI asked for Tessel Oort. Nothing was given: they may be living.',
+      'The AI asked for the relatives of someone who is not in the tree. Nothing was given.',
+      'The AI asked WikiTree for "Marten Veldkamp", born 1850, for Marten Veldkamp: 1 record given.',
+      'The AI was given record Veldkamp-90001 of WikiTree, found for Marten Veldkamp.',
+      'The AI asked WikiTree for "Marten Brouwer", born 1850, for Marten Veldkamp: not sent, since the name or the years were too far from what the tree has for the person.',
+      'The AI asked for a record that it is not given.',
+      'The AI proposed that record Veldkamp-90001 of WikiTree may be of Marten Veldkamp, and said it is unsure: 1 reason passed the check, 1 did not.',
+      'The session ended: you stopped it. 9 calls, 1 question to services, 1 proposal.',
+    ]);
+    // Nothing a record says, and nothing a reason says, is in it.
+    expect(JSON.stringify(page)).not.toContain('Zwolle');
+    expect(JSON.stringify(page)).not.toContain('same place');
+  });
+
+  it('names nobody for an entry of another tree, and is read without an open tree', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    await ai.call('get_person', { personId: marten });
+    ai.stop();
+
+    const other = openTree(':memory:');
+    try {
+      const page = ai.activity({ offset: 0, limit: 50 }, other);
+      expect(page.items.every((item) => !item.thisTree)).toBe(true);
+      expect(page.items.map((item) => item.what)).toContain(
+        'The AI read a person of another tree.',
+      );
+      expect(JSON.stringify(page)).not.toContain('Veldkamp');
+    } finally {
+      other.close();
+    }
+    const closed = ai.activity({ offset: 0, limit: 50 }, null);
+    expect(closed.items).toHaveLength(3);
+    expect(JSON.stringify(closed)).not.toContain('Veldkamp');
+  });
+
+  it('is handed over in pages, the latest first, and can be cleared', async () => {
+    const { marten } = family();
+    agreeToBoth();
+    started(marten);
+    for (let call = 0; call < 5; call += 1) await ai.call('list_sources', {});
+
+    const first = ai.activity({ offset: 0, limit: 2 }, tree);
+    const second = ai.activity({ offset: 2, limit: 2 }, tree);
+    expect(first.total).toBe(6);
+    expect(first.items).toHaveLength(2);
+    expect(first.items[0]?.id ?? 0).toBeGreaterThan(second.items[0]?.id ?? 0);
+    // What does not say a page is taken as the least one.
+    expect(ai.activity({ offset: -5, limit: 0 }, tree).items).toHaveLength(1);
+
+    ai.clearActivity();
+    expect(ai.activity({ offset: 0, limit: 50 }, tree)).toEqual({ items: [], total: 0 });
+    // A session that is under way goes on, and writes into the empty log.
+    expect(await ai.call('list_sources', {})).toMatchObject({ ok: true });
+    expect(ai.activity({ offset: 0, limit: 50 }, tree).total).toBe(1);
   });
 });

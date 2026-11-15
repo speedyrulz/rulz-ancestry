@@ -1883,3 +1883,75 @@ ul.run-list {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+
+/* The optional AI assistant */
+
+/* The line in the notice bar while a session is under way: set apart from the other notices. */
+.notice-bar .ai-line {
+  border-left: 4px solid var(--accent);
+}
+
+/* What an AI said of a record: told apart from the app's own label by its outline. */
+.badge.ai {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: inherit;
+}
+
+.ai-reasons {
+  margin: 0.2rem 0 0.3rem;
+  padding-left: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.ai-reasons li {
+  margin-bottom: 0.15rem;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.ai-notice > ul > li {
+  margin-bottom: 0.4rem;
+}
+
+.ai-session {
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-questions {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.ai-questions li {
+  margin-bottom: 0.2rem;
+}
+
+/* The activity log: the entries of one session close together, a little room between sessions. */
+.ai-log-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+.ai-log-list li {
+  margin-top: 0.15rem;
+}
+
+.ai-log-list li.ai-log-first {
+  margin-top: 0.75rem;
+}
+
+.ai-log-list li:first-child {
+  margin-top: 0;
+}
+
+.ai-log-list time {
+  margin-right: 0.5rem;
+  color: var(--muted);
+  white-space: nowrap;
+}

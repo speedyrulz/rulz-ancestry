@@ -127,7 +127,13 @@ import type {
   TreePlaceInfo,
   TreeState,
 } from '../shared/ipc';
-import { RECORD_INBOX_MAX, RECORD_RUN_MAX_GENERATIONS } from '../shared/ipc';
+import {
+  AI_ACTIVITY_PAGE_MAX,
+  AI_SESSION_MAX_GENERATIONS,
+  RECORD_INBOX_MAX,
+  RECORD_RUN_MAX_GENERATIONS,
+} from '../shared/ipc';
+import type { AiSessionService } from './aisession';
 import type { GazetteerService } from './gazetteer';
 import { RecordRun } from './recordrun';
 import type { RecordSearchService } from './records';
@@ -317,14 +323,34 @@ const textQuery = z.strictObject({
 const siteId = z.string().regex(/^[a-z0-9-]{1,40}$/);
 
 /** Which copy of a result is meant: left out for the one a search showed. */
-const recordCopy = z.enum(['search', 'inbox']).optional();
+const recordCopy = z.enum(['search', 'inbox', 'proposal']).optional();
 
-/** A result as the page names it: by its source and its key, never by what it says. */
-const recordRef = z.strictObject({
+/** A proposal of the AI assistant as the page names it: by its session and the reference of its record. */
+const proposalRef = z.strictObject({
+  sessionId: z.string().regex(/^[0-9a-zA-Z-]{1,64}$/),
+  ref: z.string().regex(/^r[1-9]\d{0,8}$/),
+});
+
+/** The parts of a request that say which result is meant; never what the result says. */
+const recordRefFields = {
   personId: id,
   sourceId: siteId,
   key: z.string().min(1).max(200),
   from: recordCopy,
+  proposal: proposalRef.optional(),
+};
+
+/** A proposal is named exactly when the copy that is meant is a proposal's. */
+const namesItsCopy = (request: { from?: string | undefined; proposal?: unknown }) =>
+  (request.from === 'proposal') === (request.proposal !== undefined);
+
+/** A result as the page names it: by its source and its key, never by what it says. */
+const recordRef = z.strictObject(recordRefFields).refine(namesItsCopy);
+
+/** Who a session of the AI assistant would be for. */
+const aiSessionRequest = z.strictObject({
+  personId: id,
+  generations: z.number().int().min(0).max(AI_SESSION_MAX_GENERATIONS),
 });
 
 /** Whose ancestors a search for several people is for, and how far back. */
@@ -424,13 +450,17 @@ export function createHandlers(
   platform: Platform,
   gazetteer: GazetteerService,
   records: RecordSearchService,
+  /** The optional AI assistant: its session, its proposals and its log. */
+  ai: AiSessionService,
   /** The search for several people. Handed in by tests that set its pace. */
   runs: RecordRun = new RecordRun(records),
 ): ApiHandlers {
   // What was found for one tree is not kept for the next, however the tree is
-  // left; and a search for several people ends with its tree.
+  // left; a search for several people ends with its tree, and so does a
+  // session of the AI assistant, with what it proposed.
   session.whenTreeCloses(() => {
     runs.clear();
+    ai.clear();
     records.reset();
   });
 
@@ -766,24 +796,23 @@ export function createHandlers(
 
     takeRecordFacts: define<'takeRecordFacts'>(
       z.tuple([
-        z.strictObject({
-          personId: id,
-          sourceId: siteId,
-          key: z.string().min(1).max(200),
-          from: recordCopy,
-          stamp: z.string().regex(/^[0-9a-f]{64}$/),
-          takes: z
-            .array(
-              z.strictObject({
-                type: z.enum(TAKE_TYPES),
-                eventId: id.nullable(),
-                date: z.boolean(),
-                place: z.boolean(),
-              }),
-            )
-            .min(1)
-            .max(TAKE_TYPES.length),
-        }),
+        z
+          .strictObject({
+            ...recordRefFields,
+            stamp: z.string().regex(/^[0-9a-f]{64}$/),
+            takes: z
+              .array(
+                z.strictObject({
+                  type: z.enum(TAKE_TYPES),
+                  eventId: id.nullable(),
+                  date: z.boolean(),
+                  place: z.boolean(),
+                }),
+              )
+              .min(1)
+              .max(TAKE_TYPES.length),
+          })
+          .refine(namesItsCopy),
       ]),
       (request) => {
         const found = records.take(session.tree, request);
@@ -848,6 +877,77 @@ export function createHandlers(
     ),
 
     stopRecordRun: define<'stopRecordRun'>(none, () => runs.stop()),
+
+    // The optional AI assistant. The page turns it on and off, starts and
+    // stops a session, and reads how it stands. No function here calls a
+    // tool: an AI reaches a session by another way, and the page by none.
+    getAiAssistant: define<'getAiAssistant'>(none, () => ai.info()),
+
+    agreeToAiAssistant: define<'agreeToAiAssistant'>(none, () => {
+      ai.agree();
+      return ai.info();
+    }),
+
+    turnOffAiAssistant: define<'turnOffAiAssistant'>(none, () => {
+      ai.withdraw();
+      return ai.info();
+    }),
+
+    // Who a session is for is worked out here from the tree, for the plan
+    // and again for the start; the page says whose ancestors and how far back.
+    planAiSession: define<'planAiSession'>(z.tuple([aiSessionRequest]), (request) =>
+      ai.plan(session.tree, request),
+    ),
+
+    startAiSession: define<'startAiSession'>(
+      z.tuple([
+        aiSessionRequest.extend({
+          sourceIds: z.array(siteId).min(1).max(10),
+          stamp: z.string().regex(/^[0-9a-f]{64}$/),
+        }),
+      ]),
+      (request) => {
+        const tree = session.tree;
+        return ai.start(tree, request, () => session.holds(tree));
+      },
+    ),
+
+    getAiSession: define<'getAiSession'>(none, () => ai.state()),
+
+    stopAiSession: define<'stopAiSession'>(none, () => {
+      ai.stop();
+      return ai.state();
+    }),
+
+    // A proposal is listed with the record it is about, which the session
+    // holds; the page names a proposal and never supplies one.
+    listAiProposals: define<'listAiProposals'>(none, () =>
+      records.proposalInbox(session.tree, ai.proposals()),
+    ),
+
+    dismissAiProposal: define<'dismissAiProposal'>(z.tuple([proposalRef]), (request) => {
+      ai.dismiss(request);
+      return ai.state();
+    }),
+
+    listAiActivity: define<'listAiActivity'>(
+      z.tuple([
+        z.strictObject({
+          offset: z.number().int().min(0).max(100_000),
+          limit: z.number().int().min(1).max(AI_ACTIVITY_PAGE_MAX),
+        }),
+      ]),
+      (request) => ai.activity(request, session.isOpen ? session.tree : null),
+    ),
+
+    clearAiActivity: define<'clearAiActivity'>(none, () => {
+      ai.clearActivity();
+      // The log as it stands now: a session that is under way can have written to it again.
+      return ai.activity(
+        { offset: 0, limit: AI_ACTIVITY_PAGE_MAX },
+        session.isOpen ? session.tree : null,
+      );
+    }),
 
     openRecordLink: define<'openRecordLink'>(
       z.tuple([z.strictObject({ personId: id, linkId: siteId, query: personQuery })]),

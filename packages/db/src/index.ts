@@ -166,6 +166,7 @@ export {
 } from './duplicates';
 export { mergeObstacle, mergePersons, mergedInto, type MergeResult } from './merge';
 export {
+  RECORD_MARK_AI_JSON_MAX,
   RECORD_MARK_JSON_MAX,
   RECORD_MARK_LIMIT,
   countRecordMarks,

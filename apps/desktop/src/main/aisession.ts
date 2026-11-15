@@ -21,11 +21,15 @@ import {
   type SharedRecord,
 } from '@rulz/ai';
 import { cleanText } from '@rulz/connectors';
-import type { ExternalRecord, PersonQuery } from '@rulz/core';
+import type { ExternalRecord } from '@rulz/core';
 import {
+  AI_ACTIVITY_KEEP_DAYS,
+  clearAiActivity,
+  countAiActivity,
   getAncestorSlots,
   getPerson,
   getSetting,
+  listAiActivity,
   listNames,
   logAiActivity,
   presumedLivingIds,
@@ -36,9 +40,29 @@ import {
   type Tree,
 } from '@rulz/db';
 import type { z } from 'zod';
-import type { RecordSearchProblem, RecordSourceInfo } from '../shared/ipc';
+import {
+  AI_ACTIVITY_PAGE_MAX,
+  AI_SESSION_MAX_GENERATIONS,
+  type AiActivityPage,
+  type AiAssistantInfo,
+  type AiProposalRef,
+  type AiQuestion,
+  type AiSessionState,
+  type AttachRecordRequest,
+  type AiSessionEnd,
+  type AiSessionPerson,
+  type AiSessionPlan,
+  type AiSessionPlanRequest,
+  type AiSessionStartRequest,
+  type AiSessionStartResult,
+  type AiSessionStatus,
+  type RecordSearchProblem,
+} from '../shared/ipc';
+import { activityWords } from './aiactivitywords';
+import { keptOpinionJson } from './keptopinion';
+import { whenOf } from './keptrecord';
 import { defaultWait } from './recordrun';
-import { queryOf, type RecordSearchService } from './records';
+import { queryOf, type ProposalCopy, type RecordSearchService } from './records';
 
 /**
  * A session of the optional AI assistant: the time during which an AI the
@@ -67,6 +91,9 @@ import { queryOf, type RecordSearchService } from './records';
  * - it lives in memory and no longer than the tree is open. It writes nothing
  *   into the tree. What the AI proposes is kept in memory for the user to
  *   look at, and reaches the tree as any result does: by a press for it.
+ *   A proposal holds the record as it read when the AI was given it, and
+ *   that reading is the one the press keeps, cites or compares
+ *   (`RecordSearchService.useProposals`), whatever a later search reads.
  *
  * Outside a session no tool gives anything. Inside one, the tools read the
  * tree through `@rulz/ai` only, which gives nobody who may be living and no
@@ -103,8 +130,7 @@ export const AI_NOTICE_VERSION_SETTING = 'aiAssistant.noticeVersion';
  */
 export const AI_NOTICE_VERSION = 1;
 
-/** How many generations of ancestors a session can be for; 0 is the person alone. */
-export const AI_SESSION_MAX_GENERATIONS = 3;
+export { AI_SESSION_MAX_GENERATIONS } from '../shared/ipc';
 
 /** How many questions a session may send to one source. */
 export const AI_SESSION_REQUESTS = 10;
@@ -118,101 +144,35 @@ export const AI_SESSION_IDLE_MS = 15 * 60 * 1000;
 /** The least time between the end of one question to a source and the next to it, in milliseconds. */
 export const AI_SESSION_GAP_MS = 1000;
 
-/** Someone a session would be for, or is for. */
-export interface AiSessionPerson {
-  personId: string;
-  /** The main name, for the page of the user. */
-  name: string;
-  /** 0 for the person, 1 for the parents, 2 for the grandparents. */
-  generation: number;
-  /** Why the session is not for them: they may be living. Null when it is. */
-  leftOut: 'living' | null;
-}
-
-/** What a session from a person would be for. Nothing has started. */
-export interface AiSessionPlan {
-  /** Whether the user agreed to the notice of the assistant as it is worded now. */
-  agreed: boolean;
-  /** Whether the user agreed to the notice of the search for records. */
-  searchAgreed: boolean;
-  people: AiSessionPerson[];
-  /** The sources a session may ask. */
-  sources: RecordSourceInfo[];
-  requestsPerSource: number;
-  /** After how many minutes without a call a session ends. */
-  idleMinutes: number;
-  /** Names who the session would be for; a start gives it back. */
-  stamp: string;
-}
-
-export interface AiSessionPlanRequest {
-  personId: string;
-  /** Generations of ancestors: 0 for the person alone, up to {@link AI_SESSION_MAX_GENERATIONS}. */
-  generations: number;
-}
-
-export interface AiSessionStartRequest extends AiSessionPlanRequest {
-  sourceIds: string[];
-  stamp: string;
-}
+/**
+ * How many proposals are held in memory at most, those of the session and
+ * those of the sessions before it since the tree was opened. The oldest of
+ * the earlier sessions go first.
+ */
+export const AI_PROPOSALS_HELD = 1000;
 
 /**
- * Why a session ended: the user stopped it; no call came for a while; the
- * tree closed; the user turned the assistant off, or the notice of the search
- * no longer stands; another session took its place; it took all its calls;
- * the activity log could not be written.
+ * Whether this version of the app has a way to connect an AI to a session.
+ * It has none yet: the bridge to an AI app is part 4b.4 of the plan. A
+ * session can be started and stopped, and only a test calls a tool.
  */
-export type AiSessionEnd =
-  'stopped' | 'idle' | 'tree-closed' | 'withdrawn' | 'replaced' | 'calls' | 'log';
+export const AI_CAN_CONNECT = false;
 
-/** One question an AI put to a source, as the page shows it. */
-export interface AiQuestion {
-  number: number;
-  at: number;
-  personId: string;
-  sourceId: string;
-  /** What was sent, or would have been. */
-  query: PersonQuery;
-  /**
-   * "asking": on its way, or waiting for its turn. "answered": the source
-   * answered, or the app still had its answer. "failed": the source did not
-   * answer. "not-sent": nothing was sent, and the message says why.
-   */
-  state: 'asking' | 'answered' | 'failed' | 'not-sent';
-  /** How many records were passed on to the AI. */
-  found: number;
-  /** True when the app still had the answer and nothing was sent. */
-  cached: boolean;
-  message: string;
-}
-
-/** A session as it stands, for the page. */
-export interface AiSessionStatus {
-  sessionId: string;
-  status: 'running' | 'ended';
-  ended: AiSessionEnd | null;
-  /** Why it ended, in words for the user. */
-  endedMessage: string;
-  startedAt: number;
-  /** When it ends unless a call comes; null once it has ended. */
-  idleAt: number | null;
-  /** The people it is for. */
-  people: AiSessionPerson[];
-  sources: { id: string; name: string; used: number; limit: number }[];
-  calls: number;
-  questions: AiQuestion[];
-  /** How many proposals the AI made that passed the check. */
-  proposals: number;
-  /** Goes up with every change, so that the page knows when to look again. */
-  revision: number;
-}
-
-export type AiSessionStartResult =
-  | { ok: true; session: AiSessionStatus }
-  | { ok: false; problem: RecordSearchProblem; plan: AiSessionPlan | null };
+export type {
+  AiQuestion,
+  AiSessionEnd,
+  AiSessionPerson,
+  AiSessionPlan,
+  AiSessionPlanRequest,
+  AiSessionStartRequest,
+  AiSessionStartResult,
+  AiSessionStatus,
+} from '../shared/ipc';
 
 /** What an AI proposed about a record and a person, after the check. Kept in memory only. */
 export interface AiProposal {
+  /** The session it was made in. With the reference, it names the proposal. */
+  sessionId: string;
   /** The reference the session gave the record. */
   ref: string;
   personId: string;
@@ -228,6 +188,10 @@ export interface AiProposal {
   dropped: DroppedReason[];
   /** The record as it was passed on, which the quotes were looked up in. */
   record: SharedRecord;
+  /** The same reading as the connector made it: what a press of the user keeps, cites or compares. */
+  external: ExternalRecord;
+  /** When that reading came from the source, in Unix milliseconds. */
+  readAt: number;
 }
 
 export interface AiSessionOptions {
@@ -249,6 +213,8 @@ interface Found {
   sourceId: string;
   record: ExternalRecord;
   shared: SharedRecord;
+  /** When the source gave this reading, in Unix milliseconds. */
+  readAt: number;
 }
 
 interface SourceLine {
@@ -289,6 +255,7 @@ interface Session {
 
 const ENDED: Record<AiSessionEnd, string> = {
   stopped: 'You stopped the session.',
+  page: 'The window of the app was loaded again, so the session ended.',
   idle: 'No call came for a while, so the session ended.',
   'tree-closed': 'The tree was closed, so the session ended.',
   withdrawn: 'The AI assistant was turned off, so the session ended.',
@@ -331,6 +298,15 @@ export class AiSessionService {
   readonly #newId: () => string;
   /** The session that is under way, or the last one that ended. One at a time. */
   #session: Session | null = null;
+  /**
+   * What the sessions before this one proposed, for the same tree, the
+   * latest first, {@link AI_PROPOSALS_HELD} at most. A new session does not
+   * take from the user what they have not looked at yet, short of that
+   * many. Empty whenever there is no session.
+   */
+  #earlier: AiProposal[] = [];
+  /** Goes up whenever the proposals change. */
+  #proposalsRevision = 0;
 
   constructor(records: RecordSearchService, options: AiSessionOptions) {
     this.#records = records;
@@ -339,6 +315,8 @@ export class AiSessionService {
     this.#wait = options.wait ?? defaultWait;
     this.#gapMs = options.gapMs ?? AI_SESSION_GAP_MS;
     this.#newId = options.newId ?? randomUUID;
+    // A press for a proposed record acts on the reading the proposal is about.
+    records.useProposals((tree, request) => this.#copyOf(tree, request));
   }
 
   /** True once the user has agreed to the notice of the assistant as it is worded now. */
@@ -361,7 +339,14 @@ export class AiSessionService {
     setSetting(this.#appDb, AI_NOTICE_SETTING, null);
     setSetting(this.#appDb, AI_NOTICE_VERSION_SETTING, null);
     if (this.#session !== null) this.#end(this.#session, 'withdrawn');
+    this.#forget();
+  }
+
+  /** Forgets the session and every proposal. */
+  #forget(): void {
     this.#session = null;
+    this.#earlier = [];
+    this.#proposalsRevision += 1;
   }
 
   /**
@@ -457,7 +442,18 @@ export class AiSessionService {
       );
     }
 
-    if (this.#session !== null) this.#end(this.#session, 'replaced');
+    const before = this.#session;
+    if (before !== null) {
+      this.#end(before, 'replaced');
+      // What it proposed stays for the user to look at, while the tree is the same.
+      this.#earlier =
+        before.tree === tree
+          ? [...before.proposals.values(), ...this.#earlier]
+              .sort((a, b) => b.at - a.at)
+              .slice(0, AI_PROPOSALS_HELD)
+          : [];
+      this.#proposalsRevision += 1;
+    }
     const startedAt = this.#now();
     const session: Session = {
       id: this.#newId(),
@@ -511,22 +507,161 @@ export class AiSessionService {
     return this.#session === null ? null : this.#status(this.#session);
   }
 
-  /** What the AI proposed in the session, the latest first. They stay after the session has ended. */
+  /**
+   * What the AI proposed since the tree was opened, the latest first: in the
+   * session, and in the sessions before it. They stay after a session has
+   * ended, until the tree closes or the assistant is turned off. A proposal
+   * for someone who is no longer in the tree is not listed.
+   */
   proposals(): AiProposal[] {
-    return this.#session === null
-      ? []
-      : [...this.#session.proposals.values()].sort((a, b) => b.at - a.at);
+    const session = this.#session;
+    if (session === null || !session.still()) return [];
+    return [...session.proposals.values(), ...this.#earlier]
+      .filter((proposal) => getPerson(session.tree, proposal.personId) !== null)
+      .sort((a, b) => b.at - a.at);
   }
 
-  /** Ends the session that is under way: no tool gives anything more, and nothing more is sent. */
-  stop(): void {
-    if (this.#session !== null) this.#end(this.#session, 'stopped');
+  /** The proposal a page names; null when it is not held. */
+  proposal(named: AiProposalRef): AiProposal | null {
+    return (
+      this.proposals().find(
+        (proposal) => proposal.sessionId === named.sessionId && proposal.ref === named.ref,
+      ) ?? null
+    );
+  }
+
+  /** Forgets one proposal. Nothing changes in the tree. False when it was not held. */
+  dismiss(named: AiProposalRef): boolean {
+    const session = this.#session;
+    if (session === null) return false;
+    const held =
+      session.id === named.sessionId
+        ? session.proposals.delete(named.ref)
+        : this.#earlier.some(
+            (proposal) => proposal.sessionId === named.sessionId && proposal.ref === named.ref,
+          );
+    if (!held) return false;
+    this.#earlier = this.#earlier.filter(
+      (proposal) => proposal.sessionId !== named.sessionId || proposal.ref !== named.ref,
+    );
+    this.#proposalsRevision += 1;
+    session.revision += 1;
+    return true;
+  }
+
+  /** The session and the count of proposals as they stand, for the page to follow. */
+  state(): AiSessionState {
+    return {
+      session: this.status(),
+      proposals: this.proposals().length,
+      proposalsRevision: this.#proposalsRevision,
+    };
+  }
+
+  /** The assistant as it stands: whether it is on, what a session may ask, and its limits. */
+  info(): AiAssistantInfo {
+    return {
+      ...this.state(),
+      agreed: this.agreed,
+      searchAgreed: this.#records.agreed,
+      canConnect: AI_CAN_CONNECT,
+      sources: this.#records.aiSources(),
+      requestsPerSource: AI_SESSION_REQUESTS,
+      idleMinutes: AI_SESSION_IDLE_MS / 60_000,
+      maxCalls: AI_SESSION_CALLS,
+      logDays: AI_ACTIVITY_KEEP_DAYS,
+    };
+  }
+
+  /**
+   * The record a proposal is about, for a press of the user to keep, cite,
+   * compare or turn down: the reading the AI was given, when it was read,
+   * and what the AI said of it in the form the tree keeps. Null unless the
+   * request names a proposal that is held for this tree, and names the
+   * person, the source and the record that proposal is about.
+   */
+  #copyOf(tree: Tree, request: AttachRecordRequest): ProposalCopy | null {
+    if (request.proposal === undefined || this.#session?.tree !== tree) return null;
+    const held = this.proposal(request.proposal);
+    if (
+      held === null ||
+      held.personId !== request.personId ||
+      held.sourceId !== request.sourceId ||
+      held.key !== request.key
+    ) {
+      return null;
+    }
+    return { record: held.external, readAt: held.readAt, aiJson: keptOpinionJson(held) };
+  }
+
+  /**
+   * The activity log, the latest first, each entry in words. A person is
+   * named for an entry of the open tree only: an id means nothing in another.
+   */
+  activity(request: { offset: number; limit: number }, tree: Tree | null): AiActivityPage {
+    const treeId = tree?.info().id ?? null;
+    const sources = new Map(this.#records.sources().map((source) => [source.id, source.name]));
+    const known = new Map<string, string>();
+    /** A person of the open tree by their id. Asked for an entry of that tree only. */
+    const personOf = (open: Tree, id: string): string => {
+      if (id === '') return 'someone';
+      let name = known.get(id);
+      if (name === undefined) {
+        if (getPerson(open, id) === null) {
+          name = 'someone who is no longer in the tree';
+        } else {
+          const names = listNames(open, id);
+          const main = names.find((entry) => entry.isPrimary) ?? names[0];
+          const written = main === undefined ? '' : cleanText(`${main.given} ${main.surname}`, 400);
+          name = written === '' ? 'someone without a name' : written;
+        }
+        known.set(id, name);
+      }
+      return name;
+    };
+    const limit = Math.min(AI_ACTIVITY_PAGE_MAX, Math.max(1, Math.trunc(request.limit) || 1));
+    const offset = Math.max(0, Math.trunc(request.offset) || 0);
+    return {
+      // app.db can hold a moment that is none, as any file can, and showing
+      // one would stop the page from showing the log. Such an entry is left out.
+      items: listAiActivity(this.#appDb, { offset, limit })
+        .filter((entry) => whenOf(entry.at) !== null)
+        .map((entry) => {
+          const open = tree !== null && entry.treeId === treeId ? tree : null;
+          return {
+            id: entry.id,
+            at: entry.at,
+            sessionId: entry.sessionId,
+            thisTree: open !== null,
+            what: activityWords(entry, {
+              person: (id) => (open === null ? 'a person of another tree' : personOf(open, id)),
+              source: (id) => sources.get(id) ?? (id === '' ? 'a service' : cleanText(id, 100)),
+            }),
+          };
+        }),
+      total: countAiActivity(this.#appDb),
+    };
+  }
+
+  /** Removes every entry of the activity log. A session that is under way goes on, and writes into the empty log. */
+  clearActivity(): void {
+    clearAiActivity(this.#appDb);
+  }
+
+  /**
+   * Ends the session that is under way: no tool gives anything more, and
+   * nothing more is sent. What it proposed stays. 'page' when it is ended
+   * not by the user but because the page that shows it was loaded again or
+   * is gone.
+   */
+  stop(why: 'stopped' | 'page' = 'stopped'): void {
+    if (this.#session !== null) this.#end(this.#session, why);
   }
 
   /** Ends the session and forgets what it found and proposed. For when a tree closes. */
   clear(): void {
     if (this.#session !== null) this.#end(this.#session, 'tree-closed');
-    this.#session = null;
+    this.#forget();
   }
 
   /** Settles when no question of a session is on its way. For tests, and for closing down. */
@@ -1015,7 +1150,14 @@ export class AiSessionService {
       ) {
         ref = `r${session.found.size + 1}`;
         session.refs.set(key, ref);
-        session.found.set(ref, { ref, personId, sourceId, record, shared: shared.record });
+        session.found.set(ref, {
+          ref,
+          personId,
+          sourceId,
+          record,
+          shared: shared.record,
+          readAt: result.fetchedAt,
+        });
       }
       given.push({ ref, ...shared.record });
     }
@@ -1125,6 +1267,7 @@ export class AiSessionService {
     if (!checked.ok) return refuse('proposal', checked.message, { dropped });
     // A later proposal about the same record and person takes the place of an earlier one.
     session.proposals.set(ref, {
+      sessionId: session.id,
       ref,
       personId,
       sourceId: found.sourceId,
@@ -1135,7 +1278,10 @@ export class AiSessionService {
       reasons: checked.reasons,
       dropped: checked.dropped,
       record: found.shared,
+      external: found.record,
+      readAt: found.readAt,
     });
+    this.#proposalsRevision += 1;
     session.revision += 1;
     return {
       ok: true,

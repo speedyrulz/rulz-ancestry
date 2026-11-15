@@ -76,9 +76,12 @@ import {
   type TreeEvent,
 } from '@rulz/db';
 import type {
+  AiOpinionInfo,
+  AiProposalItem,
   AttachRecordRequest,
   CompareRecordResult,
   RecordComparison,
+  RecordCopy,
   RecordFactTarget,
   RecordInboxItem,
   RecordInboxPage,
@@ -95,6 +98,7 @@ import type {
   TakeRecordFactsRequest,
   TextSearchRequest,
 } from '../shared/ipc';
+import { keptOpinionJson, keptOpinionOf } from './keptopinion';
 import { keptFormOf, keptRecordOf, madeAddress, markTitle, whenOf } from './keptrecord';
 
 /**
@@ -151,6 +155,13 @@ import { keptFormOf, keptRecordOf, madeAddress, markTitle, whenOf } from './kept
  * `searchForAi`. The three rules hold for it too. Only a source whose terms
  * let its results be passed on to an AI is asked, and what is sent is what
  * the session let through of what the AI asked for.
+ *
+ * What an AI proposes about a record is a third copy of a result, beside the
+ * one a search showed and the one the tree keeps: the record as it read when
+ * the AI was given it. The page names a proposal, and the session hands the
+ * copy over (`useProposals`). A proposed record that is kept for later takes
+ * what the AI said of it along into the tree's file, and that is checked
+ * again when it is read back (`keptopinion.ts`).
  */
 
 /** The setting that holds the day the user agreed to the notice. */
@@ -269,6 +280,36 @@ export type AiSearchResult =
       sent: boolean;
     };
 
+/**
+ * The record a proposal of the AI assistant is about, as the session holds
+ * it: the reading the AI was given and when it came from the source, and
+ * what the AI said of it as the tree keeps it (null when that is too long
+ * to keep).
+ */
+export interface ProposalCopy {
+  record: ExternalRecord;
+  readAt: number;
+  aiJson: string | null;
+}
+
+/** A proposal as the session holds it, as far as listing it for the user needs. */
+export interface HeldProposal {
+  sessionId: string;
+  ref: string;
+  personId: string;
+  sourceId: string;
+  key: string;
+  /** When the AI proposed it. */
+  at: number;
+  verdict: AiOpinionInfo['verdict'];
+  confidence: AiOpinionInfo['confidence'];
+  reasons: readonly AiOpinionInfo['reasons'][number][];
+  dropped: readonly unknown[];
+  /** The record as it read when the AI was given it. */
+  external: ExternalRecord;
+  readAt: number;
+}
+
 /** What is needed to cite a result; see `RecordSearchService.attachment`. */
 export type RecordAttachment =
   | { ok: true; connector: ConnectorSource; citation: CitationInput & { url: string } }
@@ -356,6 +397,8 @@ export class RecordSearchService {
   /** Counts the trees that closed, so that an answer for an earlier tree is not kept. */
   #closed = 0;
   readonly #secrets: SecretStore | undefined;
+  /** Hands over the record a proposal of the AI assistant is about; null until the assistant is set up. */
+  #proposalCopy: ((tree: Tree, request: AttachRecordRequest) => ProposalCopy | null) | null = null;
 
   constructor(options: RecordSearchOptions) {
     this.#appDb = options.appDb;
@@ -413,6 +456,16 @@ export class RecordSearchService {
         String(RECORD_SEARCH_NOTICE_VERSION),
       );
     }
+  }
+
+  /**
+   * Says where the record of a proposal of the AI assistant comes from. The
+   * session of the assistant holds it, and hands it over for a request that
+   * names a proposal it holds for this tree, this person and this record;
+   * for any other it hands over nothing, and the request is refused.
+   */
+  useProposals(copyOf: (tree: Tree, request: AttachRecordRequest) => ProposalCopy | null): void {
+    this.#proposalCopy = copyOf;
   }
 
   sources(): RecordSourceInfo[] {
@@ -577,8 +630,9 @@ export class RecordSearchService {
     const found = this.#shownFor(tree, request);
     if (!found.ok) return found;
     const { connector, record } = found;
-    // A kept copy says what the source said on the day it was read, not today.
-    const accessedAt = localDay(found.kept ? found.readAt : this.#now());
+    // A kept copy says what the source said on the day it was read, not
+    // today; and so does the copy a proposal is about.
+    const accessedAt = localDay(found.from === 'search' ? this.#now() : found.readAt);
     // A source whose terms bar keeping what it returns is cited by the
     // record's identifier and address alone; the app made both itself.
     if (connector.manifest.mayStoreText === false) {
@@ -613,8 +667,9 @@ export class RecordSearchService {
   /**
    * The result a request names, with its source. It must be one this service
    * showed for this person since the tree was opened, or, when the request
-   * says so, the copy the tree keeps for them, and it must lead to the site
-   * of its source.
+   * says so, the copy the tree keeps for them, or the copy a proposal of the
+   * AI assistant is about; and it must lead to the site of its source. A
+   * request for one copy is never answered with another.
    */
   #shownFor(
     tree: Tree,
@@ -626,8 +681,10 @@ export class RecordSearchService {
         record: ExternalRecord;
         /** When the record was read from its source. */
         readAt: number;
-        /** True for the copy the tree keeps. */
-        kept: boolean;
+        /** Which copy it is. */
+        from: RecordCopy;
+        /** What an AI said of it, as the tree keeps it; null unless the copy is a proposal's, and when that is too long to keep. */
+        aiJson: string | null;
       }
     | { ok: false; problem: RecordSearchProblem } {
     const fail = (kind: RecordSearchProblem['kind'], message: string) => ({
@@ -638,22 +695,27 @@ export class RecordSearchService {
       return fail('gone', 'This person is no longer in the tree.');
     }
     const connector = this.#connectors.find(({ manifest }) => manifest.id === request.sourceId);
-    const kept = request.from === 'inbox';
-    let at: { record: ExternalRecord; readAt: number } | null = null;
-    if (connector !== undefined && kept) {
+    const from: RecordCopy = request.from ?? 'search';
+    let at: { record: ExternalRecord; readAt: number; aiJson?: string | null } | null = null;
+    if (connector !== undefined && from === 'inbox') {
       // Read from the tree's file, and checked: the file can come from anywhere.
       const mark = getRecordMark(tree, request.personId, request.sourceId, request.key);
       const record = mark === null ? null : keptRecordOf(mark, connector);
       if (mark !== null && record !== null) at = { record, readAt: mark.readAt };
+    } else if (connector !== undefined && from === 'proposal') {
+      // The reading the AI was given, from the session that holds the proposal.
+      at = this.#proposalCopy?.(tree, request) ?? null;
     } else if (connector !== undefined) {
       at = this.#shown.get(shownKey(request.personId, request.sourceId, request.key)) ?? null;
     }
     if (connector === undefined || at === null) {
       return fail(
         'record',
-        kept
+        from === 'inbox'
           ? 'This result is no longer kept, or what the tree holds of it cannot be read.'
-          : 'This result is no longer at hand. Search again, then attach it.',
+          : from === 'proposal'
+            ? 'This proposal is no longer at hand: it was forgotten, or the tree was closed since.'
+            : 'This result is no longer at hand. Search again, then attach it.',
       );
     }
     if (!isOnSite(at.record.url, connector.manifest)) {
@@ -662,7 +724,14 @@ export class RecordSearchService {
         'This result does not lead to the site of its source, so it is not attached.',
       );
     }
-    return { ok: true, connector, record: at.record, readAt: at.readAt, kept };
+    return {
+      ok: true,
+      connector,
+      record: at.record,
+      readAt: at.readAt,
+      from,
+      aiJson: at.aiJson ?? null,
+    };
   }
 
   /** Why the tree takes no further mark; null when it does, or when the result has one already. */
@@ -680,14 +749,31 @@ export class RecordSearchService {
   /**
    * What keeping a result for later writes into the tree: the record as this
    * service read it from the source, and when. Only a result a search showed
-   * for this person can be kept; the page passes its key. Of a source whose
-   * terms bar keeping what it returns, the identifier and the address are kept.
+   * for this person can be kept, or the record a proposal of the AI
+   * assistant is about; the page passes its key. Of a source whose terms bar
+   * keeping what it returns, the identifier and the address are kept.
+   *
+   * A record kept from a proposal takes along what the AI said of it. A
+   * record kept from a search takes nothing along, and a mark that had
+   * something loses it: it was said of another reading.
    */
   keeping(tree: Tree, request: AttachRecordRequest): RecordMarking {
-    const found = this.#shownFor(tree, { ...request, from: 'search' });
+    const proposed = request.from === 'proposal';
+    const found = this.#shownFor(tree, { ...request, from: proposed ? 'proposal' : 'search' });
     if (!found.ok) return found;
     const full = this.#full(tree, request);
     if (full !== null) return { ok: false, problem: full };
+    if (proposed && found.aiJson === null) {
+      return {
+        ok: false,
+        problem: {
+          kind: 'record',
+          message:
+            'What the AI said of this record is too long to keep with it. The record can be attached as a source.',
+          retryAt: null,
+        },
+      };
+    }
     const form = keptFormOf(found.record, found.connector.manifest);
     if (form === null) {
       return {
@@ -705,6 +791,7 @@ export class RecordSearchService {
         sourceId: request.sourceId,
         key: request.key,
         ...form,
+        aiJson: proposed ? found.aiJson : null,
         url: found.record.url,
         readAt: found.readAt,
         markedAt: this.#now(),
@@ -788,6 +875,8 @@ export class RecordSearchService {
       // Of a source whose terms bar keeping, there is no record to show.
       const shown = usable && manifest.mayStoreText !== false ? record : null;
       const fit = shown === null ? null : scoreRecord(person.subject, shown);
+      // What an AI said of it, held against the kept record once more.
+      const opinion = kept ? keptOpinionOf(mark, shown, manifest) : { ai: null, problem: '' };
       return {
         personId: mark.personId,
         personName: person.name,
@@ -805,9 +894,98 @@ export class RecordSearchService {
         readAt: whenOf(mark.readAt),
         markedAt: whenOf(mark.markedAt),
         problem,
+        ai: opinion.ai,
+        aiProblem: opinion.problem,
       };
     });
     return { items, total: countRecordMarks(tree, request.state, request.personId) };
+  }
+
+  /**
+   * The proposals of the AI assistant as the inbox lists them: each record
+   * as it read when the AI was given it, held against the person as the tree
+   * has them now, with what the AI said and what the tree already has of the
+   * result. Those the AI says do not fit stand last; otherwise the latest
+   * stands first. Nothing is sent, and nothing is written.
+   */
+  proposalInbox(tree: Tree, proposals: readonly HeldProposal[]): AiProposalItem[] {
+    const living = presumedLivingIds(tree, this.#now());
+    const people = new Map<
+      string,
+      { name: string; subject: MatchSubject; cited: Set<string> } | null
+    >();
+    const personOf = (personId: string) => {
+      let person = people.get(personId);
+      if (person === undefined) {
+        if (getPerson(tree, personId) === null) {
+          person = null;
+        } else {
+          const names = listNames(tree, personId);
+          const name = names.find((entry) => entry.isPrimary) ?? names[0];
+          person = {
+            name: name === undefined ? '' : `${name.given} ${name.surname}`.trim(),
+            subject: subjectOf(tree, personId),
+            cited: citedUrls(tree, personId),
+          };
+        }
+        people.set(personId, person);
+      }
+      return person;
+    };
+    const items: AiProposalItem[] = [];
+    for (const proposal of proposals) {
+      const person = personOf(proposal.personId);
+      const connector = this.#connectors.find((entry) => entry.manifest.id === proposal.sourceId);
+      const record = proposal.external;
+      // A proposal for someone who is gone, or about a record that does not
+      // lead to the site of its source, could not be acted on: it is not listed.
+      if (person === null || connector === undefined || !isOnSite(record.url, connector.manifest)) {
+        continue;
+      }
+      const fit = scoreRecord(person.subject, record);
+      const mark = getRecordMark(tree, proposal.personId, proposal.sourceId, proposal.key);
+      // A result of the same record can be kept already, from a search or
+      // from another proposal: then the tree holds another reading, or
+      // other reasons, or none, and this proposal can still be kept.
+      const keptAsProposed =
+        mark?.state === 'kept' &&
+        mark.aiJson !== null &&
+        mark.aiJson === keptOpinionJson(proposal) &&
+        mark.recordJson === (keptFormOf(record, connector.manifest)?.recordJson ?? null);
+      items.push({
+        sessionId: proposal.sessionId,
+        ref: proposal.ref,
+        personId: proposal.personId,
+        personName: person.name,
+        sourceId: proposal.sourceId,
+        sourceName: connector.manifest.name,
+        key: proposal.key,
+        title: cleanText(record.title, 500),
+        url: record.url,
+        record,
+        fit: fit === null ? null : { band: fit.band, reasons: fit.reasons, doubts: fit.doubts },
+        ai: {
+          verdict: proposal.verdict,
+          confidence: proposal.confidence,
+          reasons: proposal.reasons.map(({ side, text, quote, field }) => ({
+            side,
+            text,
+            quote,
+            field,
+          })),
+          proposedAt: proposal.at,
+        },
+        dropped: proposal.dropped.length,
+        mark: mark?.state ?? null,
+        keptAsProposed,
+        attached: person.cited.has(record.url),
+        mayBeLiving: living.has(proposal.personId),
+        readAt: proposal.readAt,
+      });
+    }
+    const last = (item: AiProposalItem) => (item.ai.verdict === 'does-not-fit' ? 1 : 0);
+    // A sort keeps the order of what it finds equal: the latest first, as they came.
+    return items.sort((a, b) => last(a) - last(b));
   }
 
   /**

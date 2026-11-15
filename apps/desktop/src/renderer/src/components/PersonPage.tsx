@@ -78,6 +78,8 @@ interface PersonPageProps {
   onChart: () => void;
   /** Called after this person was merged with another record, with the name of the one left. */
   onMerged: (info: MergeInfo, name: string) => void;
+  /** Called to open the window of the AI assistant for this person. */
+  onAiAssistant: () => void;
 }
 
 interface PersonLinkProps {
@@ -223,6 +225,7 @@ export function PersonPageView({
   onProblem,
   onChart,
   onMerged,
+  onAiAssistant,
 }: PersonPageProps) {
   const key = `${personId}|${tree.revision}`;
   const [loaded, setLoaded] = useState<{
@@ -393,6 +396,14 @@ export function PersonPageView({
             data-testid="open-record-run"
           >
             Search for ancestors
+          </button>
+          <button
+            type="button"
+            title="Let an AI app that you connect look for records of this person and their ancestors, and propose matches for you to decide on"
+            onClick={onAiAssistant}
+            data-testid="open-ai-assistant"
+          >
+            AI assistant
           </button>
           <button
             type="button"

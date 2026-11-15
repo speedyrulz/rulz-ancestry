@@ -8,6 +8,7 @@ import {
 } from '@rulz/core';
 import { useEffect, useState } from 'react';
 import type {
+  AiProposalRef,
   RecordComparison,
   RecordCopy,
   RecordFactTarget,
@@ -271,6 +272,8 @@ interface RecordCompareDialogProps {
   recordKey: string;
   /** Which copy is compared; left out for the one the search showed. */
   from?: RecordCopy | undefined;
+  /** The proposal of the AI assistant that is compared; only with `from="proposal"`. */
+  proposal?: AiProposalRef | undefined;
   /** Called after facts were taken over, with the tree as it stands then. */
   onTaken: (result: Extract<TakeRecordFactsResult, { ok: true }>) => void;
   onClose: () => void;
@@ -282,6 +285,7 @@ export function RecordCompareDialog({
   sourceId,
   recordKey,
   from,
+  proposal,
   onTaken,
   onClose,
 }: RecordCompareDialogProps) {
@@ -295,9 +299,15 @@ export function RecordCompareDialog({
   const [busy, setBusy] = useState(false);
   const [choices, setChoices] = useState<Record<string, Choice>>({});
 
+  // The proposal is named by its two parts, so that a new object with the same
+  // reference does not read the comparison again.
+  const sessionId = proposal?.sessionId;
+  const ref = proposal?.ref;
+
   useEffect(() => {
     let current = true;
-    api.compareRecord({ personId, sourceId, key: recordKey, from }).then(
+    const named = sessionId === undefined || ref === undefined ? undefined : { sessionId, ref };
+    api.compareRecord({ personId, sourceId, key: recordKey, from, proposal: named }).then(
       (result) => {
         if (!current) return;
         if (result.ok) setComparison(result.comparison);
@@ -310,7 +320,7 @@ export function RecordCompareDialog({
     return () => {
       current = false;
     };
-  }, [personId, sourceId, recordKey, from]);
+  }, [personId, sourceId, recordKey, from, sessionId, ref]);
 
   const choose = (type: TakeType, target: RecordFactTarget, patch: Partial<Choice>) => {
     setDone(null);
@@ -351,6 +361,7 @@ export function RecordCompareDialog({
         sourceId,
         key: recordKey,
         from,
+        proposal,
         stamp: comparison.stamp,
         takes,
       })

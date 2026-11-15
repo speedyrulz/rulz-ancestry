@@ -18,6 +18,7 @@ import {
 import { manifestsByTier } from '@rulz/connectors';
 import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
+import { AiSessionService } from './aisession';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
 import { RecordRun } from './recordrun';
@@ -99,6 +100,23 @@ const BACKGROUND_SWITCH = 'background-window';
 
 /** Far enough to the left and above to be on no screen. */
 const OFF_SCREEN = -20_000;
+
+/**
+ * The switch the end-to-end tests of the AI assistant start the app with.
+ * This version has no way to connect an AI to a session, so a test stands in
+ * for one: with the switch, the main process hands a test the function that
+ * takes a call of a tool, under `AI_TEST_CALL`.
+ *
+ * It is honoured only by an app that is not packaged. An installed copy is
+ * packaged, and no switch makes it otherwise, so nobody can turn this on in
+ * the app as it is shipped. The function is put where only code that already
+ * runs in the main process can reach it: there is no channel to it from the
+ * page, and nothing listens for it from outside the app.
+ */
+const AI_TEST_SWITCH = 'e2e-ai-tools';
+
+/** Where a test finds the function; see {@link AI_TEST_SWITCH}. */
+const AI_TEST_CALL = Symbol.for('rulz.e2e.aiCall');
 
 function createMainWindow(): BrowserWindow {
   const background = app.commandLine.hasSwitch(BACKGROUND_SWITCH);
@@ -305,9 +323,10 @@ function registerIpc(
   session: TreeSession,
   places: GazetteerService,
   records: RecordSearchService,
+  ai: AiSessionService,
   runs: RecordRun,
 ): void {
-  const handlers = createHandlers(session, platform, places, records, runs);
+  const handlers = createHandlers(session, platform, places, records, ai, runs);
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),
@@ -415,15 +434,27 @@ if (!app.requestSingleInstanceLock()) {
     });
 
     const runs = new RecordRun(records);
-    registerIpc(treeSession, gazetteer, records, runs);
+    // The optional AI assistant. It is off until the user turns it on, and
+    // its tools give nothing outside a session the user started.
+    const ai = new AiSessionService(records, { appDb });
+    if (!app.isPackaged && app.commandLine.hasSwitch(AI_TEST_SWITCH)) {
+      (globalThis as unknown as Record<symbol, unknown>)[AI_TEST_CALL] = (
+        name: string,
+        input: unknown,
+      ) => ai.call(name, input);
+    }
+    registerIpc(treeSession, gazetteer, records, ai, runs);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded
     // again or its process is gone, that window is no more, and nothing tells
     // the search so from the page: so it is ended here. Nothing is asked for
-    // a window that is not there.
+    // a window that is not there. A session of the AI assistant ends too: the
+    // page is where the user sees what an AI asks, and where they stop it.
+    // What it proposed stays.
     const pageGone = (): void => {
       runs.stop();
+      ai.stop('page');
       records.cancel();
     };
     mainWindow.webContents.on('did-start-navigation', (details) => {

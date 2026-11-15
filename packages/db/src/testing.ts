@@ -374,6 +374,7 @@ export function withLaterColumns(tree: Tree, fn: () => void): void {
     ['source', 'connector_id', 'TEXT'],
     ['citation', 'url', "TEXT NOT NULL DEFAULT ''"],
     ['citation', 'accessed_at', "TEXT NOT NULL DEFAULT ''"],
+    ['record_mark', 'ai_json', 'TEXT'],
   ];
   const added = later.filter(
     ([table, column]) =>

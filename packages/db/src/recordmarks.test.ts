@@ -6,6 +6,7 @@ import { mergePersons } from './merge';
 import { migrate, schemaVersion } from './migrate';
 import { createPerson, deletePerson } from './persons';
 import {
+  RECORD_MARK_AI_JSON_MAX,
   RECORD_MARK_JSON_MAX,
   RECORD_MARK_LIMIT,
   countRecordMarks,
@@ -18,7 +19,15 @@ import {
   type RecordMarkInput,
 } from './recordmarks';
 import { treeMigrations } from './schema';
-import { cleanUpAfterEach, memoryTree, snapshot, tempDir, track, undoDepth } from './testing';
+import {
+  cleanUpAfterEach,
+  memoryTree,
+  snapshot,
+  tempDir,
+  track,
+  undoDepth,
+  withLaterColumns,
+} from './testing';
 import { TREE_APPLICATION_ID, Tree, TreeRuleError, createTree, openExistingTree } from './tree';
 
 cleanUpAfterEach();
@@ -58,6 +67,7 @@ describe('a result of a search kept for a person', () => {
       title: 'Record R-1',
       url: 'https://records.example/R-1',
       recordJson: '{"key":"R-1","said":"something"}',
+      aiJson: null,
       readAt: 1000,
       markedAt: 2000,
     });
@@ -355,5 +365,128 @@ describe('a tree made before results could be kept', () => {
     expect(countRecordMarks(older)).toBe(0);
     const ada = createPerson(older, { name: { given: 'Ada', surname: 'Hale' } }).id;
     expect(keepRecord(older, ada, result('R-1')).state).toBe('kept');
+  });
+});
+
+describe('what an AI said of a kept result', () => {
+  /** What whoever keeps a proposed record hands in: this module does not look inside. */
+  const said = JSON.stringify({ v: 1, verdict: 'fits', reasons: [{ quote: 'something' }] });
+
+  it('is kept with the record in the same step, and goes and comes back with it', () => {
+    const { tree, ada } = start();
+    const before = snapshot(tree);
+    const steps = undoDepth(tree);
+
+    const mark = keepRecord(tree, ada, result('R-1', { aiJson: said }));
+    expect(mark.aiJson).toBe(said);
+    expect(getRecordMark(tree, ada, 'example-site', 'R-1')?.aiJson).toBe(said);
+    expect(listRecordMarks(tree, { state: 'kept', offset: 0, limit: 10 })[0]?.aiJson).toBe(said);
+    expect(undoDepth(tree)).toBe(steps + 1);
+
+    tree.undo();
+    expect(snapshot(tree)).toBe(before);
+    tree.redo();
+    expect(getRecordMark(tree, ada, 'example-site', 'R-1')?.aiJson).toBe(said);
+  });
+
+  it('does not stay beside another reading: keeping the result again without it takes it away', () => {
+    const { tree, ada } = start();
+    keepRecord(tree, ada, result('R-1', { aiJson: said }));
+
+    const again = keepRecord(tree, ada, result('R-1', { recordJson: '{"said":"otherwise"}' }));
+    expect(again).toMatchObject({ recordJson: '{"said":"otherwise"}', aiJson: null });
+
+    tree.undo();
+    expect(getRecordMark(tree, ada, 'example-site', 'R-1')?.aiJson).toBe(said);
+  });
+
+  it('does not stay with a result that is turned down, and is not written for one', () => {
+    const { tree, ada } = start();
+    keepRecord(tree, ada, result('R-1', { aiJson: said }));
+    expect(declineRecord(tree, ada, result('R-1')).aiJson).toBeNull();
+    expect(declineRecord(tree, ada, result('R-2', { aiJson: said })).aiJson).toBeNull();
+    // The file itself refuses it for a result that is not kept.
+    expect(() =>
+      tree.transact('By hand', () =>
+        tree.db.prepare("UPDATE record_mark SET ai_json = '{}' WHERE record_key = 'R-2'").run(),
+      ),
+    ).toThrow(/CHECK/);
+  });
+
+  it('is refused when it is too long, and nothing is kept then', () => {
+    const { tree, ada } = start();
+    const long = 'x'.repeat(RECORD_MARK_AI_JSON_MAX + 1);
+    expect(() => keepRecord(tree, ada, result('R-1', { aiJson: long }))).toThrow(TreeRuleError);
+    expect(countRecordMarks(tree)).toBe(0);
+    expect(keepRecord(tree, ada, result('R-1', { aiJson: long.slice(1) })).aiJson).toHaveLength(
+      RECORD_MARK_AI_JSON_MAX,
+    );
+  });
+
+  it('moves with the mark when two people are merged, and back when that is undone', () => {
+    const { tree, ada, mary } = start();
+    keepRecord(tree, mary, result('R-1', { aiJson: said }));
+    const before = snapshot(tree);
+
+    mergePersons(tree, ada, mary);
+    expect(getRecordMark(tree, ada, 'example-site', 'R-1')?.aiJson).toBe(said);
+
+    tree.undo();
+    expect(snapshot(tree)).toBe(before);
+  });
+
+  it('is not written to a GEDCOM file', () => {
+    const { tree, ada } = start();
+    keepRecord(tree, ada, result('R-1', { aiJson: said }));
+    expect(bodyOf(exportLines(tree)).join('\n')).not.toContain('verdict');
+  });
+});
+
+describe('a tree made before an AI could say something of a kept result', () => {
+  it('gains the column, empty, and its earlier steps can still be undone and redone', () => {
+    const db = openDatabase(':memory:');
+    db.pragma(`application_id = ${TREE_APPLICATION_ID}`);
+    migrate(db, treeMigrations.slice(0, 10));
+    db.prepare(
+      "INSERT INTO tree_meta (key, value) VALUES ('id', 'older'), ('name', 'Older'), ('created_at', '0')",
+    ).run();
+    const older = track(new Tree(db, null));
+    expect(schemaVersion(older.db)).toBe(10);
+    let ada = '';
+    // As a build before this one did it: the steps it left know no such column.
+    withLaterColumns(older, () => {
+      ada = createPerson(older, { name: { given: 'Ada', surname: 'Hale' } }).id;
+      keepRecord(older, ada, result('R-1'));
+      declineRecord(older, ada, result('R-1'));
+    });
+    const steps = undoDepth(older);
+
+    migrate(older.db, treeMigrations);
+    expect(schemaVersion(older.db)).toBe(treeMigrations.length);
+    // The upgrade is not an edit.
+    expect(undoDepth(older)).toBe(steps);
+    expect(getRecordMark(older, ada, 'example-site', 'R-1')).toMatchObject({
+      state: 'declined',
+      aiJson: null,
+    });
+
+    // A step from before the upgrade is undone and redone as it was.
+    older.undo();
+    expect(getRecordMark(older, ada, 'example-site', 'R-1')).toMatchObject({
+      state: 'kept',
+      recordJson: '{"key":"R-1","said":"something"}',
+      aiJson: null,
+    });
+    older.undo();
+    expect(countRecordMarks(older)).toBe(0);
+    older.redo();
+    expect(getRecordMark(older, ada, 'example-site', 'R-1')?.aiJson).toBeNull();
+
+    // And a step of today is logged with the new column.
+    const said = '{"v":1}';
+    keepRecord(older, ada, result('R-2', { aiJson: said }));
+    older.undo();
+    older.redo();
+    expect(getRecordMark(older, ada, 'example-site', 'R-2')?.aiJson).toBe(said);
   });
 });

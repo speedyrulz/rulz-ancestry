@@ -9,6 +9,7 @@ import { notes } from './007-notes';
 import { places } from './008-places';
 import { citationAddresses } from './009-citation-addresses';
 import { recordMarks } from './010-record-marks';
+import { recordMarkReasons } from './011-record-mark-reasons';
 
 /** The schema history of a tree database, oldest first. Only ever append to this list. */
 export const treeMigrations: readonly Migration[] = [
@@ -22,4 +23,5 @@ export const treeMigrations: readonly Migration[] = [
   places,
   citationAddresses,
   recordMarks,
+  recordMarkReasons,
 ];

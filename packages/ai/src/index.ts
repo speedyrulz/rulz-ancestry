@@ -20,6 +20,7 @@ export {
 } from './people';
 export {
   mayShareWithAi,
+  recordTextsOf,
   sharedRecordOf,
   type Shared,
   type SharedField,

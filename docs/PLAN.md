@@ -523,7 +523,7 @@ run in the app's main process.
 | `propose_match`                              | Files a hint for the user: the person, the record, a verdict, a confidence and reasons, each reason quoting the record        |
 | `suggest_link`                               | Suggests a Tier C link for the user to open in their own browser (not built)                                                  |
 
-No tool edits the tree, reads a file, runs a command or fetches a URL. Since part 4b.2 the tools work only within a session the user started, and a record is known by a reference that holds within that session; no table of records is stored (see "Phase 4b.2 outcome").
+No tool edits the tree, reads a file, runs a command or fetches a URL. Since part 4b.2 the tools work only within a session the user started, and a record is known by a reference that holds within that session; no table of records is stored (see "Phase 4b.2 outcome"). Since part 4b.3 the assistant has its screens: the notice, the window that starts and shows a session, the proposals in the inbox and the activity log (see "Phase 4b.3 outcome"). No AI can be connected before part 4b.4.
 
 What this adds to the Phase 4 matching engine:
 
@@ -957,7 +957,7 @@ Planned on 2026-11-14 from two design views (a Claude Opus subagent and Codex) a
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | 4b.1 | The rules, with no screen: what the tools read of a tree and of a record, the `mayShareWithAi` field, the check of a quote and of a proposal | **Done 2026-11-14** |
 | 4b.2 | An AI session the user starts, for chosen people and sources, with a count of requests and an end; proposals held in memory; an activity log | **Done 2026-11-14** |
-| 4b.3 | The screens: the consent notice, the window that starts a session and shows what it does, with Stop, and the AI's proposals in the inbox     | To do               |
+| 4b.3 | The screens: the consent notice, the window that starts a session and shows what it does, with Stop, and the AI's proposals in the inbox     | **Done 2026-11-14** |
 | 4b.4 | Route A: the named pipe, the bridge program, the `.mcpb` file for Claude Desktop, and how Claude Code adds it                                | To do               |
 | 4b.5 | Measuring: the labelled cases of part 4.1 given to Claude offline, and the AI's figures beside the engine's                                  | To do               |
 | 4b.6 | Route C: the user's own API key, the same tools, tokens and cost shown                                                                       | To do               |
@@ -1092,6 +1092,72 @@ Not done:
 - **The check of a name as it stands now was read by nobody but the primary agent.** Its tests hold every case the reviews gave.
 - **A question is logged when it has ended, not when it leaves.** If the app is ended by force while a question is on its way, that question is not in the log.
 - **The session was tried by tests only,** with made-up people and made-up answers of the sources. No AI has used it yet.
+
+### Phase 4b.3 outcome: the screens of the AI assistant (2026-11-14)
+
+Delivered. The assistant can now be turned on, and a session started, watched and stopped. **No AI can be connected yet:** the bridge to an AI app is part 4b.4, and until then nothing but a test calls a tool. The windows say so.
+
+- **A button "AI assistant" on a person's page** opens the assistant's window (`apps/desktop/src/renderer/src/components/aiassistant.tsx`).
+  - **The notice** is shown until the user agrees to it. It says that no AI can be connected in this version, what an AI can read and ask and of whom, where that goes, when, what an AI cannot do, that a record is a text someone else wrote, what is kept, and how the assistant is turned off. The notice of the search for records follows where it was not agreed to yet, since a session asks through the search.
+  - **Before a session starts** the window lists who it would be for (the person alone, or up to their great-grandparents; it starts at the parents), who is left out as possibly living, and the services an AI may ask. No service is ticked to begin with.
+  - **While a session is under way** the window shows when it ends unless a call comes, who it is for, how many of its questions each service has had, how many calls it took, every question that went to a service as it was asked, and how many proposals it made. "Stop" ends it.
+- **A session goes on when its window is closed.** With an AI app the user works in that app's window, so a window of this app that must stay open would be in the way. While a session is under way, a line above the tree says so, with the count of calls and of questions, and with "Show" and "Stop". The page asks once a second how the session stands.
+- **A session ends when the page is loaded again or its process is gone,** as a search for several people does: the page is where the user sees what an AI asks. The session then says that this is why it ended. What it proposed stays.
+- **The proposals are a third list of the inbox,** "Proposed by the AI". An entry shows the record as the AI was given it, the app's own label, the AI's verdict and how sure it says it is, each reason with the words of the record it quotes and the name of the text they stand in, and how many reasons did not pass the check. The words of such a reason are not shown. It can be set beside the person, kept for later, attached as a source, turned down, or forgotten. The button "Inbox" counts them beside what is kept.
+- **A proposed record that is kept takes along what the AI said of it.** It is in the list of kept results like any other, with the AI's verdict and reasons beside it, and it is one step in the tree and one Undo. Where the tree keeps the same record already, from a search or from another proposal, the entry says so and offers "Keep with these reasons", which puts this reading and these reasons in the place of what is kept.
+- **The activity log on screen:** every entry as a sentence, the latest first, with the names of people of the open tree and none of another tree's. It can be read and cleared whether the assistant is on or off.
+- **"Turn the assistant off"** asks first, ends a session that is under way and forgets the proposals that were not kept. What the tree keeps, and the log, stay.
+
+How it is built:
+
+- **A proposal is a third copy of a result** (`RecordCopy` in `shared/ipc.ts`), beside the one a search showed and the one the tree keeps. The session holds, with each proposal, the record as the connector made it and the moment it was read. The page names a proposal by its session and the reference of its record, and the main process acts on that reading: the one the AI's quotes were looked up in. A request for a proposal that is not held is refused; it is never answered with another copy of the same record.
+- **`record_mark.ai_json`** (migration 11, `packages/db/src/schema/011-record-mark-reasons.ts`) holds what an AI said of a kept result: the verdict, how sure it was, when, and the reasons that passed the check, each with its quote. 16,384 characters at most; a proposal that is longer is not kept, and the record can still be attached. Only a kept mark has it. A mark that is written again without it loses it (kept again as a search reads it now, or turned down), since it was said of another reading.
+- **What is read back is checked again** (`apps/desktop/src/main/keptopinion.ts`). It must have the shape of what is kept, and then goes through the check of a proposal of part 4b.1 once more, against the kept record as `keptrecord.ts` read it. A reason whose quote is not in the kept record is dropped, and where no reason is left that stands behind the verdict, nothing of the AI is shown and a line says so. The record itself stays usable. The check says that the quoted words are in the kept record; it does not say that an AI wrote the reason.
+- **`recordTextsOf`** (`packages/ai/src/record.ts`) makes the texts of a record for that check, whatever its source says about passing records on. `sharedRecordOf` stays the only way a record is passed on to an AI, and still asks first.
+- **The log in words** (`apps/desktop/src/main/aiactivitywords.ts`): one sentence for each kind of entry, made in the main process from the ids, counts and outcomes the log holds.
+- **Eleven new functions of the contract** between the page and the main process, from `getAiAssistant` to `clearAiActivity`. None of them calls a tool.
+
+Decided while building, by the primary agent, from two design views (a Claude Opus subagent and Codex, neither seeing the other's); the project owner can change any of them:
+
+- **The assistant is visible now,** and says in its notice, in its window and in this plan that no AI can be connected yet. The two views differed: Codex was for showing it with that label, Opus for hiding it behind a switch until part 4b.4. It is shown, because the project owner asked for the screens and can only judge what can be seen. The notice is at version 1; part 4b.4 raises it and adds what the bridge sends and its limit (another program under the same Windows account could read its secret).
+- **Proposals of earlier sessions stay** until the tree closes or the assistant is turned off; of the sessions before the last one, the latest 1,000. Part 4b.2 forgot them when another session started, and both views said the user must then be warned first. Keeping them needs no warning.
+- **A reason that did not pass the check is counted, and its words are not shown** (Opus's view; Codex was for showing them folded away). They are text of an AI that nothing of the record stands behind.
+- **No service is ticked to begin with** in the window that starts a session. Each tick lets an AI ask that service up to 10 questions.
+- **A proposal for someone who has come to count as living is still listed,** with a line that says so, and can be kept or attached: that is the user's own tree on the user's own PC, and nothing is sent. The session gives an AI nothing more of that person.
+- **A proposal that says "does not fit" stands last in the list,** and is advice like any other: nothing is turned down by itself.
+- **How a test calls a tool.** Started with the switch `--e2e-ai-tools`, an app that is not packaged puts the function that takes a call where only code of the main process can reach it. A packaged app ignores the switch, so nobody can turn this on in the app as it is installed. The views differed here too: Codex was for a build of its own for the tests, Opus for the switch alone. The switch is kept, tied to "not packaged", which no switch changes.
+
+Who built what: a Claude Opus subagent wrote the windows (the five files of the page and the styles) against the contract and the texts the primary agent gave it, while the primary agent wrote the database, the session, the main process and the tests. The primary agent read the windows afterwards, and changed them where its own reading and the reviews called for it.
+
+Reviews: this part was treated as level 2 (a Claude Opus subagent and Codex, each reading the change without the other's view). Every finding was checked against the code. Opus reported no rule broken, and listed what it had looked at hard and found sound: the check of every argument of the new functions, that a request for one copy of a record is never answered with another, that no record read back from a file reaches an AI, the hook for the tests, and that the proposals go with their tree.
+
+- **Fixed, found by both:** a proposal about a record the tree already kept showed "Kept for later" and offered no way to keep it. So what the AI said could not be kept for a record the user had kept from a search before, or that an earlier proposal was about. The list now says whether what the tree keeps is this proposal (`keptAsProposed`), and offers to keep it in its place where it is not.
+- **Fixed, found by Opus,** and by the primary agent while the review ran: a session that ended because the page was loaded again said "You stopped the session", in its window and in the log. It has a reason of its own now, and the notice names it among the ways a session ends.
+- **Fixed, found by Codex:** the line about reasons that are not shown said their words are not in the record. A reason is also dropped when it says nothing beside its quote. The line names both, and the log says "passed the check" in place of "quoted the record".
+- **Fixed, found by both:** the limit of 1,000 proposals of earlier sessions was said nowhere. The notice and the list say it.
+- **Fixed, found by Opus:**
+  - The list said that a proposal is forgotten "unless you keep or attach the record". Attaching cites the record without what the AI said. The list now says what each does.
+  - The notice and the log said that the log holds "the names an AI asked with". It also holds what an AI searched the tree for. Both say so now.
+  - "More" in the log could stay for good where the count names an entry that cannot be shown (one with a moment that is none, as a damaged file can hold). It goes once it brought nothing.
+  - The log as it stands after clearing was read without the open tree. It is read with it.
+  - An answer about the session that was on its way while the proposals changed could be shown for a second. Every such answer is now held against the newest count of changes, not only the regular one.
+- **Turned down:**
+  - The log shows the words of a search of the tree, which an AI chooses, against the rule that the log never holds the text of a record (Opus). The project owner decided in part 4b.2 that the log holds what was asked; the wording was put right, as above.
+  - The entry for the end of a session counts the proposals it still holds, not those it made, when some were forgotten meanwhile (Opus). Each proposal has its own entry.
+  - The count on the button and the list could differ for a proposal whose source the app no longer knows or whose address is not on its site (Opus). A proposal is only made about a record that passed both when the AI was given it.
+
+Tests: unit tests went from 1401 to 1449, end-to-end tests from 44 to 47. The end-to-end test that calls tools runs against the built app only; the packaged app hands no test the tools, and a test checks that.
+
+Not done:
+
+- **No AI can be connected.** That is part 4b.4. The session, the proposals and the windows were tried by tests that stand in for an AI, with made-up people and made-up answers of the sources.
+- **The wording of the notice was written by the primary agent** and read by nobody else. It is what a user agrees to, so the project owner should read it before part 4b.4 lets an AI connect.
+- **The window shows the questions that went to a service's line.** One that was refused before that (a name the tree does not have, a person the session is not for) is in the log only.
+- **"Keep with these reasons"** for a record the tree already keeps was tried by tests of the main process, not through the window.
+- **Nothing says so when the limit of 1,000 proposals of earlier sessions is reached** and the oldest go.
+- **Proposals are not kept across the closing of a tree,** as decided: only a record the user keeps or attaches stays.
+- **The tests of the packaged app were not run on this PC** for this part; the CI run does that.
+- **The windows were checked by eye in seven screenshots,** in light colours and at one window size.
 
 ### Phase 3 breakdown
 

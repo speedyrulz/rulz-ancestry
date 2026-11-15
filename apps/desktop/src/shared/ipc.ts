@@ -712,10 +712,20 @@ export type RecordSearchResult =
 
 /**
  * Which copy of a result is meant: the one a search showed since the tree was
- * opened, or the one the tree keeps for the person. They can differ, when the
- * source says something else now than on the day the result was kept.
+ * opened, the one the tree keeps for the person, or the one a proposal of the
+ * AI assistant is about. They can differ: the source may say something else
+ * now than on the day a result was kept, and a proposal is about the record
+ * as it read when the AI was given it.
  */
-export type RecordCopy = 'search' | 'inbox';
+export type RecordCopy = 'search' | 'inbox' | 'proposal';
+
+/** Which proposal of the AI assistant is meant, as `listAiProposals` named it. */
+export interface AiProposalRef {
+  /** The session the proposal was made in. */
+  sessionId: string;
+  /** The reference that session gave the record. */
+  ref: string;
+}
 
 /** Which result to attach to the person it was found for. */
 export interface AttachRecordRequest {
@@ -723,8 +733,14 @@ export interface AttachRecordRequest {
   sourceId: string;
   /** The key of a result the search showed for this person. Nothing else of it is passed. */
   key: string;
-  /** Left out for a result of a search. 'inbox' for the copy the tree keeps: the key is then of a kept result. */
+  /**
+   * Left out for a result of a search. 'inbox' for the copy the tree keeps:
+   * the key is then of a kept result. 'proposal' for the record a proposal of
+   * the AI assistant is about, which `proposal` names.
+   */
   from?: RecordCopy | undefined;
+  /** The proposal that is meant; only with 'proposal', and needed then. */
+  proposal?: AiProposalRef | undefined;
 }
 
 /** A result that is kept, turned down, or neither any more; or why that was not done. */
@@ -776,6 +792,15 @@ export interface RecordInboxItem {
   markedAt: number | null;
   /** Why what was kept cannot be used, in words; empty when it can. Such a result can only be removed. */
   problem: string;
+  /**
+   * What the AI assistant said of the result, when it was kept from a
+   * proposal: read from the tree's file and checked again against the kept
+   * record. Null when it was kept without one, and when what the file holds
+   * does not pass the check.
+   */
+  ai: AiOpinionInfo | null;
+  /** Why what the tree holds of an AI's reasons is not shown, in words; empty otherwise. */
+  aiProblem: string;
 }
 
 export interface RecordInboxPage {
@@ -1012,6 +1037,225 @@ export type RecordRunStartResult =
       /** The plan as it stands now, where the tree changed since the one the user saw. */
       plan: RecordRunPlan | null;
     };
+
+/** How many generations of ancestors a session of the AI assistant can be for; 0 is the person alone. */
+export const AI_SESSION_MAX_GENERATIONS = 3;
+
+/** Someone a session would be for, or is for. */
+export interface AiSessionPerson {
+  personId: string;
+  /** The main name, for the page of the user. */
+  name: string;
+  /** 0 for the person, 1 for the parents, 2 for the grandparents. */
+  generation: number;
+  /** Why the session is not for them: they may be living. Null when it is. */
+  leftOut: 'living' | null;
+}
+
+/** What a session from a person would be for. Nothing has started. */
+export interface AiSessionPlan {
+  /** Whether the user agreed to the notice of the assistant as it is worded now. */
+  agreed: boolean;
+  /** Whether the user agreed to the notice of the search for records. */
+  searchAgreed: boolean;
+  people: AiSessionPerson[];
+  /** The sources a session may ask. */
+  sources: RecordSourceInfo[];
+  requestsPerSource: number;
+  /** After how many minutes without a call a session ends. */
+  idleMinutes: number;
+  /** Names who the session would be for; a start gives it back. */
+  stamp: string;
+}
+
+export interface AiSessionPlanRequest {
+  personId: string;
+  /** Generations of ancestors: 0 for the person alone, up to {@link AI_SESSION_MAX_GENERATIONS}. */
+  generations: number;
+}
+
+export interface AiSessionStartRequest extends AiSessionPlanRequest {
+  sourceIds: string[];
+  stamp: string;
+}
+
+/**
+ * Why a session ended: the user stopped it; the page was loaded again, or
+ * its process is gone; no call came for a while; the tree closed; the user
+ * turned the assistant off, or the notice of the search no longer stands;
+ * another session took its place; it took all its calls; the activity log
+ * could not be written.
+ */
+export type AiSessionEnd =
+  'stopped' | 'page' | 'idle' | 'tree-closed' | 'withdrawn' | 'replaced' | 'calls' | 'log';
+
+/** One question an AI put to a source, as the page shows it. */
+export interface AiQuestion {
+  number: number;
+  at: number;
+  personId: string;
+  sourceId: string;
+  /** What was sent, or would have been. */
+  query: PersonQuery;
+  /**
+   * "asking": on its way, or waiting for its turn. "answered": the source
+   * answered, or the app still had its answer. "failed": the source did not
+   * answer. "not-sent": nothing was sent, and the message says why.
+   */
+  state: 'asking' | 'answered' | 'failed' | 'not-sent';
+  /** How many records were passed on to the AI. */
+  found: number;
+  /** True when the app still had the answer and nothing was sent. */
+  cached: boolean;
+  message: string;
+}
+
+/** A session as it stands, for the page. */
+export interface AiSessionStatus {
+  sessionId: string;
+  status: 'running' | 'ended';
+  ended: AiSessionEnd | null;
+  /** Why it ended, in words for the user. */
+  endedMessage: string;
+  startedAt: number;
+  /** When it ends unless a call comes; null once it has ended. */
+  idleAt: number | null;
+  /** The people it is for. */
+  people: AiSessionPerson[];
+  sources: { id: string; name: string; used: number; limit: number }[];
+  calls: number;
+  questions: AiQuestion[];
+  /** How many proposals the AI made that passed the check. */
+  proposals: number;
+  /** Goes up with every change, so that the page knows when to look again. */
+  revision: number;
+}
+
+export type AiSessionStartResult =
+  | { ok: true; session: AiSessionStatus }
+  | { ok: false; problem: RecordSearchProblem; plan: AiSessionPlan | null };
+
+/** Whether a record is of the person, as an AI sees it. */
+export type AiVerdict = 'fits' | 'may-fit' | 'does-not-fit';
+
+/** How sure an AI says it is. */
+export type AiConfidence = 'high' | 'medium' | 'low';
+
+/** One reason of an AI for or against a match. Its quote was found in the record by the main process. */
+export interface AiReasonInfo {
+  side: 'for' | 'against';
+  /** The reason in a sentence, as the AI wrote it. */
+  text: string;
+  /** The words of the record the reason rests on, as they stand there. */
+  quote: string;
+  /** The name of the text of the record the quote is in: "title", "birth date". */
+  field: string;
+}
+
+/** What an AI said of one record and one person. Every reason quotes the record. */
+export interface AiOpinionInfo {
+  verdict: AiVerdict;
+  confidence: AiConfidence;
+  reasons: AiReasonInfo[];
+  /** When the AI proposed it, in Unix milliseconds; null when the tree's file does not say. */
+  proposedAt: number | null;
+}
+
+/**
+ * A proposal of the AI assistant that the app holds in memory: a record a
+ * search of a session brought, the person it was found for, and what the AI
+ * said of the two. Nothing of it is in the tree until the user keeps or
+ * attaches the record.
+ */
+export interface AiProposalItem extends AiProposalRef {
+  personId: string;
+  /** The person's name as the tree has it now; empty when they have none. */
+  personName: string;
+  sourceId: string;
+  sourceName: string;
+  key: string;
+  title: string;
+  /** The record's page at its source. */
+  url: string;
+  /** The record as it read when the AI was given it. */
+  record: ExternalRecord;
+  /** How well it fits the person as the tree has them now, by the app's own reading; null where there is none. */
+  fit: RecordFitInfo | null;
+  ai: AiOpinionInfo;
+  /**
+   * How many reasons of the AI are not shown: their quote was not found in
+   * the record, or they said nothing beside it.
+   */
+  dropped: number;
+  /** Whether the tree keeps the result for this person, or the user turned it down for them. */
+  mark: 'kept' | 'declined' | null;
+  /**
+   * True when what the tree keeps is this proposal: the record as the AI was
+   * given it, with what the AI said here. False for a result that was kept
+   * from a search, or from another proposal about the same record; keeping
+   * this one then puts its reading and its reasons in the place of that.
+   */
+  keptAsProposed: boolean;
+  /** True when the person's page cites the record. */
+  attached: boolean;
+  /** True when the person may be living as the tree has them now. */
+  mayBeLiving: boolean;
+  /** When the record was read from its source, in Unix milliseconds. */
+  readAt: number;
+}
+
+/** The session and the proposals as they stand, for the line in the top bar and for the windows that follow them. */
+export interface AiSessionState {
+  /** The session that is under way, or the last one that ended since the tree was opened; null when there was none. */
+  session: AiSessionStatus | null;
+  /** How many proposals the app holds in memory. */
+  proposals: number;
+  /** Goes up whenever the proposals change, so that a list of them knows when to read again. */
+  proposalsRevision: number;
+}
+
+/** The AI assistant as it stands: whether it is on, what it may ask, and its session. */
+export interface AiAssistantInfo extends AiSessionState {
+  /** Whether the user agreed to the notice of the assistant as it is worded now. */
+  agreed: boolean;
+  /** Whether the user agreed to the notice of the search for records. */
+  searchAgreed: boolean;
+  /** False while this version of the app has no way to connect an AI to a session. */
+  canConnect: boolean;
+  /** The sources a session may ask, with what each is sent. */
+  sources: RecordSourceInfo[];
+  /** How many questions a session may send to one source. */
+  requestsPerSource: number;
+  /** After how many minutes without a call a session ends. */
+  idleMinutes: number;
+  /** How many calls of a tool a session takes in all. */
+  maxCalls: number;
+  /** How many days the activity log keeps an entry. */
+  logDays: number;
+}
+
+/** How many entries of the activity log are handed over in one go at most. */
+export const AI_ACTIVITY_PAGE_MAX = 200;
+
+/** One entry of the activity log of the AI assistant, in words. It never holds the text of a record. */
+export interface AiActivityInfo {
+  id: number;
+  /** When it happened, in Unix milliseconds. */
+  at: number;
+  /** Names the session, so that the entries of one session can be told from those of another. */
+  sessionId: string;
+  /** True when the entry is of the tree that is open now. */
+  thisTree: boolean;
+  /** What happened, in a sentence. */
+  what: string;
+}
+
+export interface AiActivityPage {
+  /** The latest first. */
+  items: AiActivityInfo[];
+  /** How many entries the log holds. */
+  total: number;
+}
 
 /** One place of the open tree: a text that events give as their place. */
 export interface TreePlaceInfo {
@@ -1373,6 +1617,43 @@ export interface RulzApi {
   getRecordRun(request: { runId: number; since: number }): Promise<RecordRunUpdate | null>;
   /** Ends the run that is under way: nothing more is sent, and an answer on its way is dropped. */
   stopRecordRun(): Promise<void>;
+
+  // The optional AI assistant. It is off until the user agrees to its notice.
+  /** The assistant as it stands. Sends nothing, and needs no open tree. */
+  getAiAssistant(): Promise<AiAssistantInfo>;
+  /** Notes that the user has agreed to what the assistant sends, and to whom. */
+  agreeToAiAssistant(): Promise<AiAssistantInfo>;
+  /**
+   * Turns the assistant off again: a session that is under way ends, and the
+   * proposals that were not kept are forgotten. What the tree keeps, and the
+   * activity log, stay.
+   */
+  turnOffAiAssistant(): Promise<AiAssistantInfo>;
+  /**
+   * Who a session from this person would be for, who is left out as possibly
+   * living, and the sources it may ask. Sends nothing and starts nothing.
+   * Null when the person is gone.
+   */
+  planAiSession(request: AiSessionPlanRequest): Promise<AiSessionPlan | null>;
+  /**
+   * Starts a session of the assistant from the plan the user saw: the time
+   * during which an AI the user connected may use the assistant's tools, for
+   * these people and these sources. Refused before both notices are agreed
+   * to, and when the tree is no longer as the plan showed it.
+   */
+  startAiSession(request: AiSessionStartRequest): Promise<AiSessionStartResult>;
+  /** The session and the count of proposals as they stand. Needs no open tree. */
+  getAiSession(): Promise<AiSessionState>;
+  /** Ends the session that is under way: no tool gives anything more, and nothing more is sent. */
+  stopAiSession(): Promise<AiSessionState>;
+  /** The proposals the app holds in memory, the latest first, each held against the tree as it is now. */
+  listAiProposals(): Promise<AiProposalItem[]>;
+  /** Forgets one proposal. Nothing changes in the tree. */
+  dismissAiProposal(request: AiProposalRef): Promise<AiSessionState>;
+  /** The activity log of the assistant, the latest first. Needs no open tree. */
+  listAiActivity(request: { offset: number; limit: number }): Promise<AiActivityPage>;
+  /** Removes every entry of the activity log. */
+  clearAiActivity(): Promise<AiActivityPage>;
   /** The ancestors and descendants a chart of one person shows. Null when the person is gone. */
   getChart(request: ChartRequest): Promise<ChartInfo | null>;
   /** How `otherId` is related to `personId`. */
@@ -1550,6 +1831,17 @@ export const API_METHODS = [
   'startRecordRun',
   'getRecordRun',
   'stopRecordRun',
+  'getAiAssistant',
+  'agreeToAiAssistant',
+  'turnOffAiAssistant',
+  'planAiSession',
+  'startAiSession',
+  'getAiSession',
+  'stopAiSession',
+  'listAiProposals',
+  'dismissAiProposal',
+  'listAiActivity',
+  'clearAiActivity',
   'getChart',
   'getRelationship',
   'findDuplicates',

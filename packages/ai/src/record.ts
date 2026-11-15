@@ -107,6 +107,20 @@ export function sharedRecordOf(record: ExternalRecord, manifest: ConnectorManife
       message: `This is not a record of ${manifest.name}.`,
     };
   }
+  return { ok: true, record: recordTextsOf(record, manifest) };
+}
+
+/**
+ * The texts of a record under their names, in the form a quote is looked up
+ * in, whatever the terms of its source say about passing it on.
+ *
+ * This is for checking a quote on the user's own PC, for the user's own
+ * screen: what an AI said of a record that the user kept is held against the
+ * kept record again when it is read back from a tree's file. Nothing made by
+ * this function may be passed on to an AI. That is `sharedRecordOf`, which
+ * asks first whether the source allows it and whether the record is its own.
+ */
+export function recordTextsOf(record: ExternalRecord, manifest: ConnectorManifest): SharedRecord {
   const fields: SharedField[] = [];
   const add = (name: string, value: unknown, max: number): void => {
     // One form of every letter, so that a quote can be found in it. Cutting a
@@ -139,16 +153,12 @@ export function sharedRecordOf(record: ExternalRecord, manifest: ConnectorManife
     add('about', record.about, MAX.about);
   }
   return {
-    ok: true,
-    record: {
-      sourceId: manifest.id,
-      sourceName: manifest.name,
-      attribution: manifest.attribution,
-      kind: record.kind,
-      sex:
-        record.kind === 'person' && (record.sex === 'M' || record.sex === 'F') ? record.sex : null,
-      url: record.url,
-      fields,
-    },
+    sourceId: manifest.id,
+    sourceName: manifest.name,
+    attribution: manifest.attribution,
+    kind: record.kind,
+    sex: record.kind === 'person' && (record.sex === 'M' || record.sex === 'F') ? record.sex : null,
+    url: record.url,
+    fields,
   };
 }
