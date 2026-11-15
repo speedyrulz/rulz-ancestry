@@ -1895,6 +1895,7 @@ describe('a session and the way an AI app reaches it', () => {
       connector: {
         file: 'C:\\app\\rulz-ancestry.mcpb',
         fileFits: false,
+        profile: 'D:\\elsewhere',
         command: 'claude mcp add rulz-ancestry',
       },
     });
@@ -2119,6 +2120,7 @@ describe('a session and the way an AI app reaches it', () => {
       canConnect: true,
       connectorCommand: 'claude mcp add rulz-ancestry',
       connectorFileFits: false,
+      connectorDataFolder: 'D:\\elsewhere',
       maxHours: 2,
     });
     expect(ai.connectorFile).toBe('C:\\app\\rulz-ancestry.mcpb');

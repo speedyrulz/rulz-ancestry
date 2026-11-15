@@ -130,7 +130,7 @@ function findConnector(): AiConnector | null {
   if (!existsSync(file) || !existsSync(bridge)) return null;
   const profile = app.getPath('userData');
   const usual = join(app.getPath('appData'), USUAL_PROFILE);
-  return { file, ...connectorCommandOf({ bridge, profile, usual }) };
+  return { file, profile, ...connectorCommandOf({ bridge, profile, usual }) };
 }
 
 function createMainWindow(): BrowserWindow {

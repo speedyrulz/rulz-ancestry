@@ -372,7 +372,12 @@ beforeEach(() => {
   let sessions = 0;
   ai = new AiSessionService(records, {
     appDb,
-    connector: { file: CONNECTOR_PATH, fileFits: true, command: CONNECTOR_COMMAND },
+    connector: {
+      file: CONNECTOR_PATH,
+      fileFits: true,
+      profile: 'C:\\data',
+      command: CONNECTOR_COMMAND,
+    },
     // The session does not wait between two questions in these tests.
     wait: (_ms, signal) =>
       signal.aborted ? Promise.reject(new Error('given up')) : Promise.resolve(),

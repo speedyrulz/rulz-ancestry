@@ -203,6 +203,9 @@ test('the AI assistant is off until its notice is agreed to; a session is listed
     /^claude mcp add rulz-ancestry --scope user --transport stdio --env "RULZ_ANCESTRY_PROFILE=[^"]+" "--" node "[^"]+bridge\.cjs"$/,
   );
   expect(command).toContain(`RULZ_ANCESTRY_PROFILE=${userDataDir}"`);
+  // And the window names that folder for the connector's setting in Claude Desktop.
+  await expect(connect.getByTestId('ai-connector-data-folder')).toHaveText(userDataDir);
+  await expect(connect.getByTestId('ai-connector-ways')).toContainText('Install Extension');
   await connect.getByTestId('ai-connector-copy').click();
   await expect(connect.getByTestId('ai-connector-copied')).toBeVisible();
   expect(await app.evaluate(() => (globalThis as unknown as { copied: string[] }).copied)).toEqual([

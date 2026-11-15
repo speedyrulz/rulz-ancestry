@@ -1266,6 +1266,12 @@ export interface AiAssistantInfo extends AiSessionState {
    * folder of its own).
    */
   connectorFileFits: boolean;
+  /**
+   * The folder this copy keeps its data in, for the user to give to the
+   * connector in Claude Desktop where {@link connectorFileFits} is false.
+   * Empty where it is true, and where there is no connector.
+   */
+  connectorDataFolder: string;
   /** The sources a session may ask, with what each is sent. */
   sources: RecordSourceInfo[];
   /** How many questions a session may send to one source. */

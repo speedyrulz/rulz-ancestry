@@ -1,8 +1,7 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { AppLink } from './link';
-import { PROFILE_ENV } from './protocol';
+import { profileDirOf } from './profile';
 import { clientOf, createBridgeServer } from './server';
 
 /**
@@ -22,20 +21,10 @@ import { clientOf, createBridgeServer } from './server';
 
 declare const __RULZ_VERSION__: string | undefined;
 
-/** The folder of the app's data, as the packaged app names it. */
-const USUAL_PROFILE = 'RulZ Ancestry';
-
-function profileDir(): string {
-  const named = process.env[PROFILE_ENV];
-  if (named !== undefined && named !== '') return named;
-  const roaming = process.env['APPDATA'];
-  return join(
-    roaming !== undefined && roaming !== '' ? roaming : join(homedir(), 'AppData', 'Roaming'),
-    USUAL_PROFILE,
-  );
-}
-
-const link = new AppLink({ profileDir: profileDir(), client: () => clientOf(server) });
+const link = new AppLink({
+  profileDir: profileDirOf(process.env, homedir()),
+  client: () => clientOf(server),
+});
 const server = createBridgeServer(
   link,
   typeof __RULZ_VERSION__ === 'string' ? __RULZ_VERSION__ : '0.0.0',

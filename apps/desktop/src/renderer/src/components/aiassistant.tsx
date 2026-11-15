@@ -263,14 +263,25 @@ function ConnectSection({ info }: { info: AiAssistantInfo }) {
           <button type="button" className="small" onClick={show} data-testid="ai-connector-show">
             Show the connector file
           </button>{' '}
-          and open it with a double click. Claude Desktop then asks whether to install it. If Claude
-          says later that the connector does not fit this app, install it again from here.
+          and drag it into the window of Claude Desktop, which then asks whether to install it.{' '}
+          <span data-testid="ai-connector-ways">
+            You can also choose the file in Claude Desktop: in its Settings, go to the extensions
+            (under &ldquo;Desktop app&rdquo;, &ldquo;Manage&rdquo; beside Extensions; in older
+            versions &ldquo;Extensions&rdquo;), then &ldquo;Advanced settings&rdquo; and
+            &ldquo;Install Extension&rdquo;. A double click on the file works only where Windows
+            knows that such files belong to Claude Desktop.
+          </span>{' '}
+          If Claude says later that the connector does not fit this app, install it again from here.
           {!info.connectorFileFits && (
             <span data-testid="ai-connector-other-folder">
               {' '}
-              This copy of the app keeps its data in another folder than an installed copy does, and
-              the connector file looks in the usual folder only: it will not find a session of this
-              copy.
+              This copy of the app keeps its data in another folder than an installed copy does. So
+              that the connector finds a session of this copy, choose this folder as the
+              connector&apos;s &ldquo;Data folder&rdquo; when Claude Desktop asks, or later in the
+              connector&apos;s settings there:
+              <code className="ai-command" data-testid="ai-connector-data-folder">
+                {info.connectorDataFolder}
+              </code>
             </span>
           )}
         </li>

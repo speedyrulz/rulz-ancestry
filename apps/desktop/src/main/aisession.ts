@@ -178,6 +178,8 @@ export interface AiConnector {
    * does not find a session of this copy.
    */
   fileFits: boolean;
+  /** The folder this copy of the app keeps its data in. */
+  profile: string;
   /** The command that adds the connector to Claude Code. */
   command: string;
 }
@@ -617,6 +619,8 @@ export class AiSessionService {
       canConnect: this.#connector !== null,
       connectorCommand: this.#connector?.command ?? '',
       connectorFileFits: this.#connector?.fileFits ?? false,
+      connectorDataFolder:
+        this.#connector === null || this.#connector.fileFits ? '' : this.#connector.profile,
       sources: this.#records.aiSources(),
       requestsPerSource: AI_SESSION_REQUESTS,
       idleMinutes: AI_SESSION_IDLE_MS / 60_000,

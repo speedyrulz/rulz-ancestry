@@ -76,7 +76,22 @@ const manifest = {
   server: {
     type: 'node',
     entry_point: 'server/bridge.cjs',
-    mcp_config: { command: 'node', args: ['${__dirname}/server/bridge.cjs'], env: {} },
+    mcp_config: {
+      command: 'node',
+      args: ['${__dirname}/server/bridge.cjs'],
+      // The bridge takes this only when it is a full path (src/bridge/profile.ts),
+      // so a setting that was left empty changes nothing.
+      env: { RULZ_ANCESTRY_PROFILE: '${user_config.data_folder}' },
+    },
+  },
+  user_config: {
+    data_folder: {
+      type: 'directory',
+      title: 'Data folder of RulZ Ancestry (leave empty)',
+      description:
+        'Leave this empty for an installed copy of RulZ Ancestry. Only a copy that keeps its data in another folder needs it; the window "AI assistant" of that copy names the folder.',
+      required: false,
+    },
   },
   tools: tools.map(({ name, description }) => ({ name, description })),
   prompts_generated: true,

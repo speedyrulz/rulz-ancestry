@@ -326,7 +326,9 @@ there now:
   any time. It also ends after 15 minutes without a call, after two hours at
   the latest, and when the tree or the app closes.
 - **Connecting an AI app** is in the same window, under "Connect an AI app".
-  For Claude Desktop the app hands out a connector file that you open once.
+  For Claude Desktop the app hands out a connector file that you drag into
+  the window of Claude Desktop once (or choose there under Settings,
+  Extensions, Advanced settings, "Install Extension").
   For Claude Code it shows a command to copy, which needs Node.js 18 or later
   on the PC. The AI app can reach the app only while a session is under way:
   the app then listens on a connection of this PC that is protected by a key
