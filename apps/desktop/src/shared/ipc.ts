@@ -1280,6 +1280,115 @@ export interface PacksState {
 }
 
 export type PackActionResult = { ok: true } | { ok: false; message: string };
+
+/** The kind of a pack built from one state's metadata file of the 1950 US census. */
+export const CENSUS_PACK_KIND = 'nara-1950-areas';
+
+/** A state (or territory) of the 1950 US census that may be installed as a pack, as the bucket lists it. */
+export interface CensusStateInfo {
+  /** Two lower-case letters, as the bucket names the file, e.g. "de". */
+  code: string;
+  /** The state's name, from the app's own table of the codes. */
+  name: string;
+  /** The size of its metadata file, the download. */
+  bytes: number;
+  /** The file's last-changed day, `YYYY-MM-DD`. */
+  modified: string;
+  /** About how large the pack will be once built. */
+  estimateBytes: number;
+  /** "update": installed, and the file is not the one the pack was made from. */
+  installed: 'no' | 'current' | 'update';
+}
+
+export type CensusStatesResult =
+  | {
+      ok: true;
+      states: CensusStateInfo[];
+      /** Free space on the packs folder's drive; null when it cannot be read. */
+      freeBytes: number | null;
+      /** When this listing stops being held, ms since the epoch; install after it needs a new look. */
+      expiresAt: number;
+    }
+  | { ok: false; message: string };
+
+/** A county or independent city of an installed state, with how many districts it has. */
+export interface CensusCountyInfo {
+  /** Empty for a territory, which has no counties. */
+  name: string;
+  districts: number;
+}
+
+export type CensusCountiesResult =
+  { ok: true; counties: CensusCountyInfo[] } | { ok: false; message: string };
+
+export interface CensusDistrictsRequest {
+  packId: string;
+  county: string;
+  /** Words that every listed district's description must hold; empty for all. */
+  filter: string;
+  /** How many districts come before the first that is asked for. */
+  offset: number;
+}
+
+/** One enumeration district in a list: never its page list. */
+export interface CensusDistrictSummary {
+  /** The district's row in its pack: how every later request names it. */
+  id: number;
+  /** Which file of the pack the row is of; a request with another is refused, since the row may be another district now. */
+  generation: number;
+  /** The district's number, e.g. "1-1"; empty for a territory. */
+  ed: string;
+  /** The start of its description, at most 200 characters. */
+  descriptionStart: string;
+  pages: number;
+}
+
+export type CensusDistrictsResult =
+  { ok: true; districts: CensusDistrictSummary[]; total: number } | { ok: false; message: string };
+
+/** A district of an installed pack, by its row. */
+export interface CensusDistrictRef {
+  packId: string;
+  id: number;
+  /** The generation the list or district answer gave with the row. */
+  generation: number;
+}
+
+export interface CensusDistrictInfo {
+  packId: string;
+  id: number;
+  generation: number;
+  state: string;
+  county: string;
+  ed: string;
+  description: string;
+  reservation: string;
+  roll: string;
+  pages: number;
+}
+
+export type CensusDistrictResult =
+  { ok: true; district: CensusDistrictInfo } | { ok: false; message: string };
+
+/** A page of a district, numbered from 1. */
+export interface CensusPageRequest extends CensusDistrictRef {
+  page: number;
+}
+
+export type CensusPageImageResult =
+  | {
+      ok: true;
+      /** The JPEG, held in memory only. */
+      bytes: Uint8Array;
+      page: number;
+      pages: number;
+    }
+  | { ok: false; problem: RecordSearchProblem };
+
+/** Cites the page last shown, and only that one, for a person of the tree. */
+export interface CensusCiteRequest extends CensusPageRequest {
+  personId: string;
+}
 export type AiActionResult = { ok: true } | { ok: false; message: string };
 
 export type AiSessionStartResult =
@@ -1855,6 +1964,22 @@ export interface RulzApi {
   describePackArchive(code: string): Promise<PackOfferResult>;
   /** Installs or updates the archive as last described, if that description is still held. */
   installPackArchive(code: string): Promise<PackActionResult>;
+  /** Lists the states of the 1950 US census in the National Archives' bucket. Sends nothing about the user or the tree. */
+  listCensusStates(): Promise<CensusStatesResult>;
+  /** Installs or updates a state as last listed, if that listing is still held. */
+  installCensusState(code: string): Promise<PackActionResult>;
+  /** The counties of an installed state. Asks nothing of the internet. */
+  censusCounties(packId: string): Promise<CensusCountiesResult>;
+  /** A page of a county's districts. Asks nothing of the internet. */
+  censusDistricts(request: CensusDistrictsRequest): Promise<CensusDistrictsResult>;
+  /** One district, with its full description. Asks nothing of the internet. */
+  censusDistrict(request: CensusDistrictRef): Promise<CensusDistrictResult>;
+  /** Fetches one page image from the bucket, for the window only; never stored. Needs the search notice agreed. */
+  censusPageImage(request: CensusPageRequest): Promise<CensusPageImageResult>;
+  /** Cites the page last shown for a person: the source, the page and its address. Sends nothing. */
+  citeCensusPage(request: CensusCiteRequest): Promise<AttachRecordResult>;
+  /** Opens the district at the National Archives' 1950 census site in the browser. */
+  openCensusDistrict(request: CensusDistrictRef): Promise<PackActionResult>;
   /** The proposals the app holds in memory, the latest first, each held against the tree as it is now. */
   listAiProposals(): Promise<AiProposalItem[]>;
   /** Forgets one proposal. Nothing changes in the tree. */
@@ -2066,6 +2191,14 @@ export const API_METHODS = [
   'listPackArchives',
   'describePackArchive',
   'installPackArchive',
+  'listCensusStates',
+  'installCensusState',
+  'censusCounties',
+  'censusDistricts',
+  'censusDistrict',
+  'censusPageImage',
+  'citeCensusPage',
+  'openCensusDistrict',
   'listAiProposals',
   'dismissAiProposal',
   'listAiActivity',

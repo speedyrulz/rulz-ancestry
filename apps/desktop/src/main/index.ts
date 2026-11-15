@@ -26,6 +26,8 @@ import { DEV_PROFILE, USUAL_PROFILES } from '../bridge/profile';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type Platform } from './handlers';
 import { GazetteerService } from './gazetteer';
+import { CensusOffers } from './censusoffers';
+import { CensusService } from './censuspages';
 import { workerBuildRunner } from './packbuild';
 import buildWorkerPath from './packbuild.worker?modulePath';
 import { PackOffers } from './packoffers';
@@ -52,6 +54,7 @@ let aiSession: AiSessionService | undefined;
 let treeSession: TreeSession | undefined;
 let gazetteer: GazetteerService | undefined;
 let packs: PackManager | undefined;
+let censusService: CensusService | undefined;
 let treeEngine: AppInfo['treeEngine'] = { ok: false, error: 'not checked yet' };
 /** True once a job of the packs was told to stop for the quit. */
 let packsStopped = false;
@@ -370,6 +373,8 @@ function registerIpc(
   runs: RecordRun,
   packManager: PackManager,
   packOffers: PackOffers,
+  censusOffers: CensusOffers,
+  census: CensusService,
 ): void {
   const handlers = createHandlers(
     session,
@@ -380,6 +385,8 @@ function registerIpc(
     runs,
     packManager,
     packOffers,
+    censusOffers,
+    census,
   );
   for (const method of API_METHODS) {
     ipcMain.handle(
@@ -433,6 +440,7 @@ if (!app.requestSingleInstanceLock()) {
   // log. The pipe an AI app reached it by goes with it.
   app.on('before-quit', (event) => {
     aiSession?.stop('quit');
+    censusService?.cancelImage();
     // A pack that is being built is given up, and what it made so far is
     // deleted, before the app goes: the quit waits for that, a few seconds at most.
     if (packs?.running === true && !packsStopped) {
@@ -509,6 +517,13 @@ if (!app.requestSingleInstanceLock()) {
       appVersion: app.getVersion(),
       packs: manager,
     });
+    // The states of the 1950 census that can be installed as packs. Asked
+    // only when the user presses a button.
+    const censusOffers = new CensusOffers({
+      fetch: (url, init) => net.fetch(url, init),
+      appVersion: app.getVersion(),
+      packs: manager,
+    });
     try {
       manager.start();
     } catch (error) {
@@ -536,6 +551,17 @@ if (!app.requestSingleInstanceLock()) {
       secrets,
     });
 
+    // Browsing the packs of the 1950 census. The one request it makes is for a
+    // page image of the census bucket, when the user views a page.
+    const census = new CensusService({
+      packs: manager,
+      fetch: (url, init) => net.fetch(url, init),
+      appVersion: app.getVersion(),
+      agreed: () => records.agreed,
+      openInBrowser: (url) => platform.openInBrowser(url),
+    });
+    censusService = census;
+
     const runs = new RecordRun(records);
     // The optional AI assistant. It is off until the user turns it on, and
     // its tools give nothing outside a session the user started.
@@ -561,7 +587,17 @@ if (!app.requestSingleInstanceLock()) {
       connector: findConnector(),
     });
     aiSession = ai;
-    registerIpc(treeSession, gazetteer, records, ai, runs, manager, packOffers);
+    registerIpc(
+      treeSession,
+      gazetteer,
+      records,
+      ai,
+      runs,
+      manager,
+      packOffers,
+      censusOffers,
+      census,
+    );
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded
@@ -574,6 +610,7 @@ if (!app.requestSingleInstanceLock()) {
       runs.stop();
       ai.stop('page');
       records.cancel();
+      census.cancelImage();
     };
     mainWindow.webContents.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) pageGone();

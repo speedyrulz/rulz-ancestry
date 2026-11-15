@@ -2221,7 +2221,12 @@ describe('a search opened in the browser', () => {
     await call('agreeToRecordSearch');
     const ada = await addPerson('Ada', { birthDate: '1850', deathDate: '1910' });
     const setup = await call<RecordSearchSetup>('getRecordSearch', ada);
-    expect(setup.links.map((link) => link.id)).toEqual(['familysearch-records', 'find-a-grave']);
+    // A person born in 1850 may be in the 1950 census; the name search of it is listed.
+    expect(setup.links.map((link) => link.id)).toEqual([
+      'familysearch-records',
+      'find-a-grave',
+      'nara-1950-search',
+    ]);
 
     expect(await open(ada)).toEqual({ ok: true });
     expect(await open(ada, 'familysearch-records')).toEqual({ ok: true });

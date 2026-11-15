@@ -20,21 +20,51 @@ export interface SearchQuery {
   years?: { from: number; to: number };
 }
 
+/** What a browse of a pack asks: see `PackReader.distinct`, `list` and `get`. */
+export interface DistinctQuery {
+  column: string;
+  where?: Record<string, string>;
+  limit: number;
+  offset: number;
+}
+export interface ListQuery {
+  columns: readonly string[];
+  where?: Record<string, string>;
+  contains?: { column: string; words: string };
+  limit: number;
+  offset: number;
+}
+export interface GetQuery {
+  rowid: number;
+  columns: readonly string[];
+}
+
+/** What every request of a query has: its number, the pack, and the shared flag that stops it. */
+interface QueryRequest {
+  qid: number;
+  id: string;
+  /** The pack's file. */
+  path: string;
+  /** The query stops when this holds anything but nought. */
+  flag: Int32Array;
+}
+
 export type SearchRequest =
-  | {
-      type: 'search';
-      qid: number;
-      id: string;
-      /** The pack's file. */
-      path: string;
-      q: SearchQuery;
-      /** The query stops when this holds anything but nought. */
-      flag: Int32Array;
-    }
+  | ({ type: 'search'; q: SearchQuery } & QueryRequest)
+  | ({ type: 'distinct'; q: DistinctQuery } & QueryRequest)
+  | ({ type: 'list'; q: ListQuery } & QueryRequest)
+  | ({ type: 'get'; q: GetQuery } & QueryRequest)
   | { type: 'close'; cid: number; id: string };
+
+/** The answer of a browse, as the reader gives it. */
+export type BrowseResult =
+  | { kind: 'distinct'; values: { value: string; count: number }[] }
+  | { kind: 'list'; rows: { rowid: number; values: Record<string, string> }[]; total: number }
+  | { kind: 'get'; row: { rowid: number; values: Record<string, string> } | null };
 
 export type SearchReply =
   | { type: 'result'; qid: number; rows: Record<string, string>[]; total: number }
+  | { type: 'browsed'; qid: number; result: BrowseResult }
   | { type: 'error'; qid: number; kind: 'stopped' | 'missing' | 'failed'; message: string }
   | { type: 'closed'; cid: number };
 
@@ -46,7 +76,7 @@ export class SearchHost {
       this.#drop(request.id);
       return { type: 'closed', cid: request.cid };
     }
-    const { qid, id, path, q, flag } = request;
+    const { qid, id, path, flag } = request;
     try {
       let held = this.#readers.get(id);
       if (held !== undefined && held.path !== path) {
@@ -65,8 +95,35 @@ export class SearchHost {
         held = { path, reader: opened.reader };
         this.#readers.set(id, held);
       }
-      const found = held.reader.search(q, () => Atomics.load(flag, 0) !== 0);
-      return { type: 'result', qid, rows: found.rows, total: found.total };
+      const stop = () => Atomics.load(flag, 0) !== 0;
+      const { reader } = held;
+      switch (request.type) {
+        case 'search': {
+          const found = reader.search(request.q, stop);
+          return { type: 'result', qid, rows: found.rows, total: found.total };
+        }
+        case 'distinct':
+          return {
+            type: 'browsed',
+            qid,
+            result: { kind: 'distinct', ...reader.distinct(request.q, stop) },
+          };
+        case 'list':
+          return {
+            type: 'browsed',
+            qid,
+            result: { kind: 'list', ...reader.list(request.q, stop) },
+          };
+        case 'get':
+          return {
+            type: 'browsed',
+            qid,
+            result: {
+              kind: 'get',
+              row: reader.get(request.q.rowid, request.q.columns, stop),
+            },
+          };
+      }
     } catch (error) {
       if (error instanceof PackSearchStopped) {
         return { type: 'error', qid, kind: 'stopped', message: error.message };

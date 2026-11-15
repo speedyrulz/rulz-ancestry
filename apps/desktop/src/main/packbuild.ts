@@ -1,9 +1,20 @@
-import { closeSync, createReadStream, openSync, readSync, statfsSync } from 'node:fs';
+import { closeSync, createReadStream, openSync, readFileSync, readSync, statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { Worker } from 'node:worker_threads';
 import { createGunzip } from 'node:zlib';
-import { OA_BUILDER_VERSION, OA_PACK_KIND, oaLayout, splitOaLine } from '@rulz/connectors';
+import {
+  CENSUS_BUILDER_VERSION,
+  CENSUS_COLUMNS,
+  CENSUS_HOST,
+  NARA_CENSUS_PACK_KIND,
+  OA_BUILDER_VERSION,
+  OA_PACK_KIND,
+  censusSkipAcceptable,
+  oaLayout,
+  parseCensusState,
+  splitOaLine,
+} from '@rulz/connectors';
 import { PackWriter, type PackMeta } from '@rulz/db';
 
 /**
@@ -12,10 +23,12 @@ import { PackWriter, type PackMeta } from '@rulz/db';
  * it in a worker thread of its own, so that a build of millions of rows never
  * holds up the app's window.
  *
- * Each file is a CSV, packed with gzip or not. A file's first line names its
- * columns. The pack's columns are all the files' columns, in the order they
- * first appear, and each row is placed by the header of its own file; a row
- * that does not have as many fields as its header is left out and counted.
+ * Each kind of pack has a build of its own, since its source's files differ.
+ * Open Archives' files are CSVs, packed with gzip or not: a file's first line
+ * names its columns, the pack's columns are all the files' columns in the
+ * order they first appear, and each row is placed by the header of its own
+ * file; a row that does not have as many fields as its header is left out and
+ * counted. A state of the 1950 census is one JSON file, read whole.
  */
 
 /** What one kind of pack knows about its source's files. */
@@ -26,6 +39,14 @@ export interface PackKind {
   allowedHosts: readonly string[];
   /** A file larger than this is not downloaded. */
   maxFileBytes: number;
+  /** About how many times the size of its files a pack of this kind takes of the disk, while it is made. */
+  spaceFactor: number;
+  /** Builds a pack of this kind from the downloaded files. */
+  build(input: BuildInput, hooks: BuildHooks): Promise<PackMeta>;
+}
+
+/** What the CSV build needs to know of a kind of pack whose files are CSVs. */
+interface CsvShape {
   /** The columns whose text is searched, from a header. Throws when the header is not this kind's. */
   layout(header: readonly string[]): { ftsNames: string[]; ftsPlaces: string[] };
   /** The column that holds the year of a row. */
@@ -35,6 +56,16 @@ export interface PackKind {
 }
 
 const GB = 1024 * 1024 * 1024;
+const MB = 1024 * 1024;
+
+const OA_CSV: CsvShape = {
+  layout: (header) => {
+    const { ftsNames, ftsPlaces } = oaLayout(header);
+    return { ftsNames, ftsPlaces };
+  },
+  yearColumn: 'EVENT_YEAR',
+  split: splitOaLine,
+};
 
 /** The kinds of pack this build of the app knows. A pack of another kind is not used. */
 export const PACK_KINDS: Readonly<Record<string, PackKind>> = {
@@ -42,12 +73,17 @@ export const PACK_KINDS: Readonly<Record<string, PackKind>> = {
     builderVersion: OA_BUILDER_VERSION,
     allowedHosts: ['oa-export.s3.nl-ams.scw.cloud'],
     maxFileBytes: 20 * GB,
-    layout: (header) => {
-      const { ftsNames, ftsPlaces } = oaLayout(header);
-      return { ftsNames, ftsPlaces };
-    },
-    yearColumn: 'EVENT_YEAR',
-    split: splitOaLine,
+    spaceFactor: 12,
+    build: (input, hooks) => buildCsvPack(OA_CSV, input, hooks),
+  },
+  [NARA_CENSUS_PACK_KIND]: {
+    builderVersion: CENSUS_BUILDER_VERSION,
+    allowedHosts: [CENSUS_HOST],
+    // The largest state file is about 51 MB.
+    maxFileBytes: 80 * MB,
+    // The file, and a pack of about 0.6 times its size.
+    spaceFactor: 3,
+    build: buildCensusPack,
   },
 };
 
@@ -154,7 +190,7 @@ async function* linesOf(path: string): AsyncGenerator<string> {
   }
 }
 
-async function headerOf(path: string, kind: PackKind): Promise<string[]> {
+async function headerOf(path: string, kind: CsvShape): Promise<string[]> {
   const lines = linesOf(path);
   try {
     const first = await lines.next();
@@ -173,15 +209,25 @@ const yearOf = (text: string | undefined): number | null =>
   text !== undefined && /^\d{1,4}$/.test(text.trim()) ? Number(text.trim()) : null;
 
 /**
- * Builds the pack of `input.files` at `input.outPath`. Throws `BuildStopped`
- * when `hooks.stop()` says so, and an error when a file is not one of the
- * pack's kind or the disk is nearly full. On any failure the file is left for
- * the caller to delete.
+ * Builds the pack of `input.files` at `input.outPath`, in the way of its kind.
+ * Throws `BuildStopped` when `hooks.stop()` says so, and an error when a file
+ * is not one of the pack's kind or the disk is nearly full. On any failure the
+ * file is left for the caller to delete.
  */
 export async function buildPack(input: BuildInput, hooks: BuildHooks): Promise<PackMeta> {
   const kind = PACK_KINDS[input.kind];
   if (kind === undefined)
     throw new Error(`This app does not know packs of the kind ${input.kind}.`);
+  return kind.build(input, hooks);
+}
+
+/** Builds a pack from CSV files (see the top of this file). */
+async function buildCsvPack(
+  kind: CsvShape,
+  input: BuildInput,
+  hooks: BuildHooks,
+): Promise<PackMeta> {
+  const builderVersion = PACK_KINDS[input.kind]?.builderVersion ?? 0;
   const freeBytes = hooks.freeBytes ?? freeBytesOf;
   const outDir = dirname(input.outPath);
 
@@ -249,7 +295,7 @@ export async function buildPack(input: BuildInput, hooks: BuildHooks): Promise<P
     return writer.finish({
       packId: input.meta.packId,
       kind: input.kind,
-      builderVersion: kind.builderVersion,
+      builderVersion,
       title: input.meta.title,
       sourceName: input.meta.sourceName,
       sourceUrl: input.meta.sourceUrl,
@@ -264,6 +310,104 @@ export async function buildPack(input: BuildInput, hooks: BuildHooks): Promise<P
       })),
       downloadedAt: input.meta.downloadedAt,
       skipped,
+      ...(input.meta.sourceModified !== undefined
+        ? { sourceModified: input.meta.sourceModified }
+        : {}),
+    });
+  } catch (error) {
+    writer.abandon();
+    throw error;
+  }
+}
+
+const CENSUS_BATCH = 500;
+
+/** Reads a state's file; its text is let go of when this returns, before the rows are written. */
+function readCensusFile(path: string): ReturnType<typeof parseCensusState> {
+  const text = readFileSync(path, 'utf8');
+  let json: unknown;
+  try {
+    json = JSON.parse(text.startsWith(BOM) ? text.slice(1) : text);
+  } catch {
+    throw new Error('The file is not JSON.');
+  }
+  return parseCensusState(json);
+}
+
+/**
+ * Builds a pack from one state's metadata file of the 1950 census. The file
+ * is read whole and parsed with `JSON.parse` (the largest is about 51 MB); a
+ * row is made for each enumeration district, or one for a territory, which
+ * has none. A district whose paths or page list are not as the bucket's own
+ * are is left out and counted; the build fails when more than 1% are.
+ */
+async function buildCensusPack(input: BuildInput, hooks: BuildHooks): Promise<PackMeta> {
+  const [file] = input.files;
+  if (input.files.length !== 1 || file === undefined) {
+    throw new Error('A pack of the census is made from one file.');
+  }
+  if (hooks.stop()) throw new BuildStopped();
+  const state = readCensusFile(file.path);
+  if (hooks.stop()) throw new BuildStopped();
+  // A pack of a state is named after the state's code: the file must be that state's.
+  if (!input.meta.packId.endsWith(state.abbreviation.toLowerCase())) {
+    throw new Error('The file is not the state this pack is for.');
+  }
+  if (!censusSkipAcceptable(state.skippedDistricts, state.districts)) {
+    throw new Error(
+      `${state.skippedDistricts} of ${state.districts} districts are not as they must be, so the pack was not made.`,
+    );
+  }
+  if (state.rows.length === 0) throw new Error('The file holds no districts.');
+  const writer = PackWriter.create(input.outPath, CENSUS_COLUMNS, {
+    names: [],
+    places: ['county', 'description'],
+  });
+  try {
+    let written = 0;
+    for (let from = 0; from < state.rows.length; from += CENSUS_BATCH) {
+      const batch = state.rows.slice(from, from + CENSUS_BATCH);
+      writer.add(
+        batch.map((row) => ({
+          year: null,
+          values: [
+            row.state,
+            row.abbreviation,
+            row.county,
+            row.ed,
+            row.description,
+            row.reservation,
+            row.roll,
+            row.descriptionImage,
+            row.folder,
+            JSON.stringify(row.files),
+            JSON.stringify(row.maps),
+            String(row.files.length),
+          ],
+        })),
+      );
+      written += batch.length;
+      hooks.progress(written);
+      if (hooks.stop()) throw new BuildStopped();
+    }
+    return writer.finish({
+      packId: input.meta.packId,
+      kind: input.kind,
+      builderVersion: CENSUS_BUILDER_VERSION,
+      title: input.meta.title,
+      sourceName: input.meta.sourceName,
+      sourceUrl: input.meta.sourceUrl,
+      licence: input.meta.licence,
+      credit: input.meta.credit,
+      files: input.files.map(({ url, bytes, sha256, etag, modified }) => ({
+        url,
+        bytes,
+        sha256,
+        etag,
+        modified,
+      })),
+      downloadedAt: input.meta.downloadedAt,
+      skipped: state.skippedDistricts + state.skippedImages,
       ...(input.meta.sourceModified !== undefined
         ? { sourceModified: input.meta.sourceModified }
         : {}),

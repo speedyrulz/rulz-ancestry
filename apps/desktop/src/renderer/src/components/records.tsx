@@ -7,6 +7,7 @@ import {
   type TextQuery,
 } from '@rulz/core';
 import { useEffect, useRef, useState } from 'react';
+import { CENSUS_PACK_KIND, type PackInfo } from '../../../shared/ipc';
 import type {
   PersonCitationInfo,
   RecordFitInfo,
@@ -19,6 +20,7 @@ import type {
 import { api, errorMessage } from '../api';
 import { countOf } from '../format';
 import { ClipDialog } from './citations';
+import { CensusPanel } from './census';
 import { RecordCompareDialog, dateWords, fitWhy, fitWords } from './recordcompare';
 import { Dialog, TextField } from './ui';
 
@@ -235,16 +237,20 @@ export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeP
           your PC. Each service has its own privacy rules.
         </li>
         <li>
+          <strong>1950 census pages:</strong> viewing a page asks the National Archives bucket
+          nara-1950-census.s3.us-east-2.amazonaws.com for that page, and nothing about the person.
+        </li>
+        <li>
           <strong>When:</strong> only when you press &quot;Search&quot;, or &quot;Start&quot; in a
           search for ancestors. Nothing is sent while you type, and nothing in the background: a
           search for ancestors ends when you close its window.
         </li>
         <li>
           <strong>Other sites:</strong> {links.map((link) => link.name).join(', ')}. The app does
-          not ask these itself. A button opens a search there in your own browser, and the name and
-          the years of the search for people are part of the address it opens. That site, and your
-          browser&apos;s history, then hold them; if you are signed in there, the site knows who
-          searched.
+          not ask these itself. A button opens a search there in your own browser, and the name of
+          the person, and for some sites their years, are part of the address it opens. That site,
+          and your browser&apos;s history, then hold them; if you are signed in there, the site
+          knows who searched.
         </li>
         <li>
           <strong>Living people:</strong> the app does not search for a person who may be living,
@@ -671,6 +677,23 @@ export function RecordSearchDialog({
   onClose,
 }: RecordSearchDialogProps) {
   const [setup, setSetup] = useState<RecordSearchSetup | null>(null);
+  const [censusPacks, setCensusPacks] = useState<PackInfo[]>([]);
+  const [censusNotice, setCensusNotice] = useState(false);
+  useEffect(() => {
+    let current = true;
+    void api.getPacks().then(
+      (result) => {
+        if (current)
+          setCensusPacks(
+            result.packs.filter((pack) => pack.kind === CENSUS_PACK_KIND && pack.state === 'ready'),
+          );
+      },
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Form>(
     formOf({
@@ -934,7 +957,10 @@ export function RecordSearchDialog({
 
   const agree = () => {
     api.agreeToRecordSearch().then(
-      () => setSetup((now) => (now === null ? now : { ...now, agreed: true })),
+      () => {
+        setCensusNotice(false);
+        setSetup((now) => (now === null ? now : { ...now, agreed: true }));
+      },
       (problem: unknown) => setError(errorMessage(problem)),
     );
   };
@@ -968,17 +994,17 @@ export function RecordSearchDialog({
         </div>
       )}
 
-      {setup !== null && setup.allowed && !setup.agreed && (
+      {setup !== null && ((setup.allowed && !setup.agreed) || censusNotice) && (
         <RecordNotice
           sources={setup.sources}
           links={setup.links}
           onAgree={agree}
-          onClose={onClose}
+          onClose={setup.allowed && !setup.agreed ? onClose : () => setCensusNotice(false)}
         />
       )}
 
       {setup !== null && setup.allowed && setup.agreed && (
-        <>
+        <div hidden={censusNotice}>
           <h3>People</h3>
           <form
             className="record-form"
@@ -1215,7 +1241,19 @@ export function RecordSearchDialog({
               Cite a page of another site
             </button>
           </section>
-        </>
+        </div>
+      )}
+
+      {setup !== null && censusPacks.length > 0 && (
+        <div hidden={censusNotice}>
+          <CensusPanel
+            packs={censusPacks}
+            personId={personId}
+            name={name}
+            onTree={onTree}
+            onNotice={() => setCensusNotice(true)}
+          />
+        </div>
       )}
 
       {clip !== null && (

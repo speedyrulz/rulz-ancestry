@@ -34,7 +34,7 @@ import {
   BuildStopped,
 } from './packbuild';
 import type { PackSearch } from './packsearch';
-import type { SearchQuery } from './packsearch.worker';
+import type { DistinctQuery, GetQuery, ListQuery, SearchQuery } from './packsearch.worker';
 import { dayStart, userAgentOf } from './records';
 
 /**
@@ -64,8 +64,6 @@ export const PACKS_ROOT_SETTING = 'packs.root';
 const MB = 1024 * 1024;
 /** What must stay free on the drive. */
 const RESERVE_BYTES = 512 * MB;
-/** A pack takes about this many times the size of its files. */
-const SPACE_FACTOR = 12;
 /** Without a length, the free space is looked at after this much. */
 const RECHECK_BYTES = 64 * MB;
 /** How long a finished job stays in the state. */
@@ -259,6 +257,10 @@ export class PackManager {
   readonly #removing = new Set<string>();
   /** What was read of each pack's file, by its size and time. */
   readonly #infos = new Map<string, { signature: string; info: PackInfo }>();
+  /** Told when a pack's file is about to be replaced or deleted. */
+  readonly #leaving: ((id: string) => void)[] = [];
+  /** See {@link generationOf}. */
+  readonly #generations = new Map<string, number>();
 
   constructor(options: PackManagerOptions) {
     this.#appDb = options.appDb;
@@ -571,6 +573,76 @@ export class PackManager {
     return this.#search.search(id, q, signal);
   }
 
+  /** The pack that is ready, or a `PackError` when it is not one that can be read. */
+  #readable(id: string): void {
+    if (!PACK_ID_PATTERN.test(id) || !this.ready().some((pack) => pack.id === id)) {
+      throw new PackError('This pack is not installed.');
+    }
+  }
+
+  /** The values of a column of a pack, each with how many rows hold it. */
+  async distinct(
+    id: string,
+    q: DistinctQuery,
+    signal: AbortSignal,
+  ): Promise<{ value: string; count: number }[]> {
+    this.#readable(id);
+    return this.#search.distinct(id, q, signal);
+  }
+
+  /** Some columns of some rows of a pack, each with its row number. */
+  async list(
+    id: string,
+    q: ListQuery,
+    signal: AbortSignal,
+  ): Promise<{ rows: { rowid: number; values: Record<string, string> }[]; total: number }> {
+    this.#readable(id);
+    return this.#search.list(id, q, signal);
+  }
+
+  /** Some columns of one row of a pack, by its row number. */
+  async get(
+    id: string,
+    q: GetQuery,
+    signal: AbortSignal,
+  ): Promise<{ rowid: number; values: Record<string, string> } | null> {
+    this.#readable(id);
+    return this.#search.get(id, q, signal);
+  }
+
+  /**
+   * Asks to be told, with the pack's id, when a pack's file is about to be
+   * replaced or deleted: whatever is reading it from outside the search worker
+   * (an image being fetched for a district of it) is to let go.
+   */
+  whenLeaving(listener: (id: string) => void): void {
+    this.#leaving.push(listener);
+  }
+
+  /**
+   * A number that changes whenever a pack's file is about to be replaced or
+   * deleted, and again once that is done. A reader that sees the same number
+   * before and after a read knows both reads were of one file.
+   */
+  generationOf(id: string): number {
+    return this.#generations.get(id) ?? 0;
+  }
+
+  #bump(id: string): void {
+    this.#generations.set(id, this.generationOf(id) + 1);
+  }
+
+  #leave(id: string): void {
+    this.#bump(id);
+    for (const listener of this.#leaving) {
+      try {
+        listener(id);
+      } catch {
+        // A listener that fails must not keep a pack from being replaced or removed.
+      }
+    }
+  }
+
   // ---- installing ----------------------------------------------------------
 
   #validate(spec: PackInstallSpec): void {
@@ -733,10 +805,10 @@ export class PackManager {
       locked = true;
       this.#removeLeftovers(work, newFile);
 
-      // Is there room? A pack takes about twelve times the size of its files.
+      // Is there room? A pack takes some times the size of its files, as its kind says.
       const total = await this.#remoteLength(job, spec);
       job.totalBytes = total;
-      this.#requireRoom((total ?? 0) * SPACE_FACTOR + this.#reserve);
+      this.#requireRoom((total ?? 0) * kind.spaceFactor + this.#reserve);
       signal.throwIfAborted();
 
       const folder = lstatOrNull(work);
@@ -756,7 +828,7 @@ export class PackManager {
       // Without sizes from the source, the room is looked at again with the real ones.
       if (total === null) {
         const actual = files.reduce((sum, file) => sum + file.bytes, 0);
-        this.#requireRoom(actual * SPACE_FACTOR + this.#reserve);
+        this.#requireRoom(actual * kind.spaceFactor + this.#reserve);
       }
 
       job.phase = 'building';
@@ -1023,6 +1095,7 @@ export class PackManager {
     const pack = this.pathOf(id);
     const old = `${pack}.old`;
     const fresh = `${pack}.new`;
+    this.#leave(id);
     await this.#search.hold(id);
     try {
       const plain = (stats: Stats | null) =>
@@ -1084,6 +1157,7 @@ export class PackManager {
         }
       }
     } finally {
+      this.#bump(id);
       this.#search.release(id);
     }
   }
@@ -1117,6 +1191,7 @@ export class PackManager {
     }
     this.#removing.add(id);
     try {
+      this.#leave(id);
       await this.#search.hold(id);
       try {
         await this.#retry(() => unlinkSync(path));
@@ -1127,6 +1202,7 @@ export class PackManager {
             'The pack file could not be deleted; another program may be using it. Try again.',
         };
       } finally {
+        this.#bump(id);
         this.#search.release(id);
       }
       this.#infos.delete(id);

@@ -1557,6 +1557,42 @@ ul.media-grid,
 }
 
 /* Offline data packs */
+.census-pack-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem;
+}
+
+.census-panel > label {
+  display: block;
+  margin: 0.5rem 0;
+}
+
+.census-districts {
+  padding-left: 1.5rem;
+}
+
+.census-districts button {
+  text-align: left;
+}
+
+.census-detail input[type='number'] {
+  width: 5rem;
+}
+
+.census-image-frame {
+  max-height: 60vh;
+  overflow: auto;
+  margin: 0.5rem 0;
+}
+
+.census-image-frame img {
+  display: block;
+  max-width: none;
+}
+
 .pack-job {
   margin-bottom: 8px;
   padding: 12px 14px;

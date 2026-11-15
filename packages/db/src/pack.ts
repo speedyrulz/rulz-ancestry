@@ -27,6 +27,16 @@ const MAX_LIMIT = 50;
 const MAX_TOTAL = 1000;
 /** The most terms of one part of a query. */
 const MAX_TERMS = 8;
+/** The most rows one list gives, and the most it counts. */
+const MAX_LIST = 100;
+const MAX_LIST_TOTAL = 100_000;
+/** The most values one `distinct` gives. */
+const MAX_DISTINCT = 1000;
+/** The most columns one list or read names, and the most it filters by. */
+const MAX_PROJECTION = 20;
+const MAX_FILTERS = 4;
+/** The column a list never gives: a pack that has one keeps long lists there. */
+const BULK_COLUMN = 'files';
 /** SQLite's own limit is 2000 columns in a table. */
 const MAX_COLUMNS = 1000;
 
@@ -362,6 +372,158 @@ export class PackReader {
     } finally {
       this.#state.stop = () => false;
     }
+  }
+
+  // ---- browsing ----------------------------------------------------------------
+
+  /** The raw column of a name that the pack has; throws for any other, so that no text of a caller is ever SQL. */
+  #column(name: string): string {
+    const at = this.columns.indexOf(name);
+    if (at < 0) throw new Error(`The pack has no column ${name}.`);
+    return `raw.${rawColumn(at)}`;
+  }
+
+  /** The WHERE of a browse: the stop check, exact values of columns, and words a column holds. */
+  #browseWhere(
+    where: Record<string, string> | undefined,
+    contains: { column: string; words: string } | undefined,
+  ): { sql: string; args: string[] } {
+    const parts = ['rulz_go() = 1'];
+    const args: string[] = [];
+    const exact = Object.entries(where ?? {});
+    if (exact.length > MAX_FILTERS) throw new Error('A browse names too many columns.');
+    for (const [name, value] of exact) {
+      parts.push(`${this.#column(name)} = ?`);
+      args.push(value);
+    }
+    if (contains !== undefined) {
+      const column = this.#column(contains.column);
+      const words = (contains.words.match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, MAX_TERMS);
+      for (const word of words) {
+        parts.push(`instr(lower(${column}), lower(?)) > 0`);
+        args.push(word);
+      }
+    }
+    return { sql: parts.join(' AND '), args };
+  }
+
+  /** Runs a read with the stop function in place, and puts the old one back. */
+  #stopping<T>(stop: () => boolean, run: () => T): T {
+    if (stop()) throw new PackSearchStopped();
+    this.#state.stop = stop;
+    try {
+      return run();
+    } finally {
+      this.#state.stop = () => false;
+    }
+  }
+
+  /**
+   * The values of one column, each with how many rows hold it, in order, for
+   * the rows whose columns hold the given exact values. At most 1000 come
+   * back; `offset` pages through more. `stop()` is asked for every row looked
+   * at.
+   */
+  distinct(
+    q: { column: string; where?: Record<string, string>; limit: number; offset: number },
+    stop: () => boolean,
+  ): { values: { value: string; count: number }[] } {
+    const column = this.#column(q.column);
+    const { sql, args } = this.#browseWhere(q.where, undefined);
+    const limit = Math.max(1, Math.min(Math.trunc(q.limit) || 1, MAX_DISTINCT));
+    const offset = Math.max(0, Math.trunc(q.offset) || 0);
+    return this.#stopping(stop, () => {
+      const found = this.#db
+        .prepare(
+          `SELECT ${column}, count(*) FROM raw WHERE ${sql}
+           GROUP BY ${column} ORDER BY ${column} LIMIT ? OFFSET ?`,
+        )
+        .raw()
+        .all(...args, limit, offset) as [unknown, number][];
+      return {
+        values: found.map(([value, count]) => ({
+          value: typeof value === 'string' ? value : '',
+          count,
+        })),
+      };
+    });
+  }
+
+  /**
+   * Some columns of the rows whose columns hold the given exact values and
+   * whose `contains.column` holds every word of `contains.words`, in the order
+   * they were added, each with its row number. A column named `files` is never
+   * given (a list that long is read by {@link get} only). At most 100 rows
+   * come back, and the total is counted up to 100,000.
+   */
+  list(
+    q: {
+      columns: readonly string[];
+      where?: Record<string, string>;
+      contains?: { column: string; words: string };
+      limit: number;
+      offset: number;
+    },
+    stop: () => boolean,
+  ): { rows: { rowid: number; values: Record<string, string> }[]; total: number } {
+    if (q.columns.length === 0 || q.columns.length > MAX_PROJECTION) {
+      throw new Error('A list names between 1 and 20 columns.');
+    }
+    if (q.columns.includes(BULK_COLUMN)) {
+      throw new Error(`The column ${BULK_COLUMN} is read one row at a time, never listed.`);
+    }
+    const select = q.columns.map((name) => this.#column(name));
+    const { sql, args } = this.#browseWhere(q.where, q.contains);
+    const limit = Math.max(1, Math.min(Math.trunc(q.limit) || 1, MAX_LIST));
+    const offset = Math.max(0, Math.trunc(q.offset) || 0);
+    return this.#stopping(stop, () => {
+      const found = this.#db
+        .prepare(
+          `SELECT raw.rowid, ${select.join(', ')} FROM raw WHERE ${sql}
+           ORDER BY raw.rowid LIMIT ? OFFSET ?`,
+        )
+        .raw()
+        .all(...args, limit, offset) as unknown[][];
+      const total = this.#db
+        .prepare(`SELECT count(*) FROM (SELECT 1 FROM raw WHERE ${sql} LIMIT ${MAX_LIST_TOTAL})`)
+        .pluck()
+        .get(...args) as number;
+      return {
+        rows: found.map(([rowid, ...values]) => ({
+          rowid: rowid as number,
+          values: Object.fromEntries(
+            q.columns.map((name, i) => [name, typeof values[i] === 'string' ? values[i] : '']),
+          ) as Record<string, string>,
+        })),
+        total,
+      };
+    });
+  }
+
+  /** Some columns of one row, by its row number; null when there is no such row. */
+  get(
+    rowid: number,
+    columns: readonly string[],
+    stop: () => boolean,
+  ): { rowid: number; values: Record<string, string> } | null {
+    if (columns.length === 0 || columns.length > MAX_PROJECTION) {
+      throw new Error('A read names between 1 and 20 columns.');
+    }
+    const select = columns.map((name) => this.#column(name));
+    if (!Number.isSafeInteger(rowid) || rowid < 1) return null;
+    return this.#stopping(stop, () => {
+      const found = this.#db
+        .prepare(`SELECT ${select.join(', ')} FROM raw WHERE raw.rowid = ?`)
+        .raw()
+        .get(rowid) as unknown[] | undefined;
+      if (found === undefined) return null;
+      return {
+        rowid,
+        values: Object.fromEntries(
+          columns.map((name, i) => [name, typeof found[i] === 'string' ? found[i] : '']),
+        ) as Record<string, string>,
+      };
+    });
   }
 
   close(): void {

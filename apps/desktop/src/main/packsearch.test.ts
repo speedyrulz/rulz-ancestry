@@ -275,3 +275,139 @@ describe('a worker that is ended', () => {
     expect((await waiting).total).toBe(2);
   });
 });
+
+describe('browsing a pack through the worker', () => {
+  const never = () => new AbortController().signal;
+
+  it('the host answers a distinct, a list and a get, and stops each when its flag is set', () => {
+    const host = new SearchHost();
+    const flag = new Int32Array(new SharedArrayBuffer(4));
+    const path = join(dir, 'ab.pack');
+    expect(
+      host.handle({
+        type: 'distinct',
+        qid: 1,
+        id: 'ab',
+        path,
+        q: { column: 'PLACE', limit: 10, offset: 0 },
+        flag,
+      }),
+    ).toEqual({
+      type: 'browsed',
+      qid: 1,
+      result: {
+        kind: 'distinct',
+        values: [
+          { value: 'Ashvale', count: 1 },
+          { value: 'Dunmere', count: 1 },
+        ],
+      },
+    });
+    expect(
+      host.handle({
+        type: 'list',
+        qid: 2,
+        id: 'ab',
+        path,
+        q: { columns: ['NAME'], where: { PLACE: 'Dunmere' }, limit: 10, offset: 0 },
+        flag,
+      }),
+    ).toEqual({
+      type: 'browsed',
+      qid: 2,
+      result: { kind: 'list', rows: [{ rowid: 2, values: { NAME: 'Bram Baker' } }], total: 1 },
+    });
+    expect(
+      host.handle({
+        type: 'get',
+        qid: 3,
+        id: 'ab',
+        path,
+        q: { rowid: 1, columns: ['PLACE'] },
+        flag,
+      }),
+    ).toEqual({
+      type: 'browsed',
+      qid: 3,
+      result: { kind: 'get', row: { rowid: 1, values: { PLACE: 'Ashvale' } } },
+    });
+    Atomics.store(flag, 0, 1);
+    for (const request of [
+      { type: 'distinct', q: { column: 'PLACE', limit: 10, offset: 0 } },
+      { type: 'list', q: { columns: ['NAME'], limit: 10, offset: 0 } },
+      { type: 'get', q: { rowid: 1, columns: ['PLACE'] } },
+    ] as const) {
+      expect(host.handle({ ...request, qid: 9, id: 'ab', path, flag })).toMatchObject({
+        type: 'error',
+        kind: 'stopped',
+      });
+    }
+    // A column that is not there is a failure, not a crash.
+    Atomics.store(flag, 0, 0);
+    expect(
+      host.handle({
+        type: 'get',
+        qid: 4,
+        id: 'ab',
+        path,
+        q: { rowid: 1, columns: ['NOPE'] },
+        flag,
+      }),
+    ).toMatchObject({ type: 'error', kind: 'failed' });
+    host.closeAll();
+  });
+
+  it('gives the values, rows and one row through the channel', async () => {
+    const { search } = make();
+    expect(await search.distinct('ab', { column: 'PLACE', limit: 10, offset: 0 }, never())).toEqual(
+      [
+        { value: 'Ashvale', count: 1 },
+        { value: 'Dunmere', count: 1 },
+      ],
+    );
+    expect(
+      await search.list('ab', { columns: ['NAME', 'PLACE'], limit: 10, offset: 0 }, never()),
+    ).toEqual({
+      rows: [
+        { rowid: 1, values: { NAME: 'Ada Baker', PLACE: 'Ashvale' } },
+        { rowid: 2, values: { NAME: 'Bram Baker', PLACE: 'Dunmere' } },
+      ],
+      total: 2,
+    });
+    expect(await search.get('ab', { rowid: 2, columns: ['NAME'] }, never())).toEqual({
+      rowid: 2,
+      values: { NAME: 'Bram Baker' },
+    });
+    expect(await search.get('ab', { rowid: 9, columns: ['NAME'] }, never())).toBeNull();
+  });
+
+  it('is given up when the signal is, and waits while the pack is held', async () => {
+    const { search } = make();
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      search.list('ab', { columns: ['NAME'], limit: 10, offset: 0 }, abort.signal),
+    ).rejects.toThrow(PackSearchStopped);
+
+    await search.hold('ab');
+    let answered = false;
+    const waiting = search.get('ab', { rowid: 1, columns: ['NAME'] }, never()).then((row) => {
+      answered = true;
+      return row;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(answered).toBe(false);
+    search.release('ab');
+    expect(await waiting).toEqual({ rowid: 1, values: { NAME: 'Ada Baker' } });
+  });
+
+  it('fails for a column the pack does not have', async () => {
+    const { search } = make();
+    await expect(
+      search.list('ab', { columns: ['NOPE'], limit: 10, offset: 0 }, never()),
+    ).rejects.toThrow(/no column/);
+    await expect(
+      search.distinct('ab', { column: 'NOPE', limit: 10, offset: 0 }, never()),
+    ).rejects.toThrow(/no column/);
+  });
+});

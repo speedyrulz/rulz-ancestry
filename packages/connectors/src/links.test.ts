@@ -7,6 +7,7 @@ import {
   deepLinkSources,
   familySearchRecordsLinks,
   findAGraveLinks,
+  nara1950SearchLinks,
 } from './links';
 import { manifestsByTier } from './registry';
 import { wikitreeManifest } from './sources/wikitree/manifest';
@@ -39,6 +40,46 @@ describe('links to sites the app never fetches', () => {
       'q.deathLikeDate.from': '1908',
       'q.deathLikeDate.to': '1912',
     });
+  });
+
+  it('makes the address of a name search of the 1950 census', () => {
+    const url = new URL(nara1950SearchLinks.buildSearchUrl(full) ?? '');
+    expect(url.protocol).toBe('https:');
+    expect(url.origin).toBe('https://1950census.archives.gov');
+    expect(url.origin + url.pathname).toBe('https://1950census.archives.gov/search/');
+    // Years are not sent: the site searches by name only.
+    expect(Object.fromEntries(url.searchParams)).toEqual({ name: 'Josiah Marsh' });
+  });
+
+  it('asks the 1950 census for a name, and for nothing when there is none', () => {
+    const surname = new URL(
+      nara1950SearchLinks.buildSearchUrl({
+        given: '',
+        surname: ' Quill ',
+        birthYear: 1904,
+        deathYear: 1977,
+      }) ?? '',
+    );
+    expect(Object.fromEntries(surname.searchParams)).toEqual({ name: 'Quill' });
+    expect(
+      nara1950SearchLinks.buildSearchUrl({
+        given: ' ',
+        surname: '',
+        birthYear: 1904,
+        deathYear: 1977,
+      }),
+    ).toBeNull();
+
+    const long = 'P'.repeat(140);
+    const trimmed = new URL(
+      nara1950SearchLinks.buildSearchUrl({
+        given: ` ${long} `,
+        surname: long,
+        birthYear: null,
+        deathYear: null,
+      }) ?? '',
+    );
+    expect(trimmed.searchParams.get('name')).toBe(`${'P'.repeat(100)} ${'P'.repeat(100)}`);
   });
 
   it('leaves out what is not asked, and gives no address for nobody', () => {
@@ -83,9 +124,10 @@ describe('links to sites the app never fetches', () => {
         expect(url.host).toBe(site.host);
         expect(url.username + url.password + url.hash).toBe('');
         const values = [...url.searchParams.values()];
-        // Two names and no year: a year that is none is not sent.
-        expect(values).toHaveLength(2);
-        expect(values[0]).toBe(typed.trim().replace(/\s+/g, ' '));
+        const clean = typed.trim().replace(/\s+/g, ' ');
+        // The typed names stay in the query string, and a year that is none is not sent.
+        // Separate name fields send two values; one name field joins the two.
+        expect(values.join(' ')).toBe(`${clean} ${clean}`);
       }
     }
   });

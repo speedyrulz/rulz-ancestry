@@ -2,6 +2,7 @@ import { QUERY_YEAR_SPREAD, isEmptyQuery, type PersonQuery } from '@rulz/core';
 import type { ConnectorManifest } from './manifest';
 import { familySearchRecordsManifest } from './sources/familysearch-records/manifest';
 import { findAGraveManifest } from './sources/find-a-grave/manifest';
+import { nara1950SearchManifest } from './sources/nara-1950-search/manifest';
 
 /**
  * Sites the app never fetches (tier `deeplink`): it only makes the address of
@@ -67,6 +68,15 @@ export const findAGraveLinks = searchPage(findAGraveManifest, '/memorial/search'
   };
 });
 
+/**
+ * The National Archives' search of the 1950 census by name only. Its names
+ * were machine-read from handwriting. The address form was read from the
+ * site's own code, not tried.
+ */
+export const nara1950SearchLinks = searchPage(nara1950SearchManifest, '/search/', (query) => ({
+  name: [text(query.given), text(query.surname)].filter((part) => part !== '').join(' '),
+}));
+
 /** FamilySearch's search of historical records. */
 export const familySearchRecordsLinks = searchPage(
   familySearchRecordsManifest,
@@ -94,6 +104,7 @@ export const familySearchRecordsLinks = searchPage(
 export const deepLinkSources: readonly DeepLinkSource[] = [
   familySearchRecordsLinks,
   findAGraveLinks,
+  nara1950SearchLinks,
 ];
 
 /**

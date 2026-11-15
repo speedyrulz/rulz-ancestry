@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mayShareWithAi } from '@rulz/ai';
 import {
+  CENSUS_PACK_ID_PATTERN,
   ConnectorError,
   HttpClient,
   HttpError,
@@ -14,6 +15,8 @@ import {
   locManifest,
   naraCatalogConnector,
   naraCatalogManifest,
+  nara1950SearchManifest,
+  OA_PACK_KIND,
   oaRecordsOf,
   openArchivesConnector,
   openArchivesManifest,
@@ -185,8 +188,12 @@ export const RECORD_SEARCH_NOTICE_VERSION_SETTING = 'recordSearch.noticeVersion'
  * 4: words, and the user's own key, to the US National Archives.
  * 5: one press can send the names and the years of several people: a person
  *    and their ancestors, as a list shows them before the press.
+ * 6: a page image of the 1950 census is asked of its bucket
+ *    (nara-1950-census.s3.us-east-2.amazonaws.com) when the user views a
+ *    district's page: the pack, the district and the page's number go there,
+ *    and nothing of the tree.
  */
-export const RECORD_SEARCH_NOTICE_VERSION = 5;
+export const RECORD_SEARCH_NOTICE_VERSION = 6;
 
 /** The setting that holds the user's key for a source, as Windows encrypted it. */
 export const recordSearchKeySetting = (sourceId: string) => `recordSearch.key.${sourceId}`;
@@ -243,9 +250,15 @@ export const RECORD_RUN_SOURCE_IDS: readonly string[] = [
  */
 export const PACK_ROUTE_PATTERN = /^pack:([a-z0-9]{2,12})$/;
 
-/** The source a result of this route is kept, marked and cited under. */
+/**
+ * The source a result of this route is kept, marked and cited under. Only a
+ * pack of Open Archives is a route of the search: a pack of the 1950 census
+ * (its id is `c50` and a state's code) is browsed, never searched for a person,
+ * and its id names no source here.
+ */
 export function markSourceOf(routeId: string): string {
-  return PACK_ROUTE_PATTERN.test(routeId) ? openArchivesManifest.id : routeId;
+  const id = PACK_ROUTE_PATTERN.exec(routeId)?.[1];
+  return id !== undefined && !CENSUS_PACK_ID_PATTERN.test(id) ? openArchivesManifest.id : routeId;
 }
 
 /** What the search for records needs of the installed packs. `PackManager` is one. */
@@ -264,6 +277,11 @@ export interface PackRoutes {
     },
     signal: AbortSignal,
   ): Promise<{ rows: Record<string, string>[]; total: number }>;
+}
+
+/** True for a person who may be in the 1950 census: born in 1950 or before, or no birth year known. */
+function bornByCensus(birthYear: number | null): boolean {
+  return birthYear === null || birthYear <= 1950;
 }
 
 /** What a pack is searched for: the surname's words, then the given name's (not one letter alone, which is an initial). */
@@ -537,6 +555,7 @@ export class RecordSearchService {
   /** The installed packs that can be searched, as routes of the search. They send nothing anywhere. */
   #packSources(): RecordSourceInfo[] {
     return (this.#packs?.ready() ?? [])
+      .filter((pack) => pack.kind === OA_PACK_KIND)
       .filter((pack) => this.#connectorOf(`pack:${pack.id}`) !== undefined)
       .map((pack) => ({
         id: `pack:${pack.id}`,
@@ -644,17 +663,27 @@ export class RecordSearchService {
       query: allowed ? queryOf(tree, personId) : EMPTY_QUERY,
       text: allowed ? textQueryOf(queryOf(tree, personId)) : EMPTY_TEXT_QUERY,
       sources: this.sources(),
-      links: this.links(),
+      links: this.links(tree, personId),
     };
   }
 
-  /** The sites a search can be opened at in the user's browser. */
-  links(): RecordLinkInfo[] {
-    return this.#links.map(({ manifest }) => ({
-      id: manifest.id,
-      name: manifest.name,
-      termsUrl: manifest.termsUrl,
-    }));
+  /**
+   * The sites a search can be opened at in the user's browser. The name search
+   * of the 1950 census is listed only for a person who was born in 1950 or
+   * before, or whose birth year is not known: the census cannot hold anyone
+   * born later. Without a person, every site is listed.
+   */
+  links(tree?: Tree, personId?: string): RecordLinkInfo[] {
+    const born =
+      tree !== undefined && personId !== undefined ? queryOf(tree, personId).birthYear : null;
+    const census = bornByCensus(born);
+    return this.#links
+      .filter(({ manifest }) => census || manifest.id !== nara1950SearchManifest.id)
+      .map(({ manifest }) => ({
+        id: manifest.id,
+        name: manifest.name,
+        termsUrl: manifest.termsUrl,
+      }));
   }
 
   /** The site the tree keeps a source for under this id; undefined when the app knows none. */
@@ -689,6 +718,17 @@ export class RecordSearchService {
     }
     const refusal = this.#refusal(tree, request.personId);
     if (refusal !== null) return fail(refusal);
+    // The census cannot hold anyone born after 1950: the same rule as for the listed links.
+    if (
+      source.manifest.id === nara1950SearchManifest.id &&
+      !bornByCensus(queryOf(tree, request.personId).birthYear)
+    ) {
+      return fail({
+        kind: 'choice',
+        message: 'The 1950 census holds only people born in 1950 or before.',
+        retryAt: null,
+      });
+    }
     const url = source.buildSearchUrl(request.query);
     if (url === null) {
       return fail({ kind: 'empty', message: 'Give a name to search for.', retryAt: null });
@@ -1291,7 +1331,9 @@ export class RecordSearchService {
       problem,
     });
     const id = PACK_ROUTE_PATTERN.exec(route)?.[1];
-    const pack = this.#packs?.ready().find((entry) => entry.id === id);
+    const pack = this.#packs
+      ?.ready()
+      .find((entry) => entry.id === id && entry.kind === OA_PACK_KIND);
     // A pack whose download day is not a real day is not a source: nothing is cited with today's date for it.
     const downloaded = pack === undefined ? null : dayStart(pack.downloadedAt);
     if (

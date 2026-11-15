@@ -34,6 +34,7 @@ export {
   deepLinkSources,
   familySearchRecordsLinks,
   findAGraveLinks,
+  nara1950SearchLinks,
   type DeepLinkSource,
 } from './links';
 export { internetArchiveManifest } from './sources/internet-archive/manifest';
@@ -52,6 +53,8 @@ export {
   locSearchParams,
   parseLocSearch,
 } from './sources/loc/search';
+export { nara1950CensusManifest } from './sources/nara-1950-census/manifest';
+export { nara1950SearchManifest } from './sources/nara-1950-search/manifest';
 export { naraCatalogManifest } from './sources/nara-catalog/manifest';
 export {
   NARA_RECORD_URL,
@@ -104,3 +107,30 @@ export {
   wikitreeConnector,
   wikitreeSearchParams,
 } from './sources/wikitree/search';
+export {
+  CENSUS_BUCKET,
+  CENSUS_BUILDER_VERSION,
+  CENSUS_CODES,
+  CENSUS_COLUMNS,
+  CENSUS_FILES_COLUMN,
+  CENSUS_HOST,
+  CENSUS_LISTING_URL,
+  CENSUS_MAX_DISTRICTS,
+  CENSUS_MAX_PAGES,
+  CENSUS_PACK_ID_PATTERN,
+  CENSUS_SITE,
+  NARA_CENSUS_PACK_KIND,
+  censusCitationPage,
+  censusDistrictUrl,
+  censusImageUrl,
+  censusPackId,
+  censusSkipAcceptable,
+  censusStateUrl,
+  isCensusFile,
+  isCensusPath,
+  parseCensusListing,
+  parseCensusState,
+  type CensusListed,
+  type CensusParse,
+  type CensusRow,
+} from './sources/nara-1950-census/census';

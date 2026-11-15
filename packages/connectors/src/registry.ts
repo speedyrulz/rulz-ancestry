@@ -5,6 +5,7 @@ import { internetArchiveManifest } from './sources/internet-archive/manifest';
 import { locManifest } from './sources/loc/manifest';
 import { nara1940CensusManifest } from './sources/nara-1940-census/manifest';
 import { nara1950CensusManifest } from './sources/nara-1950-census/manifest';
+import { nara1950SearchManifest } from './sources/nara-1950-search/manifest';
 import { naraCatalogManifest } from './sources/nara-catalog/manifest';
 import { openArchivesManifest } from './sources/open-archives/manifest';
 import { wikidataManifest } from './sources/wikidata/manifest';
@@ -22,6 +23,7 @@ export const manifests: readonly ConnectorManifest[] = [
   nara1940CensusManifest,
   findAGraveManifest,
   familySearchRecordsManifest,
+  nara1950SearchManifest,
 ];
 
 const byId = new Map<string, ConnectorManifest>();

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type {
   PackArchiveInfo,
+  CensusStatesResult,
   PackInfo,
   PackJob,
   PackOfferInfo,
@@ -193,6 +194,52 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
   const [offerExpired, setOfferExpired] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [census, setCensus] = useState<Extract<CensusStatesResult, { ok: true }> | null>(null);
+  const [censusBusy, setCensusBusy] = useState(false);
+  const [censusError, setCensusError] = useState<string | null>(null);
+  const [censusExpired, setCensusExpired] = useState(false);
+  const censusRequest = useRef(0);
+  const censusLoaded = useRef(false);
+
+  const lookupCensus = async () => {
+    const request = ++censusRequest.current;
+    setCensusBusy(true);
+    setCensusError(null);
+    try {
+      const result = await api.listCensusStates();
+      if (request !== censusRequest.current) return;
+      if (result.ok) {
+        censusLoaded.current = true;
+        setCensus(result);
+        setCensusExpired(Date.now() >= result.expiresAt);
+      } else {
+        setCensus(null);
+        setCensusError(result.message);
+      }
+    } catch (failure) {
+      if (request === censusRequest.current) {
+        setCensus(null);
+        setCensusError(errorMessage(failure));
+      }
+    } finally {
+      if (request === censusRequest.current) setCensusBusy(false);
+    }
+  };
+
+  useEffect(
+    () => () => {
+      censusRequest.current += 1;
+    },
+    [],
+  );
+  useEffect(() => {
+    if (census === null) return undefined;
+    const timer = setTimeout(
+      () => setCensusExpired(true),
+      Math.max(0, census.expiresAt - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [census]);
 
   const handleLookup = async () => {
     setLookupError(null);
@@ -250,6 +297,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
     if (isRunning) watchingJob.current = true;
     if (jobPhase === null || isActivePhase(jobPhase) || !watchingJob.current) return;
     watchingJob.current = false;
+    if (censusLoaded.current) void lookupCensus();
     if (archivesLoaded.current) {
       api.listPackArchives().then(
         (result) => {
@@ -390,6 +438,89 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
 
           <section className="packs-add" data-testid="packs-add">
             <h3>Add a pack</h3>
+            <div className="packs-lookup-bar">
+              <h4>1950 US census</h4>
+              <button
+                type="button"
+                disabled={censusBusy || installing}
+                onClick={() => void lookupCensus()}
+                data-testid="census-lookup"
+              >
+                Look up the 1950 census states
+              </button>
+              <p className="hint">
+                This asks nara-1950-census.s3.us-east-2.amazonaws.com for the states and sends
+                nothing about you or your tree.
+              </p>
+              {censusError !== null && (
+                <p className="error" role="alert">
+                  {censusError}
+                </p>
+              )}
+              {census !== null && (
+                <>
+                  <p className="dialog-text">{formatFreeSpace(census.freeBytes)}</p>
+                  {censusExpired && (
+                    <p className="error" role="alert">
+                      This list is out of date; look again.
+                    </p>
+                  )}
+                  <ul className="packs-archives-list">
+                    {census.states.map((item) => (
+                      <li
+                        key={item.code}
+                        className="census-pack-row"
+                        data-testid={`census-state-${item.code}`}
+                      >
+                        <span>
+                          <strong>{item.name}</strong> · Download {formatBytes(item.bytes)} · About{' '}
+                          {formatBytes(item.estimateBytes)} once built
+                        </span>
+                        <button
+                          type="button"
+                          data-testid={`census-install-${item.code}`}
+                          disabled={
+                            item.installed === 'current' ||
+                            censusExpired ||
+                            censusBusy ||
+                            isRunning ||
+                            installing
+                          }
+                          onClick={() => {
+                            if (Date.now() >= census.expiresAt) {
+                              setCensusExpired(true);
+                              return;
+                            }
+                            setInstalling(true);
+                            setCensusError(null);
+                            void api
+                              .installCensusState(item.code)
+                              .then(
+                                async (result) => {
+                                  if (!result.ok) setCensusError(result.message);
+                                  else {
+                                    watchingJob.current = true;
+                                    await reload();
+                                  }
+                                },
+                                (failure: unknown) => setCensusError(errorMessage(failure)),
+                              )
+                              .finally(() => setInstalling(false));
+                          }}
+                        >
+                          {item.installed === 'current'
+                            ? 'Up to date'
+                            : item.installed === 'update'
+                              ? 'Update'
+                              : 'Install'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+            <h4>Open Archives</h4>
             <div className="packs-lookup-bar">
               <div className="actions">
                 <button

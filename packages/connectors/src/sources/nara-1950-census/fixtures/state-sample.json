@@ -1,0 +1,69 @@
+{
+  "state": "Testland",
+  "abbreviation": "DE",
+  "baseurl": "https://example.invalid/this-address-is-never-used/",
+  "county/city": [
+    {
+      "name": "Alder County",
+      "enumeration": [
+        {
+          "ed": "1-1",
+          "description": "Ward 1: that part of the village of Tarnwick bounded by Mill Road, the creek and Oak Street.\r\nIncludes the school.",
+          "reservation": "",
+          "roll": "T628-12",
+          "description_image": "1950census/10-Testland/descriptions/10-Testland-0001.jpg",
+          "schedule_image": {
+            "folder": "1950census/10-Testland/10-Testland-000101",
+            "files": [
+              "10-Testland-000101-0001.jpg",
+              "10-Testland-000101-0002.jpg",
+              "10-Testland-000101-0003.jpg"
+            ]
+          },
+          "map_image": ["1950census/10-Testland/maps/10-Testland-01.jpg"]
+        },
+        {
+          "ed": "1-2",
+          "description": "Ward 2: the rest of Tarnwick, and the farms north of the creek to the county line.",
+          "reservation": "",
+          "roll": "T628-12",
+          "description_image": "",
+          "schedule_image": {
+            "folder": "1950census/10-Testland/10-Testland-000102",
+            "files": ["10-Testland-000102-0001.jpg", "10-Testland-000102-0002.jpg"]
+          },
+          "map_image": []
+        }
+      ]
+    },
+    {
+      "name": "Birch County",
+      "enumeration": [
+        {
+          "ed": "2-1",
+          "description": "Quillhaven township, including the hamlet of Upper Quillhaven and the quarry.",
+          "reservation": "Sample Reservation",
+          "roll": "T628-13",
+          "schedule_image": {
+            "folder": "1950census/10-Testland/10-Testland-000201",
+            "files": ["10-Testland-000201-0001.jpg"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cedar City",
+      "enumeration": [
+        {
+          "ed": "3-1",
+          "description": "Quillhaven Heights, north of the railway.",
+          "roll": 14,
+          "schedule_image": {
+            "folder": "1950census/10-Testland/10-Testland-000301",
+            "files": ["10-Testland-000301-0001.jpg", "10-Testland-000301-0002.jpg"]
+          }
+        }
+      ]
+    }
+  ]
+}

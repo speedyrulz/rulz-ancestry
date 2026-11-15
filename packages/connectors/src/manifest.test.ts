@@ -100,6 +100,7 @@ describe('registry', () => {
     expect(manifestsByTier('deeplink').map((manifest) => manifest.id)).toEqual([
       'find-a-grave',
       'familysearch-records',
+      'nara-1950-search',
     ]);
     expect(manifestsByTier('bulk').length).toBe(2);
   });

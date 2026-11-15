@@ -2,6 +2,10 @@ import { Worker } from 'node:worker_threads';
 import { PackSearchStopped } from '@rulz/db';
 import {
   SearchHost,
+  type BrowseResult,
+  type DistinctQuery,
+  type GetQuery,
+  type ListQuery,
   type SearchQuery,
   type SearchReply,
   type SearchRequest,
@@ -91,10 +95,13 @@ export interface PackSearchOptions {
   ackMs?: number;
 }
 
+/** The answers that carry a result, as a query settles with them. */
+type Answer = Extract<SearchReply, { type: 'result' | 'browsed' }>;
+
 interface Query {
   id: string;
   flag: Int32Array;
-  resolve: (found: { rows: Record<string, string>[]; total: number }) => void;
+  resolve: (answer: Answer) => void;
   reject: (error: Error) => void;
 }
 
@@ -160,7 +167,7 @@ export class PackSearch {
     const query = this.#queries.get(reply.qid);
     if (query === undefined) return;
     this.#queries.delete(reply.qid);
-    if (reply.type === 'result') query.resolve({ rows: reply.rows, total: reply.total });
+    if (reply.type === 'result' || reply.type === 'browsed') query.resolve(reply);
     else if (reply.kind === 'stopped') query.reject(new PackSearchStopped());
     else query.reject(new Error(reply.message));
   }
@@ -222,6 +229,91 @@ export class PackSearch {
     q: SearchQuery,
     signal: AbortSignal,
   ): Promise<{ rows: Record<string, string>[]; total: number }> {
+    const answer = await this.#send(id, signal, (qid, path, flag) => ({
+      type: 'search',
+      qid,
+      id,
+      path,
+      q,
+      flag,
+    }));
+    if (answer.type !== 'result')
+      throw new Error('The pack gave an answer that was not asked for.');
+    return { rows: answer.rows, total: answer.total };
+  }
+
+  async #browse(
+    id: string,
+    signal: AbortSignal,
+    make: (qid: number, path: string, flag: Int32Array) => SearchRequest,
+  ): Promise<BrowseResult> {
+    const answer = await this.#send(id, signal, make);
+    if (answer.type !== 'browsed')
+      throw new Error('The pack gave an answer that was not asked for.');
+    return answer.result;
+  }
+
+  /** The values of one column of a pack, each with how many rows hold it. */
+  async distinct(
+    id: string,
+    q: DistinctQuery,
+    signal: AbortSignal,
+  ): Promise<{ value: string; count: number }[]> {
+    const result = await this.#browse(id, signal, (qid, path, flag) => ({
+      type: 'distinct',
+      qid,
+      id,
+      path,
+      q,
+      flag,
+    }));
+    if (result.kind !== 'distinct')
+      throw new Error('The pack gave an answer that was not asked for.');
+    return result.values;
+  }
+
+  /** Some columns of some rows of a pack, with their row numbers; never the `files` column. */
+  async list(
+    id: string,
+    q: ListQuery,
+    signal: AbortSignal,
+  ): Promise<{ rows: { rowid: number; values: Record<string, string> }[]; total: number }> {
+    const result = await this.#browse(id, signal, (qid, path, flag) => ({
+      type: 'list',
+      qid,
+      id,
+      path,
+      q,
+      flag,
+    }));
+    if (result.kind !== 'list') throw new Error('The pack gave an answer that was not asked for.');
+    return { rows: result.rows, total: result.total };
+  }
+
+  /** Some columns of one row of a pack, by its row number; null when there is none. */
+  async get(
+    id: string,
+    q: GetQuery,
+    signal: AbortSignal,
+  ): Promise<{ rowid: number; values: Record<string, string> } | null> {
+    const result = await this.#browse(id, signal, (qid, path, flag) => ({
+      type: 'get',
+      qid,
+      id,
+      path,
+      q,
+      flag,
+    }));
+    if (result.kind !== 'get') throw new Error('The pack gave an answer that was not asked for.');
+    return result.row;
+  }
+
+  /** Sends one request to the worker, once the pack is not held, and waits for its answer. */
+  async #send(
+    id: string,
+    signal: AbortSignal,
+    make: (qid: number, path: string, flag: Int32Array) => SearchRequest,
+  ): Promise<Answer> {
     if (signal.aborted) throw new PackSearchStopped();
     let channel: SearchChannel;
     for (;;) {
@@ -242,10 +334,10 @@ export class PackSearch {
     const stop = () => Atomics.store(flag, 0, 1);
     signal.addEventListener('abort', stop, { once: true });
     try {
-      return await new Promise((resolve, reject) => {
+      return await new Promise<Answer>((resolve, reject) => {
         this.#queries.set(qid, { id, flag, resolve, reject });
         try {
-          channel.post({ type: 'search', qid, id, path: this.#pathOf(id), q, flag });
+          channel.post(make(qid, this.#pathOf(id), flag));
         } catch (error) {
           this.#queries.delete(qid);
           reject(error instanceof Error ? error : new Error('The search could not be started.'));

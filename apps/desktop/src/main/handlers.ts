@@ -135,6 +135,8 @@ import {
   RECORD_RUN_MAX_GENERATIONS,
 } from '../shared/ipc';
 import type { AiSessionService } from './aisession';
+import type { CensusOffers } from './censusoffers';
+import type { CensusService } from './censuspages';
 import type { GazetteerService } from './gazetteer';
 import type { PackOffers } from './packoffers';
 import type { PackManager } from './packs';
@@ -340,6 +342,24 @@ const packId = z.string().regex(PACK_ID_PATTERN);
 /** The code of an archive of Open Archives. */
 const archiveCode = z.string().regex(/^[a-z0-9]{2,10}$/);
 
+/** The code of a state of the 1950 census: two lower-case letters. */
+const censusCode = z.string().regex(/^[a-z]{2}$/);
+
+/** A district of an installed pack of the census, by its row. */
+const censusRowId = z.number().int().min(1).max(2_000_000_000);
+const censusGeneration = z.number().int().min(0).max(2_000_000_000);
+const censusDistrictRef = z.strictObject({
+  packId,
+  id: censusRowId,
+  generation: censusGeneration,
+});
+const censusPageRef = z.strictObject({
+  packId,
+  id: censusRowId,
+  generation: censusGeneration,
+  page: z.number().int().min(1).max(5000),
+});
+
 /** Which copy of a result is meant: left out for the one a search showed. */
 const recordCopy = z.enum(['search', 'inbox', 'proposal']).optional();
 
@@ -476,6 +496,10 @@ export function createHandlers(
   packs: PackManager | null = null,
   /** The archives of Open Archives that can be installed as packs. */
   packOffers: PackOffers | null = null,
+  /** The states of the 1950 census that can be installed as packs. */
+  censusOffers: CensusOffers | null = null,
+  /** Browsing the packs of the 1950 census, viewing and citing a page. */
+  census: CensusService | null = null,
 ): ApiHandlers {
   // What was found for one tree is not kept for the next, however the tree is
   // left; a search for several people ends with its tree, and so does a
@@ -484,6 +508,7 @@ export function createHandlers(
     runs.clear();
     ai.clear();
     records.reset();
+    census?.reset();
   });
 
   /**
@@ -745,7 +770,11 @@ export function createHandlers(
       (request) => records.searchTexts(session.tree, request),
     ),
 
-    cancelRecordSearch: define<'cancelRecordSearch'>(none, () => records.cancel()),
+    // The search window closing also gives up a page image that is being fetched.
+    cancelRecordSearch: define<'cancelRecordSearch'>(none, () => {
+      records.cancel();
+      census?.cancelImage();
+    }),
 
     getPacks: define<'getPacks'>(none, () => {
       if (packs === null) throw new SessionError('data packs are not available');
@@ -775,6 +804,66 @@ export function createHandlers(
     installPackArchive: define<'installPackArchive'>(z.tuple([archiveCode]), (code) => {
       if (packOffers === null) throw new SessionError('data packs are not available');
       return packOffers.install(code);
+    }),
+
+    listCensusStates: define<'listCensusStates'>(none, () => {
+      if (censusOffers === null) throw new SessionError('data packs are not available');
+      return censusOffers.states();
+    }),
+
+    installCensusState: define<'installCensusState'>(z.tuple([censusCode]), (code) => {
+      if (censusOffers === null) throw new SessionError('data packs are not available');
+      return censusOffers.install(code);
+    }),
+
+    censusCounties: define<'censusCounties'>(z.tuple([packId]), (id) => {
+      if (census === null) throw new SessionError('data packs are not available');
+      return census.counties(id);
+    }),
+
+    censusDistricts: define<'censusDistricts'>(
+      z.tuple([
+        z.strictObject({
+          packId,
+          county: z.string().max(200),
+          filter: z.string().max(200),
+          offset: z.number().int().min(0).max(100_000),
+        }),
+      ]),
+      (request) => {
+        if (census === null) throw new SessionError('data packs are not available');
+        return census.districts(request);
+      },
+    ),
+
+    censusDistrict: define<'censusDistrict'>(z.tuple([censusDistrictRef]), (request) => {
+      if (census === null) throw new SessionError('data packs are not available');
+      return census.district(request);
+    }),
+
+    censusPageImage: define<'censusPageImage'>(z.tuple([censusPageRef]), (request) => {
+      if (census === null) throw new SessionError('data packs are not available');
+      return census.pageImage(request);
+    }),
+
+    // Cites the page last shown, for any person of the tree; nothing is sent.
+    citeCensusPage: define<'citeCensusPage'>(
+      z.tuple([z.strictObject({ ...censusPageRef.shape, personId: id })]),
+      async (request) => {
+        if (census === null) throw new SessionError('data packs are not available');
+        const found = await census.citation(session.tree, request);
+        if (!found.ok) return found;
+        // The tree may have changed while the pack was read; the write checks the person again.
+        const { citation, added } = session.change((tree) =>
+          attachRecord(tree, request.personId, found.connector, found.citation),
+        );
+        return { ok: true, tree: session.state(), citationId: citation.id, added };
+      },
+    ),
+
+    openCensusDistrict: define<'openCensusDistrict'>(z.tuple([censusDistrictRef]), (request) => {
+      if (census === null) throw new SessionError('data packs are not available');
+      return census.openDistrict(request);
     }),
 
     attachRecord: define<'attachRecord'>(z.tuple([recordRef]), (request) => {

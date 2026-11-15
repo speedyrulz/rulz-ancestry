@@ -1,0 +1,9 @@
+{
+  "state": "Testisle",
+  "abbreviation": "TI",
+  "baseurl": "https://example.invalid/this-address-is-never-used/",
+  "schedule_image": {
+    "folder": "1950census/90-Testisle",
+    "files": ["90-Testisle-0001.jpg", "90-Testisle-0002.jpg", "90-Testisle-0003.jpg"]
+  }
+}
