@@ -182,7 +182,7 @@ function Stop-ForceRunApp([string]$InstallDir) {
   $deadline = (Get-Date).AddSeconds(60)
   $running = @()
   do {
-    $running = Get-InstalledAppProcesses $InstallDir
+    $running = @(Get-InstalledAppProcesses $InstallDir)
     if ($running.Count -gt 0) { break }
     Start-Sleep -Seconds 1
   } while ((Get-Date) -lt $deadline)
@@ -194,8 +194,8 @@ function Stop-ForceRunApp([string]$InstallDir) {
       Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 1
-  } while ((Get-InstalledAppProcesses $InstallDir).Count -gt 0 -and (Get-Date) -lt $deadline)
-  if ((Get-InstalledAppProcesses $InstallDir).Count -gt 0) { Fail 'the started app did not stop' }
+  } while (@(Get-InstalledAppProcesses $InstallDir).Count -gt 0 -and (Get-Date) -lt $deadline)
+  if (@(Get-InstalledAppProcesses $InstallDir).Count -gt 0) { Fail 'the started app did not stop' }
 }
 
 # Removes everything below $Root except the stand-in file $Keep and the folders on the way to
