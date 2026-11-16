@@ -15,7 +15,7 @@ describe('The Library of Congress, asked live', () => {
   it('answers a search of newspaper pages in the shape the connector reads', async () => {
     const http = new HttpClient({
       fetch: (url, init) => fetch(url, init),
-      userAgent: 'RulZAncestry/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
+      userAgent: 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
       // The Library can take its time over a search.
       timeoutMs: 60_000,
     });

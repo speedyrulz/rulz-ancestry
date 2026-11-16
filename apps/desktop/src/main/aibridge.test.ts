@@ -616,7 +616,7 @@ describe.runIf(onWindows)('the bridge as an AI app sees it', () => {
 
   it('lists the tools and the instructions whether or not the app is open', async () => {
     const ai = await client(link());
-    expect(ai.getServerVersion()).toMatchObject({ name: 'rulz-ancestry', version: '9.9.9' });
+    expect(ai.getServerVersion()).toMatchObject({ name: 'rulz-kinspora', version: '9.9.9' });
     expect(ai.getInstructions()).toContain('call get_session first');
     const { tools } = await ai.listTools();
     expect(tools.map((tool) => tool.name)).toEqual(AI_TOOL_NAMES);

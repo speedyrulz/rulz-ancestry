@@ -1289,9 +1289,9 @@ export function exportGedcom(tree: Tree, options: GedcomExportOptions): GedcomEx
     body = [record, ...body];
     submitter = makeNode('SUBM', pointerTo(record.xref));
   }
-  const writer = makeNode('SOUR', 'RULZ_ANCESTRY', [
+  const writer = makeNode('SOUR', 'RULZ_KINSPORA', [
     makeNode('VERS', options.appVersion),
-    makeNode('NAME', 'RulZ Ancestry'),
+    makeNode('NAME', 'RulZ Kinspora'),
   ]);
   const header = makeNode('HEAD');
   if (target === '7.0') {

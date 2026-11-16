@@ -232,7 +232,7 @@ test('exports an imported tree and gives the file back as it was', async ({
   expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
   const exported = bytes.toString('utf8');
   expect(bodyOf(exported)).toEqual(BODY.concat(''));
-  expect(exported).toContain('1 SOUR RULZ_ANCESTRY');
+  expect(exported).toContain('1 SOUR RULZ_KINSPORA');
   expect(exported).toContain('1 SUBM @SUBM1@');
   // No temporary file is left beside the exports.
   expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);

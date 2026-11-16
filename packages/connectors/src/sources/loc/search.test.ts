@@ -214,7 +214,7 @@ describe('locConnector', () => {
         asked.push(url);
         return Promise.resolve(new Response(JSON.stringify(data)));
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     return { connector: locConnector(http.for(locManifest)), asked };
   };
@@ -244,7 +244,7 @@ describe('locConnector', () => {
   it('needs the client of its own source', () => {
     const http = new HttpClient({
       fetch: () => Promise.reject(new Error('nothing may be asked')),
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     expect(() => locConnector(http.for({ ...locManifest, id: 'other' }))).toThrow();
   });

@@ -201,7 +201,7 @@ describe('wikitreeSearchParams', () => {
       ),
     ).toMatchObject({
       action: 'searchPerson',
-      appId: 'RulZAncestry',
+      appId: 'RulZKinspora',
       FirstName: 'Josiah',
       LastName: 'Marsh',
       BirthDate: '1835',
@@ -231,7 +231,7 @@ describe('wikitreeConnector', () => {
         asked.push(url);
         return new Response(JSON.stringify(answer([full])));
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     const connector = wikitreeConnector(http.for(wikitreeManifest));
     const found = await connector.searchPersons(
@@ -244,6 +244,6 @@ describe('wikitreeConnector', () => {
     const url = new URL(asked[0] ?? '');
     expect(url.origin + url.pathname).toBe('https://api.wikitree.com/api.php');
     expect(url.searchParams.get('LastName')).toBe('Marsh');
-    expect(url.searchParams.get('appId')).toBe('RulZAncestry');
+    expect(url.searchParams.get('appId')).toBe('RulZKinspora');
   });
 });

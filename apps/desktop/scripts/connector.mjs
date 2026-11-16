@@ -2,7 +2,7 @@
 // optional AI assistant (route A of docs/PLAN.md, section 7):
 //
 //   out/connector/bridge.cjs          the bridge, one file that needs only Node.js
-//   out/connector/rulz-ancestry.mcpb  the connector file for Claude Desktop
+//   out/connector/rulz-kinspora.mcpb  the connector file for Claude Desktop
 //
 // An .mcpb file is a zip archive with a manifest.json and the server it
 // names (https://github.com/modelcontextprotocol/mcpb, MANIFEST.md). It is
@@ -64,14 +64,14 @@ const tools = JSON.parse(
 
 const manifest = {
   manifest_version: '0.3',
-  name: 'rulz-ancestry',
-  display_name: 'RulZ Ancestry',
+  name: 'rulz-kinspora',
+  display_name: 'RulZ Kinspora',
   version,
   description:
-    'Lets Claude look for records of people of your family tree in RulZ Ancestry, during a session you start there.',
+    'Lets Claude look for records of people of your family tree in RulZ Kinspora, during a session you start there.',
   long_description:
-    'Works only while RulZ Ancestry is open on this PC and you have started a session of its AI assistant. Claude can then read the people of your tree who are not living, ask the sources you ticked a few questions, and file proposals. It cannot change your tree: you decide about every proposal in RulZ Ancestry.',
-  author: { name: 'RulZ Ancestry contributors' },
+    'Works only while RulZ Kinspora is open on this PC and you have started a session of its AI assistant. Claude can then read the people of your tree who are not living, ask the sources you ticked a few questions, and file proposals. It cannot change your tree: you decide about every proposal in RulZ Kinspora.',
+  author: { name: 'RulZ Kinspora contributors' },
   license: 'MIT',
   server: {
     type: 'node',
@@ -81,15 +81,15 @@ const manifest = {
       args: ['${__dirname}/server/bridge.cjs'],
       // The bridge takes this only when it is a full path (src/bridge/profile.ts),
       // so a setting that was left empty changes nothing.
-      env: { RULZ_ANCESTRY_PROFILE: '${user_config.data_folder}' },
+      env: { RULZ_KINSPORA_PROFILE: '${user_config.data_folder}' },
     },
   },
   user_config: {
     data_folder: {
       type: 'directory',
-      title: 'Data folder of RulZ Ancestry (usually empty)',
+      title: 'Data folder of RulZ Kinspora (usually empty)',
       description:
-        'Leave this empty unless the window "AI assistant" of your copy of RulZ Ancestry names a folder to choose here. A folder chosen here is the only one the connector looks in.',
+        'Leave this empty unless the window "AI assistant" of your copy of RulZ Kinspora names a folder to choose here. A folder chosen here is the only one the connector looks in.',
       required: false,
     },
   },
@@ -138,12 +138,12 @@ function zip(files) {
 }
 
 writeFileSync(
-  join(outDir, 'rulz-ancestry.mcpb'),
+  join(outDir, 'rulz-kinspora.mcpb'),
   zip([
     { name: 'manifest.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8') },
     { name: 'server/bridge.cjs', data: bridge },
   ]),
 );
 console.log(
-  `connector: bridge.cjs ${Math.round(bridge.length / 1024)} kB, rulz-ancestry.mcpb written`,
+  `connector: bridge.cjs ${Math.round(bridge.length / 1024)} kB, rulz-kinspora.mcpb written`,
 );

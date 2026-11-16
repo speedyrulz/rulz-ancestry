@@ -67,7 +67,7 @@ export const API_TEXT_MAX = 20_000;
  * session is for comes from `get_session`, as a tool answer.
  */
 export const API_FIRST_MESSAGE =
-  'A research session was started in RulZ Ancestry. Begin with get_session, then follow the research instructions.';
+  'A research session was started in RulZ Kinspora. Begin with get_session, then follow the research instructions.';
 
 /** How many characters of text are counted as one token when a request is only estimated. */
 const CHARS_PER_TOKEN = 2;

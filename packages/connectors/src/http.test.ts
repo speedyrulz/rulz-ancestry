@@ -44,7 +44,7 @@ function setup(
       asked.push({ url, at: clock.now, headers: init.headers });
       return answer(url, init);
     },
-    userAgent: 'RulZAncestry/test',
+    userAgent: 'RulZKinspora/test',
     now: () => clock.now,
     wait: (ms, signal) => {
       if (signal.aborted) return Promise.reject(new HttpError('cancelled', 'given up'));
@@ -133,7 +133,7 @@ describe('HttpClient', () => {
     expect(answer).toEqual({ data: { hello: 'world' }, fetchedAt: 1_000_000, cached: false });
     expect(asked).toHaveLength(1);
     expect(asked[0]?.url).toBe('https://example.org/api/search?q=x');
-    expect(asked[0]?.headers['User-Agent']).toBe('RulZAncestry/test');
+    expect(asked[0]?.headers['User-Agent']).toBe('RulZKinspora/test');
   });
 
   it('refuses a source that is not asked live', () => {
@@ -282,7 +282,7 @@ describe('HttpClient', () => {
         sent.push(new URL(url).pathname);
         return json({});
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
       now: () => clock.now,
       // Whoever must wait for a turn waits until the test lets go.
       wait: async (ms) => {

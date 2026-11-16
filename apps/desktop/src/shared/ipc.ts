@@ -19,6 +19,7 @@ import type {
   Pedigree,
   PersonQuery,
   PlaceRelation,
+  ReportKind,
   Sex,
   TakeType,
   TextQuery,
@@ -199,6 +200,12 @@ export interface PersonPage {
    * are kept as written and go back into an export. Empty for anyone else.
    */
   keptLines: string[];
+  /**
+   * Why the app takes the person to be living or deceased, as a sentence, e.g.
+   * "Deceased: death recorded". It is the rule that leaves living people out of
+   * exports and reports.
+   */
+  livingReason: string;
 }
 
 /** What a citation supports: a person or a family as a whole, one event, or one name. */
@@ -1740,6 +1747,47 @@ export interface GedcomExportInfo {
   mediaWithheld: number;
 }
 
+/**
+ * What a report is about. The page names the kind and the family and nothing
+ * else: the main process reads the tree itself, so a page cannot ask for a
+ * living person's record by passing an id.
+ */
+export type ReportSubject = { kind: ReportKind; familyId: string };
+
+export type ReportRequest = ReportSubject & {
+  /** False (the page's default) shows anyone who may be living only as "Living". */
+  includeLiving: boolean;
+};
+
+export type ReportFormat = 'pdf' | 'html';
+export type ReportPaper = 'A4' | 'Letter';
+
+/** What a report left out because of the living filter. All zero when living people are included. */
+export interface ReportOmitted {
+  /** People who are in the report only as "Living". */
+  livingOmitted: number;
+  /** Notes of people and events that are shown, left out because they may name someone living. */
+  notesOmitted: number;
+  /** Transcriptions of citations that are shown, left out for the same reason. */
+  citationTextsOmitted: number;
+  /** Pictures and documents of what is shown, left out for the same reason. */
+  mediaOmitted: number;
+}
+
+/** A report as it will print, to show on the page. */
+export interface ReportPreview extends ReportOmitted {
+  title: string;
+  /** The whole report as one HTML document. Show it only in a sandboxed frame with no permissions. */
+  html: string;
+}
+
+/** What saving a report wrote. */
+export interface ReportSaved extends ReportOmitted {
+  /** The full path of the file that was written. */
+  file: string;
+  format: ReportFormat;
+}
+
 /** What a chart of one person is drawn from. */
 export interface ChartRequest {
   personId: string;
@@ -1838,6 +1886,16 @@ export interface RulzApi {
   exportGedcom(request: GedcomExportRequest): Promise<GedcomExportInfo | null>;
   /** How many people of the open tree an export would leave out as possibly living. */
   countPresumedLiving(): Promise<number>;
+
+  // Reports. The main process builds each from the tree and applies the living filter.
+  /** Builds a report and returns it as HTML with what it left out. Refused when its subject is living and living people are left out. */
+  previewReport(request: ReportRequest): Promise<ReportPreview>;
+  /** Shows the system save dialog and writes the report to the file chosen. Null when cancelled. */
+  saveReport(
+    request: ReportRequest & { format: ReportFormat; paper: ReportPaper },
+  ): Promise<ReportSaved | null>;
+  /** Sends the report to a printer through the system's print dialog. False when the user cancels. */
+  printReport(request: ReportRequest & { paper: ReportPaper }): Promise<boolean>;
 
   // Reading the open tree.
   listPersons(request: PersonListRequest): Promise<PersonListPage>;
@@ -2179,6 +2237,9 @@ export const API_METHODS = [
   'importGedcom',
   'exportGedcom',
   'countPresumedLiving',
+  'previewReport',
+  'saveReport',
+  'printReport',
   'listPersons',
   'getPersonPage',
   'getPersonLife',

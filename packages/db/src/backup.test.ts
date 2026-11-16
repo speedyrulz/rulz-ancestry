@@ -328,7 +328,7 @@ describe('restoreBackup', () => {
     const foreign = openDatabase(join(folder, 'tree-20200101T000000Z.db'));
     foreign.exec('CREATE TABLE notes (body TEXT)');
     foreign.close();
-    expect(() => restoreBackup(dir, 'tree-20200101T000000Z.db')).toThrow(/not a RulZ Ancestry/);
+    expect(() => restoreBackup(dir, 'tree-20200101T000000Z.db')).toThrow(/not a RulZ Kinspora/);
 
     expect(readFileSync(join(dir, TREE_FILE_NAME)).equals(before)).toBe(true);
   });

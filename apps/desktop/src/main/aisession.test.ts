@@ -1918,10 +1918,10 @@ describe('a session and the way an AI app reaches it', () => {
       },
       bridge,
       connector: {
-        file: 'C:\\app\\rulz-ancestry.mcpb',
+        file: 'C:\\app\\rulz-kinspora.mcpb',
         fileFits: false,
         profile: 'D:\\elsewhere',
-        command: 'claude mcp add rulz-ancestry',
+        command: 'claude mcp add rulz-kinspora',
       },
     });
   });
@@ -2143,12 +2143,12 @@ describe('a session and the way an AI app reaches it', () => {
   it('tells the page what it hands out for connecting an AI app', () => {
     expect(ai.info()).toMatchObject({
       canConnect: true,
-      connectorCommand: 'claude mcp add rulz-ancestry',
+      connectorCommand: 'claude mcp add rulz-kinspora',
       connectorFileFits: false,
       connectorDataFolder: 'D:\\elsewhere',
       maxHours: 2,
     });
-    expect(ai.connectorFile).toBe('C:\\app\\rulz-ancestry.mcpb');
+    expect(ai.connectorFile).toBe('C:\\app\\rulz-kinspora.mcpb');
 
     const without = new AiSessionService(records, { appDb });
     expect(without.info()).toMatchObject({ canConnect: false, connectorCommand: '' });

@@ -62,7 +62,7 @@ export function App() {
   if (loaded.state === 'error') {
     return (
       <main className="shell">
-        <h1>RulZ Ancestry</h1>
+        <h1>RulZ Kinspora</h1>
         <p className="error" role="alert" data-testid="app-error">
           {loaded.message}
         </p>

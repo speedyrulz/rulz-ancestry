@@ -139,7 +139,7 @@ export function verifyBackup(file: string): string | null {
   }
   try {
     if (db.pragma('application_id', { simple: true }) !== TREE_APPLICATION_ID) {
-      throw new BackupError('the file is not a RulZ Ancestry tree');
+      throw new BackupError('the file is not a RulZ Kinspora tree');
     }
     const version = schemaVersion(db);
     if (version > treeMigrations.length) {

@@ -34,7 +34,7 @@ export async function buildCensusPack(
   const id = options.id ?? 'c50de';
   mkdirSync(root, { recursive: true });
   if (!existsSync(join(root, PACKS_MARKER))) {
-    writeFileSync(join(root, PACKS_MARKER), 'The data packs of RulZ Ancestry.\r\n');
+    writeFileSync(join(root, PACKS_MARKER), 'The data packs of RulZ Kinspora.\r\n');
   }
   const outPath = join(root, `${id}.pack`);
   await buildPack(

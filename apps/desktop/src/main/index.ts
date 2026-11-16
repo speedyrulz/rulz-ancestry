@@ -1,5 +1,5 @@
-import { createReadStream, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { createReadStream, existsSync, readdirSync, renameSync, rmdirSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import {
@@ -9,6 +9,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  nativeTheme,
   net,
   protocol,
   safeStorage,
@@ -17,21 +18,29 @@ import {
   type IpcMainInvokeEvent,
 } from 'electron';
 import { manifestsByTier } from '@rulz/connectors';
-import { checkTreeEngine, getSqliteInfo, openOrResetAppDatabase, type Db } from '@rulz/db';
+import {
+  checkTreeEngine,
+  getSetting,
+  getSqliteInfo,
+  openOrResetAppDatabase,
+  type Db,
+} from '@rulz/db';
 import { API_METHODS, MEDIA_SCHEME, channelFor, type AppInfo, type IpcResult } from '../shared/ipc';
 import { AiBridgeServer } from './aibridge';
 import { makeApiClient, runApi } from './aiapi';
 import { AiSessionService, type AiConnector } from './aisession';
-import { DEV_PROFILE, USUAL_PROFILES } from '../bridge/profile';
+import { USUAL_PROFILES } from '../bridge/profile';
+import { packsPath, profilePath, treesPath } from './rename';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type Platform } from './handlers';
+import { printReportPages, renderReportPdf } from './reportwindow';
 import { GazetteerService } from './gazetteer';
 import { CensusOffers } from './censusoffers';
 import { CensusService } from './censuspages';
 import { workerBuildRunner } from './packbuild';
 import buildWorkerPath from './packbuild.worker?modulePath';
 import { PackOffers } from './packoffers';
-import { PackManager } from './packs';
+import { PACKS_ROOT_SETTING, PackManager } from './packs';
 import { PackSearch, workerSearchChannel } from './packsearch';
 import searchWorkerPath from './packsearch.worker?modulePath';
 import { RecordRun } from './recordrun';
@@ -40,7 +49,7 @@ import { findMediaFile } from './mediafiles';
 import { TreeSession } from './session';
 
 /** Must match `appId` in electron-builder.yml so Windows groups taskbar entries correctly. */
-const APP_ID = 'com.rulz.ancestry';
+const APP_ID = 'com.rulz.kinspora';
 
 const devServerUrl = app.isPackaged ? undefined : process.env['ELECTRON_RENDERER_URL'];
 const rendererFile = join(import.meta.dirname, '../renderer/index.html');
@@ -105,7 +114,7 @@ function assertTrustedSender(event: IpcMainInvokeEvent): void {
  */
 function defaultTreesDir(): string {
   if (app.commandLine.hasSwitch('user-data-dir')) return join(app.getPath('userData'), 'Trees');
-  return join(app.getPath('documents'), app.isPackaged ? 'RulZ Ancestry' : 'RulZ Ancestry (dev)');
+  return treesPath(app.getPath('documents'), app.isPackaged, existsSync);
 }
 
 /**
@@ -119,7 +128,10 @@ function defaultPacksRoot(): string {
   if (!app.isPackaged || app.commandLine.hasSwitch('user-data-dir')) {
     return join(app.getPath('userData'), 'packs');
   }
-  return join(process.env['LOCALAPPDATA'] ?? app.getPath('appData'), 'RulZAncestry', 'packs');
+  const base = process.env['LOCALAPPDATA'] ?? app.getPath('appData');
+  const kept = appDb ? getSetting(appDb, PACKS_ROOT_SETTING) : null;
+  if (kept && isAbsolute(kept)) return join(base, 'RulZKinspora', 'packs');
+  return packsPath(base, { exists: existsSync, rename: renameSync }, readdirSync);
 }
 
 /**
@@ -152,7 +164,7 @@ function findConnector(): AiConnector | null {
     /([\\/])app\.asar([\\/])/,
     '$1app.asar.unpacked$2',
   );
-  const file = join(dir, 'rulz-ancestry.mcpb');
+  const file = join(dir, 'rulz-kinspora.mcpb');
   const bridge = join(dir, 'bridge.cjs');
   if (!existsSync(file) || !existsSync(bridge)) return null;
   const profile = app.getPath('userData');
@@ -169,9 +181,14 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     ...(background ? { x: OFF_SCREEN, y: OFF_SCREEN, skipTaskbar: true } : {}),
     show: false,
-    title: 'RulZ Ancestry',
+    title: 'RulZ Kinspora',
     autoHideMenuBar: true,
-    backgroundColor: '#f6f4ef',
+    // The page's own background (styles.css), shown before the page has drawn.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#050505' : '#ffffff',
+    // Packaged: copied beside app.asar by extraResources in electron-builder.yml.
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(import.meta.dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -303,6 +320,10 @@ const platform: Platform = {
   copyText(text) {
     clipboard.writeText(text);
   },
+
+  reportToPdf: renderReportPdf,
+
+  printReport: printReportPages,
 };
 
 /** The longest side of the small pictures shown in lists, in pixels. */
@@ -406,9 +427,15 @@ function registerIpc(
 // Development runs keep their data apart from an installed copy of the app,
 // unless a profile folder was given explicitly (the end-to-end tests do that).
 // This must happen before the single-instance lock, which is tied to the folder.
-if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
-  // The bridge knows this folder by the same name.
-  app.setPath('userData', join(app.getPath('appData'), DEV_PROFILE));
+if (!app.commandLine.hasSwitch('user-data-dir')) {
+  app.setPath(
+    'userData',
+    profilePath(app.getPath('appData'), app.isPackaged, false, app.getPath('userData'), {
+      exists: existsSync,
+      rename: renameSync,
+      removeEmptyDir: rmdirSync,
+    }),
+  );
 }
 
 // Every renderer is sandboxed, including any created by mistake later.

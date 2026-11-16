@@ -337,7 +337,7 @@ export class PackManager {
       mkdirSync(this.root, { recursive: true });
       writeFileSync(
         join(this.root, PACKS_MARKER),
-        'This folder holds the data packs of RulZ Ancestry. The app writes and deletes files here. Put nothing else in it.\r\n',
+        'This folder holds the data packs of RulZ Kinspora. The app writes and deletes files here. Put nothing else in it.\r\n',
         { flag: 'wx' },
       );
     } catch (error) {

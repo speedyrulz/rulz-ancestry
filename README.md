@@ -1,4 +1,4 @@
-# RulZ Ancestry
+# RulZ Kinspora
 
 A Windows desktop app for building a family tree and researching it with free
 data sources. Everything is stored on your own PC.
@@ -38,7 +38,7 @@ the project owner can request.
 
 A tree is a folder holding `tree.db`, a `backups` folder and, once the tree
 holds a picture or document, a `media` folder. By default it is made in
-`Documents\RulZ Ancestry`. To move a tree, move its folder and open it again
+`Documents\RulZ Kinspora`. To move a tree, move its folder and open it again
 with "Open a tree folder". To keep a tree safe, copy the whole folder: the
 backups hold the tree's data, not its pictures and documents.
 
@@ -478,8 +478,8 @@ docs/                 Plan and access checklist
   keep as written, the import and the migration make their rows with the same
   code, and a test compares an upgraded tree with a fresh import.
 - **Development data stays separate.** `pnpm dev` stores its database in
-  `%APPDATA%\RulZ Ancestry (dev)` and makes new trees in
-  `Documents\RulZ Ancestry (dev)`, not in the installed app's folders. The
+  `%APPDATA%\RulZ Kinspora (dev)` and makes new trees in
+  `Documents\RulZ Kinspora (dev)`, not in the installed app's folders. The
   end-to-end tests keep everything inside a temporary profile folder.
 - **The end-to-end tests do not get in the way.** They start the app with
   `--background-window`, which opens its window beyond the edge of the screen,
@@ -499,3 +499,5 @@ prefer widening the version range so an older release can be used instead.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The RulZ name and logo are not covered by that licence. See [LOGO-NOTICE.md](LOGO-NOTICE.md).

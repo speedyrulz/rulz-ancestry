@@ -20,7 +20,7 @@ export class ApiError extends Error {
 async function invoke(method: ApiMethod, args: unknown[]): Promise<unknown> {
   const bridge = window.rulz;
   if (!bridge) {
-    throw new ApiError('failed', 'This page must be opened inside the RulZ Ancestry app.');
+    throw new ApiError('failed', 'This page must be opened inside the RulZ Kinspora app.');
   }
   const call = bridge[method] as (...values: unknown[]) => Promise<IpcResult<unknown>>;
   const result = await call(...args);

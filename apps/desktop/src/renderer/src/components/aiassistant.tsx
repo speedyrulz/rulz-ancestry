@@ -383,7 +383,7 @@ function ConnectSection({ info }: { info: AiAssistantInfo }) {
       <p className="hint">
         The connector reaches this app only while a session is under way. In the AI app, pick the
         connector&apos;s instructions &ldquo;research_session&rdquo;, or ask it to look for records
-        of the people of your session with RulZ Ancestry.
+        of the people of your session with RulZ Kinspora.
       </p>
       {problem !== null && (
         <p className="error" role="alert">
@@ -752,7 +752,7 @@ function SessionView({
       {session.status === 'running' && session.route === 'app' && connection.problem === '' && (
         <p className="dialog-text" data-testid="ai-session-clients">
           {connection.clients.length === 0
-            ? 'No AI app is connected to this session yet. One connects when you ask it to work with RulZ Ancestry.'
+            ? 'No AI app is connected to this session yet. One connects when you ask it to work with RulZ Kinspora.'
             : `Connected now: ${connection.clients
                 .map(
                   (client) =>

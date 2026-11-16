@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import type { GedcomImportResult, RecentTreeInfo, StartInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { formatWhen } from '../format';
+import { LogoWordmark } from './Logo';
 import { SystemCheck } from './SystemCheck';
 import { TextField } from './ui';
 
@@ -74,7 +75,12 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
   return (
     <main className="shell" data-testid="start-screen">
       <header>
-        <h1>RulZ Ancestry</h1>
+        <h1 className="brand">
+          <LogoWordmark className="brand-logo" />
+          <span className="brand-name" aria-hidden="true">
+            KINSPORA
+          </span>
+        </h1>
         <p className="tagline">Family history from free sources, stored on your own PC.</p>
       </header>
 

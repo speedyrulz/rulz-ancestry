@@ -8,7 +8,7 @@ describe.skipIf(!process.env['TROVE_API_KEY'])('Trove, asked live', () => {
   it('answers a newspaper search in the shape the connector reads', async () => {
     const http = new HttpClient({
       fetch: (url, init) => fetch(url, init),
-      userAgent: 'RulZAncestry/contract-check',
+      userAgent: 'RulZKinspora/contract-check',
       keyOf: () => ({ kind: 'key', value: process.env['TROVE_API_KEY'] ?? '' }),
     });
     const { page } = await troveConnector(http.for(troveManifest)).searchTexts(

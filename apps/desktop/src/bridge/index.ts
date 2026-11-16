@@ -6,7 +6,7 @@ import { clientOf, createBridgeServer } from './server';
 
 /**
  * The bridge of the optional AI assistant: the program an AI app starts to
- * reach RulZ Ancestry. Claude Desktop starts it from the connector file the
+ * reach RulZ Kinspora. Claude Desktop starts it from the connector file the
  * app hands out, Claude Code from the command the app shows. It speaks the
  * Model Context Protocol on its standard input and output, and hands each
  * call of a tool to the app over a pipe of this PC (see `protocol.ts`).

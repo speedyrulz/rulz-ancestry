@@ -31,6 +31,7 @@ import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
 import { RelationshipDialog } from './relationship';
+import { ReportDialog, familyChoices } from './reports';
 import { ConfirmDialog, SelectField } from './ui';
 
 const SEX_OPTIONS = SEXES.map((sex) => [sex, SEX_LABELS[sex]] as const);
@@ -56,6 +57,7 @@ type Open =
   | { kind: 'partner'; familyId?: string }
   | { kind: 'child'; familyId?: string; surname: string }
   | { kind: 'relationship' }
+  | { kind: 'report' }
   | { kind: 'records' }
   | { kind: 'record-run' }
   | { kind: 'merge' }
@@ -383,6 +385,19 @@ export function PersonPageView({
           </button>
           <button
             type="button"
+            title={
+              familyChoices(page).length === 0
+                ? 'Add a partner, a parent or a child first'
+                : 'Make a family group sheet to save as a PDF or print'
+            }
+            disabled={familyChoices(page).length === 0}
+            onClick={() => setOpen({ kind: 'report' })}
+            data-testid="open-report"
+          >
+            Family group sheet
+          </button>
+          <button
+            type="button"
             title="Look for this person in records outside your tree"
             onClick={() => setOpen({ kind: 'records' })}
             data-testid="open-records"
@@ -448,6 +463,9 @@ export function PersonPageView({
             testId="detail-living"
           />
         </div>
+        <p className="hint" data-testid="living-reason">
+          {page.livingReason}
+        </p>
       </section>
 
       <section data-testid="names-section">
@@ -946,6 +964,7 @@ export function PersonPageView({
           }
         />
       )}
+      {open?.kind === 'report' && <ReportDialog page={page} onClose={() => setOpen(null)} />}
       {open?.kind === 'relationship' && (
         <RelationshipDialog person={summary} onClose={() => setOpen(null)} onSelect={onSelect} />
       )}

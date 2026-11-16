@@ -37,7 +37,8 @@ export const BRIDGE_PROTOCOL = 1;
 export const CONNECTOR_FILE = 'ai-connector.json';
 
 /** The environment variable that names the app's data folder to a bridge, where it is not the usual one. */
-export const PROFILE_ENV = 'RULZ_ANCESTRY_PROFILE';
+export const PROFILE_ENV = 'RULZ_KINSPORA_PROFILE';
+export const LEGACY_PROFILE_ENV = 'RULZ_ANCESTRY_PROFILE';
 
 /** The longest line either side takes, in bytes. */
 export const LINE_MAX = 1024 * 1024;
@@ -48,6 +49,7 @@ export const HANDSHAKE_MS = 5000;
 /** The key, in bytes. */
 export const KEY_BYTES = 32;
 
+// The pipe prefix and handshake deliberately retain the old name for compatibility.
 const PIPE_PREFIX = '\\\\.\\pipe\\rulz-ancestry-';
 
 /**

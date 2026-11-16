@@ -1,9 +1,10 @@
-appId: com.rulz.ancestry
-productName: RulZ Ancestry
-copyright: Copyright © 2026 RulZ Ancestry contributors
+appId: com.rulz.kinspora
+productName: RulZ Kinspora
+copyright: Copyright © 2026 RulZ Kinspora contributors
 
 directories:
   output: release
+  buildResources: build
 
 files:
   - out/**
@@ -26,7 +27,15 @@ asarUnpack:
 # so there is nothing to recompile against Electron's headers.
 npmRebuild: false
 
+# The window icon. The packaged app loads resources/icon.png, which is
+# path.join(process.resourcesPath, 'icon.png'). The executable and the
+# installer icons are build/icon.ico.
+extraResources:
+  - from: build/icon.png
+    to: icon.png
+
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -35,5 +44,22 @@ win:
 nsis:
   oneClick: false
   perMachine: false
-  allowToChangeInstallationDirectory: true
-  artifactName: RulZ-Ancestry-Setup-${version}.${ext}
+  # The directory page is closed. A chosen folder can be the one that holds
+  # the user's trees, and an uninstall would then remove them. A per-user
+  # install goes to %LOCALAPPDATA%\Programs\<product name>.
+  allowToChangeInstallationDirectory: false
+  # The profile, trees and packs live outside the install folder and must
+  # survive an uninstall.
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  artifactName: RulZ-Kinspora-Setup-${version}.${ext}
+
+# A tag build uploads with --publish always. The release stays a draft until
+# someone publishes it. `pnpm package` passes --publish never, so a local
+# package and CI do not upload.
+publish:
+  provider: github
+  owner: speedyrulz
+  repo: rulz-ancestry
+  releaseType: draft

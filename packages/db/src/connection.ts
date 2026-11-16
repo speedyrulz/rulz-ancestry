@@ -12,7 +12,7 @@ export interface SqliteInfo {
 
 /**
  * Opens (and creates if needed) a SQLite database with the settings every
- * RulZ Ancestry database uses. Pass ':memory:' for a throwaway database.
+ * RulZ Kinspora database uses. Pass ':memory:' for a throwaway database.
  */
 export function openDatabase(file: string): Db {
   const db = new Database(file);

@@ -335,7 +335,7 @@ const refuse = (reason: AiToolRefusal, message: string, detail?: unknown): AiToo
 
 const NO_SESSION = refuse(
   'no-session',
-  'No session of the AI assistant is under way. The user starts one in RulZ Ancestry, for the people and the sources they choose.',
+  'No session of the AI assistant is under way. The user starts one in RulZ Kinspora, for the people and the sources they choose.',
 );
 
 const problem = (kind: RecordSearchProblem['kind'], message: string): RecordSearchProblem => ({

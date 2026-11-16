@@ -29,6 +29,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Check that the version sources agree
+        run: node tools/ship/check-version.mjs
+
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -50,3 +53,26 @@ jobs:
           path: apps/desktop/release/*.exe
           retention-days: 7
           if-no-files-found: error
+
+  # Installs a real copy on the runner: one version, then a newer one, then
+  # uninstall. It keeps a stand-in profile, tree and packs folder. It does not
+  # publish. The script refuses to run when it finds data it did not create.
+  installer:
+    needs: check
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads the pnpm version from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install, upgrade and uninstall
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/ship/installer-test.ps1

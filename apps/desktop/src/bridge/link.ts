@@ -49,12 +49,12 @@ const refusal = (reason: string, message: string): LinkRefusal => ({ ok: false, 
 
 export const NOT_UNDER_WAY = refusal(
   'no-session',
-  'No session of the AI assistant is under way in RulZ Ancestry, or RulZ Ancestry is not open. Nothing can be read or asked now. Ask the user to open RulZ Ancestry, open the page of a person, press "AI assistant" and start a session there. Then call get_session.',
+  'No session of the AI assistant is under way in RulZ Kinspora, or RulZ Kinspora is not open. Nothing can be read or asked now. Ask the user to open RulZ Kinspora, open the page of a person, press "AI assistant" and start a session there. Then call get_session.',
 );
 
 export const NOT_REACHED = refusal(
   'failed',
-  'RulZ Ancestry did not answer on the connection of its session, so nothing was sent. The session may have just ended, or the app may be busy. Call get_session once more. If this goes on, ask the user to stop the session in RulZ Ancestry and to start a new one.',
+  'RulZ Kinspora did not answer on the connection of its session, so nothing was sent. The session may have just ended, or the app may be busy. Call get_session once more. If this goes on, ask the user to stop the session in RulZ Kinspora and to start a new one.',
 );
 
 export const NO_SUCH_TOOL = refusal('unknown-tool', 'There is no tool of this name.');
@@ -66,22 +66,22 @@ export const TOO_LONG = refusal(
 
 export const NOT_FITTING = refusal(
   'failed',
-  'This connector and the copy of RulZ Ancestry on this PC do not fit together: one of them is older than the other. Ask the user to open the window "AI assistant" in RulZ Ancestry and to install the connector from there again.',
+  'This connector and the copy of RulZ Kinspora on this PC do not fit together: one of them is older than the other. Ask the user to open the window "AI assistant" in RulZ Kinspora and to install the connector from there again.',
 );
 
 export const NOT_TRUSTED = refusal(
   'failed',
-  'What answered in the place of RulZ Ancestry did not show that it is the app, or the app did not accept this connector, so nothing was sent. Ask the user to stop the session in RulZ Ancestry and to start a new one.',
+  'What answered in the place of RulZ Kinspora did not show that it is the app, or the app did not accept this connector, so nothing was sent. Ask the user to stop the session in RulZ Kinspora and to start a new one.',
 );
 
 export const TOO_MANY = refusal(
   'failed',
-  'Too many programs are connected to this session of RulZ Ancestry already. Ask the user to close an AI app they do not use, or to stop the session and start a new one.',
+  'Too many programs are connected to this session of RulZ Kinspora already. Ask the user to close an AI app they do not use, or to stop the session and start a new one.',
 );
 
 export const CUT_OFF = refusal(
   'failed',
-  'The connection to RulZ Ancestry ended while this call was under way: the session ended, or the app was closed. If this was a question to a source, it may have been sent and counted all the same. Do not repeat it; call get_session to see how the session stands.',
+  'The connection to RulZ Kinspora ended while this call was under way: the session ended, or the app was closed. If this was a question to a source, it may have been sent and counted all the same. Do not repeat it; call get_session to see how the session stands.',
 );
 
 /** The file of the app is a few hundred bytes. A larger one is not read. */

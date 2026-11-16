@@ -1,15 +1,20 @@
 :root {
-  --bg: #f6f4ef;
-  --surface: #ffffff;
-  --surface-2: #efece5;
-  --text: #23201b;
-  --muted: #6b655b;
-  --border: #ddd7cc;
-  --accent: #2f6b4f;
+  /* The RulZ colours. --accent is the brand red for fills and borders; where red is text, use --accent-strong. */
+  --bg: #ffffff;
+  --surface: #f5f5f7;
+  --surface-2: #e2e2e7;
+  --text: #111114;
+  --muted: #5f6068;
+  --border: #d9d9de;
+  --accent: #ed000d;
+  --accent-strong: #c8000b;
+  --accent-hover: #c8000b;
   --accent-text: #ffffff;
-  --accent-soft: #e2efe8;
-  --error: #a3261f;
-  --error-soft: #fbe9e7;
+  --accent-soft: rgb(237 0 13 / 8%);
+  --error: #d4161c;
+  --error-soft: #fdecec;
+  --warn: #a16207;
+  --ok: #15803d;
   --focus: #1c6fd1;
   --map-sea: #dbe6ec;
   color-scheme: light dark;
@@ -20,17 +25,21 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1b19;
-    --surface: #262422;
-    --surface-2: #302e2b;
-    --text: #ece8e1;
-    --muted: #a59e92;
-    --border: #3a3733;
-    --accent: #7fc4a2;
-    --accent-text: #10241a;
-    --accent-soft: #24382f;
-    --error: #f08a82;
-    --error-soft: #3b2220;
+    --bg: #050505;
+    --surface: #0c0c0e;
+    --surface-2: #141417;
+    --text: #f2f2f3;
+    --muted: #a3a3ab;
+    --border: #232328;
+    --accent: #ed000d;
+    --accent-strong: #ff6b72;
+    --accent-hover: #ff2633;
+    --accent-text: #ffffff;
+    --accent-soft: rgb(237 0 13 / 13%);
+    --error: #ff5a5f;
+    --error-soft: #2a1214;
+    --warn: #fbbf24;
+    --ok: #4ade80;
     --focus: #8ab4f8;
     --map-sea: #1d2a31;
   }
@@ -56,7 +65,7 @@ h1 {
   margin: 0;
   font-size: 28px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 h2 {
@@ -81,6 +90,13 @@ p {
 
 .error {
   color: var(--error);
+}
+
+/* An error is red like the accent, so a block of one also gets a bar at its side: it never rests on colour alone. */
+p.error,
+div.error {
+  padding-left: 10px;
+  border-left: 3px solid var(--error);
 }
 
 .path {
@@ -134,12 +150,13 @@ button.primary {
 
 button.primary:hover:not(:disabled) {
   background: var(--accent);
-  filter: brightness(1.08);
+  filter: brightness(0.88);
 }
 
 button.danger {
   border-color: var(--error);
   color: var(--error);
+  font-weight: 600;
 }
 
 button.danger:hover:not(:disabled) {
@@ -155,7 +172,7 @@ button.link {
   padding: 0;
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 600;
   text-align: left;
   text-decoration: underline;
@@ -294,6 +311,40 @@ textarea {
   margin-top: 24px;
 }
 
+/* The logo: the dark-theme copy shows on a dark system setting, the light one otherwise. */
+.logo-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .logo-light {
+    display: none;
+  }
+
+  .logo-dark {
+    display: inline-block;
+  }
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.brand-logo {
+  width: 160px;
+  height: auto;
+}
+
+.brand-name {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
 .tagline {
   margin: 4px 0 0;
   color: var(--muted);
@@ -392,7 +443,7 @@ textarea {
 
 .tree-title strong {
   overflow: hidden;
-  color: var(--accent);
+  color: var(--accent-strong);
   font-size: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1419,7 +1470,7 @@ ul.media-grid,
 }
 
 .viewer-message a {
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 /* A path or a web address can be one long word. */
@@ -1544,7 +1595,7 @@ ul.media-grid,
 }
 
 .gazetteer-panel a {
-  color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 600;
 }
 
@@ -1784,7 +1835,7 @@ ul.media-grid,
   border: 1px solid var(--accent);
   border-radius: 11px;
   background: var(--surface);
-  color: var(--accent);
+  color: var(--accent-strong);
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
@@ -1916,7 +1967,7 @@ ul.media-grid,
 .record-key {
   margin: 0.75rem 0;
   padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border, #d8d4c8);
+  border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 0.9rem;
 }

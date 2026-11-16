@@ -22,7 +22,7 @@ test('creates a tree in its own folder and opens it', async ({ window, userDataD
 
   await createTree(window, 'Smith: the family?');
   await expect(window.getByTestId('tree-name')).toHaveText('Smith: the family?');
-  await expect(window).toHaveTitle('Smith: the family? - RulZ Ancestry');
+  await expect(window).toHaveTitle('Smith: the family? - RulZ Kinspora');
   await expect(window.getByTestId('person-count')).toHaveText('0 people');
   await expect(window.getByTestId('undo')).toBeDisabled();
   // The folder name leaves out the characters Windows does not allow.
@@ -233,7 +233,7 @@ test('backs up on closing, lists the tree as recent and reopens it', async ({
 
   await window.getByTestId('close-tree').click();
   await expect(window.getByTestId('start-screen')).toBeVisible();
-  await expect(window).toHaveTitle('RulZ Ancestry');
+  await expect(window).toHaveTitle('RulZ Kinspora');
   const backups = join(userDataDir, 'Trees', 'Recent test', 'backups');
   expect(readdirSync(backups)).toHaveLength(1);
 

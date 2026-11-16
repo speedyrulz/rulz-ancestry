@@ -32,7 +32,7 @@ interface AppFixtures {
 
 const desktopDir = resolve(import.meta.dirname, '..');
 const packagedDir = join(desktopDir, 'release', 'win-unpacked');
-const packagedExe = join(packagedDir, 'RulZ Ancestry.exe');
+const packagedExe = join(packagedDir, 'RulZ Kinspora.exe');
 
 /**
  * The bridge of the optional AI assistant as the app hands it out: the one

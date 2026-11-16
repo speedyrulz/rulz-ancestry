@@ -247,7 +247,7 @@ describe('papersPastConnector', () => {
         sent.push({ url, headers: init.headers });
         return Promise.resolve(new Response(JSON.stringify(data)));
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
       keyOf: () => (key ? { kind: 'key', value: 'canary-key-0123456789' } : { kind: 'none' }),
       memory: { load: () => null, save: () => undefined },
     });
@@ -304,7 +304,7 @@ describe('papersPastConnector', () => {
   it('is made only for the client of its own source', () => {
     const http = new HttpClient({
       fetch: () => Promise.reject(new Error('nothing may be asked')),
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     expect(() => papersPastConnector(http.for(papersPastManifest))).not.toThrow();
   });

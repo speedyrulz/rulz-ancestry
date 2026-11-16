@@ -26,7 +26,7 @@ export const LOADED_AT_KEY = 'loaded_at';
 /** The file is a SQLite database, but not one this app created. */
 export class NotATreeError extends Error {
   constructor(file: string) {
-    super(`not a RulZ Ancestry tree: ${file}`);
+    super(`not a RulZ Kinspora tree: ${file}`);
     this.name = 'NotATreeError';
   }
 }

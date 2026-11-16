@@ -309,7 +309,7 @@ describe('wikidataConnector', () => {
         asked.push(url);
         return Promise.resolve(new Response(JSON.stringify(data)));
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     return {
       connector: wikidataConnector(http.for(wikidataManifest), () => Date.UTC(2026, 5, 1)),
@@ -342,7 +342,7 @@ describe('wikidataConnector', () => {
   it('needs the client of its own source', () => {
     const http = new HttpClient({
       fetch: () => Promise.reject(new Error('nothing may be asked')),
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     expect(() => wikidataConnector(http.for({ ...wikidataManifest, id: 'other' }))).toThrow();
   });

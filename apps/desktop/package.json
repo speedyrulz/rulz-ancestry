@@ -1,10 +1,10 @@
 {
   "name": "@rulz/desktop",
-  "productName": "RulZ Ancestry",
+  "productName": "RulZ Kinspora",
   "version": "0.1.0",
   "private": true,
   "description": "Local-first Windows genealogy app built on free data sources",
-  "author": "RulZ Ancestry contributors",
+  "author": "RulZ Kinspora contributors",
   "license": "MIT",
   "type": "module",
   "main": "./out/main/index.js",
@@ -15,6 +15,7 @@
     "test:e2e": "playwright test --project=built",
     "test:e2e:packaged": "playwright test --project=packaged",
     "package": "electron-vite build && node scripts/connector.mjs && electron-builder --win nsis --x64 --publish never",
+    "package:publish": "electron-vite build && node scripts/connector.mjs && electron-builder --win nsis --x64 --publish always",
     "package:dir": "electron-vite build && node scripts/connector.mjs && electron-builder --win --x64 --dir --publish never"
   },
   "dependencies": {

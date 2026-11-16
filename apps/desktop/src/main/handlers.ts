@@ -16,6 +16,7 @@ import {
   kinshipTerm,
   mediaKind,
   relationshipTerm,
+  renderHtml,
   webAddressProblem,
   type GazetteerPlace,
 } from '@rulz/core';
@@ -46,6 +47,7 @@ import {
   addPartner,
   addPersonEvent,
   addPersonFromDraft,
+  buildReport,
   countMedia,
   countPersons,
   countPlaces,
@@ -79,6 +81,7 @@ import {
   listPlaces,
   listSourceCitations,
   listSources,
+  livingReason,
   locateMediaFiles,
   markNotDuplicate,
   mediaFilePath,
@@ -111,6 +114,7 @@ import {
   type Tree,
   type TreePlace,
 } from '@rulz/db';
+import { dirname, extname, join } from 'node:path';
 import { z } from 'zod';
 import type {
   ApiMethod,
@@ -123,6 +127,8 @@ import type {
   PersonDraft,
   PersonRef,
   PersonSummary,
+  ReportPaper,
+  ReportRequest,
   RulzApi,
   SourceRef,
   TreePlaceInfo,
@@ -140,6 +146,14 @@ import type { CensusService } from './censuspages';
 import type { GazetteerService } from './gazetteer';
 import type { PackOffers } from './packoffers';
 import type { PackManager } from './packs';
+import {
+  MAX_REPORT_HTML_BYTES,
+  REPORT_WINDOW,
+  footerTemplate,
+  reportFileName,
+  writeReportFile,
+  type ReportRenderJob,
+} from './report';
 import { RecordRun } from './recordrun';
 import { markSourceOf, type RecordSearchService } from './records';
 import { NoOpenTreeError, SessionError, type TreeSession } from './session';
@@ -192,6 +206,17 @@ export interface Platform {
   showFileInFolder(file: string): void;
   /** Puts a text on the clipboard. */
   copyText(text: string): void;
+  /**
+   * Renders a report to a PDF in a hidden window made as `job.seal` says (no
+   * script, sandboxed, no preload, no request but the page itself). The window
+   * is closed whatever happens.
+   */
+  reportToPdf(job: ReportRenderJob): Promise<Uint8Array>;
+  /**
+   * Prints a report on the same kind of sealed window, through the system's
+   * print dialog. Resolves to false when the user cancels.
+   */
+  printReport(job: ReportRenderJob): Promise<boolean>;
 }
 
 type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
@@ -242,6 +267,14 @@ const none = z.tuple([]);
 
 /** The number GeoNames gives a place. */
 const geonameId = z.number().int().positive().max(4_000_000_000);
+
+/** What the page may say about a report: its kind, its family and whether living people are in it. */
+const reportShape = {
+  kind: z.literal('family-group'),
+  familyId: id,
+  includeLiving: z.boolean(),
+};
+const reportPaper = z.enum(['A4', 'Letter']);
 
 const draft = z.strictObject({
   given: text(200).exactOptional(),
@@ -436,6 +469,12 @@ const GEDZIP_FILTERS = [
   { name: 'Zip files', extensions: ['zip'] },
 ];
 
+/** What the file dialog for saving a report offers. */
+const REPORT_FILTERS: Record<'pdf' | 'html', { name: string; extensions: string[] }[]> = {
+  pdf: [{ name: 'PDF files', extensions: ['pdf'] }],
+  html: [{ name: 'Web pages', extensions: ['html', 'htm'] }],
+};
+
 /** What the file dialog for adding pictures and documents offers. Any file may be added. */
 const MEDIA_FILTERS = [
   {
@@ -509,6 +548,33 @@ export function createHandlers(
     ai.clear();
     records.reset();
     census?.reset();
+  });
+
+  /**
+   * Builds a report from the open tree. The page names only the kind, the
+   * family and whether living people are included; who may be living is read
+   * here, and the filter is applied while the report is built.
+   */
+  const makeReport = (request: ReportRequest) => {
+    const tree = session.tree;
+    const built = buildReport(
+      tree,
+      { kind: request.kind, familyId: request.familyId },
+      { livingIds: presumedLivingIds(tree), includeLiving: request.includeLiving },
+    );
+    const html = renderHtml(built.model);
+    if (Buffer.byteLength(html, 'utf8') > MAX_REPORT_HTML_BYTES) {
+      throw new SessionError(
+        'This report is too large to make. Leave out some people and try again.',
+      );
+    }
+    return { built, html };
+  };
+  const renderJob = (html: string, title: string, paper: ReportPaper): ReportRenderJob => ({
+    html,
+    paper,
+    footerTemplate: footerTemplate(title),
+    seal: REPORT_WINDOW,
   });
 
   /**
@@ -705,6 +771,61 @@ export function createHandlers(
       () => presumedLivingIds(session.tree).size,
     ),
 
+    previewReport: define<'previewReport'>(z.tuple([z.strictObject(reportShape)]), (request) => {
+      const { built, html } = makeReport(request);
+      return {
+        title: built.model.title,
+        html,
+        livingOmitted: built.livingOmitted,
+        notesOmitted: built.notesOmitted,
+        citationTextsOmitted: built.citationTextsOmitted,
+        mediaOmitted: built.mediaOmitted,
+      };
+    }),
+
+    saveReport: define<'saveReport'>(
+      z.tuple([
+        z.strictObject({ ...reportShape, format: z.enum(['pdf', 'html']), paper: reportPaper }),
+      ]),
+      async (request) => {
+        const { built, html } = makeReport(request);
+        const title = built.model.title;
+        const extension = request.format === 'pdf' ? 'pdf' : 'html';
+        const chosen = await platform.chooseFileToSave({
+          title: 'Save this report',
+          buttonLabel: 'Save',
+          defaultPath: join(
+            dirname(session.suggestedExportPath()),
+            `${reportFileName(title)}.${extension}`,
+          ),
+          filters: REPORT_FILTERS[request.format],
+        });
+        if (chosen === null) return null;
+        const file = extname(chosen) === '' ? `${chosen}.${extension}` : chosen;
+        const data =
+          request.format === 'pdf'
+            ? await platform.reportToPdf(renderJob(html, title, request.paper))
+            : html;
+        await writeReportFile(file, data);
+        return {
+          file,
+          format: request.format,
+          livingOmitted: built.livingOmitted,
+          notesOmitted: built.notesOmitted,
+          citationTextsOmitted: built.citationTextsOmitted,
+          mediaOmitted: built.mediaOmitted,
+        };
+      },
+    ),
+
+    printReport: define<'printReport'>(
+      z.tuple([z.strictObject({ ...reportShape, paper: reportPaper })]),
+      (request) => {
+        const { built, html } = makeReport(request);
+        return platform.printReport(renderJob(html, built.model.title, request.paper));
+      },
+    ),
+
     listPersons: define<'listPersons'>(
       z.tuple([
         z.strictObject({
@@ -733,6 +854,7 @@ export function createHandlers(
         ...page,
         media: page.media.map((media) => ({ ...mediaInfo(tree, media), uses: media.uses })),
         keptLines: keptLinesOf(tree, personId),
+        livingReason: livingReason(tree, personId)?.text ?? '',
       };
     }),
 

@@ -19,7 +19,7 @@ import { wikitreeManifest } from './manifest';
  */
 
 /** WikiTree asks every app to name itself with each request. */
-export const WIKITREE_APP_ID = 'RulZAncestry';
+export const WIKITREE_APP_ID = 'RulZKinspora';
 
 /** Where a profile's page is, for the user's browser. */
 export const WIKITREE_PROFILE_URL = 'https://www.wikitree.com/wiki/';

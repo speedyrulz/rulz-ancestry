@@ -179,7 +179,7 @@ describe('links to sites the app never fetches', () => {
   it('is refused by the client that fetches', () => {
     const http = new HttpClient({
       fetch: () => Promise.reject(new Error('nothing may be asked')),
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     for (const source of deepLinkSources) {
       expect(() => http.for(source.manifest), source.manifest.id).toThrow();

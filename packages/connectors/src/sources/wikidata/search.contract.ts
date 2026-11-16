@@ -15,7 +15,7 @@ describe('Wikidata, asked live', () => {
   it('answers a search for a person in the shape the connector reads', async () => {
     const http = new HttpClient({
       fetch: (url, init) => fetch(url, init),
-      userAgent: 'RulZAncestry/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
+      userAgent: 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
       timeoutMs: 60_000,
     });
     const connector = wikidataConnector(http.for(wikidataManifest));

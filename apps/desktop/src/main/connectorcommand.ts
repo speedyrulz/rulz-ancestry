@@ -8,7 +8,7 @@ import { PROFILE_ENV } from '../bridge/protocol';
  * **The name stands before the options.** `--env` of `claude mcp add` takes
  * several values, so a name that follows it is read as one more of them
  * (tried with Claude Code 2.1.323 on 2026-11-14: "Invalid environment
- * variable format: rulz-ancestry"). The `--` that ends the options is in
+ * variable format: rulz-kinspora"). The `--` that ends the options is in
  * quotes: Windows PowerShell takes a bare one away before a program that was
  * installed as a script sees it.
  */
@@ -54,7 +54,7 @@ export function connectorCommandOf(input: ConnectorCommandInput): ConnectorComma
   if (bridgeArg === null || profileArg === null) return { command: '', fileFits };
   const env = named ? ` --env ${profileArg}` : '';
   return {
-    command: `claude mcp add rulz-ancestry --scope user --transport stdio${env} "--" node ${bridgeArg}`,
+    command: `claude mcp add rulz-kinspora --scope user --transport stdio${env} "--" node ${bridgeArg}`,
     fileFits,
   };
 }

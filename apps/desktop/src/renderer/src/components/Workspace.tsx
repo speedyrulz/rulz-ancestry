@@ -139,9 +139,9 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   };
 
   useEffect(() => {
-    document.title = `${tree.name} - RulZ Ancestry`;
+    document.title = `${tree.name} - RulZ Kinspora`;
     return () => {
-      document.title = 'RulZ Ancestry';
+      document.title = 'RulZ Kinspora';
     };
   }, [tree.name]);
 

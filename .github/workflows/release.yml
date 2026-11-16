@@ -1,0 +1,51 @@
+# A pushed tag v* builds the Windows installer and uploads it to a draft
+# GitHub Release. The draft stays unpublished until someone publishes it.
+# CI does not run this workflow. `pnpm package` passes --publish never.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Reads the pnpm version from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches the version
+        run: node tools/ship/check-version.mjs "$env:TAG"
+        env:
+          TAG: ${{ github.ref_name }}
+
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      # Builds, packages, and uploads. electron-builder.yml publishes to GitHub
+      # as a draft, and this step is the only one that passes --publish always.
+      # The upload is the installer, its .blockmap and latest.yml.
+      - name: Build, package, and upload the draft release
+        run: pnpm package:publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

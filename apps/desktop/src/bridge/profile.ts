@@ -1,13 +1,18 @@
 import { isAbsolute, join } from 'node:path';
-import { PROFILE_ENV } from './protocol';
+import { LEGACY_PROFILE_ENV, PROFILE_ENV } from './protocol';
 
 /**
  * The folders of the app's data, as the app names them itself
  * (`main/index.ts`): the one of an installed copy, and the one of a copy
  * that was started from its source code.
  */
-export const DEV_PROFILE = 'RulZ Ancestry (dev)';
-export const USUAL_PROFILES: readonly string[] = ['RulZ Ancestry', DEV_PROFILE];
+export const DEV_PROFILE = 'RulZ Kinspora (dev)';
+export const USUAL_PROFILES: readonly string[] = [
+  'RulZ Kinspora',
+  'RulZ Ancestry',
+  DEV_PROFILE,
+  'RulZ Ancestry (dev)',
+];
 
 /**
  * The folders the bridge looks for the app's file in: the one it was told
@@ -24,7 +29,7 @@ export const USUAL_PROFILES: readonly string[] = ['RulZ Ancestry', DEV_PROFILE];
  * folder.
  */
 export function profileDirsOf(env: Record<string, string | undefined>, home: string): string[] {
-  const named = (env[PROFILE_ENV] ?? '').trim();
+  const named = (env[PROFILE_ENV] ?? env[LEGACY_PROFILE_ENV] ?? '').trim();
   if (named !== '' && !named.includes('${') && isAbsolute(named)) return [named];
   const roaming = env['APPDATA'];
   const base = roaming !== undefined && roaming !== '' ? roaming : join(home, 'AppData', 'Roaming');

@@ -15,7 +15,7 @@ describe('WikiTree, asked live', () => {
   it('answers a search for a person in the shape the connector reads', async () => {
     const http = new HttpClient({
       fetch: (url, init) => fetch(url, init),
-      userAgent: 'RulZAncestry/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
+      userAgent: 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
     });
     const connector = wikitreeConnector(http.for(wikitreeManifest));
     const { page } = await connector.searchPersons(

@@ -64,7 +64,7 @@ test('a pack in the packs folder is listed, searched through its worker, and rem
 }) => {
   const packs = join(userDataDir, 'packs');
   mkdirSync(packs, { recursive: true });
-  writeFileSync(join(packs, 'rulz-packs.txt'), 'The data packs of RulZ Ancestry.\r\n');
+  writeFileSync(join(packs, 'rulz-packs.txt'), 'The data packs of RulZ Kinspora.\r\n');
   const file = join(packs, 'tst1.pack');
   await buildPack(
     {

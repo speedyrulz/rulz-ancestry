@@ -180,7 +180,7 @@ describe('internetArchiveConnector', () => {
         asked.push(url);
         return Promise.resolve(new Response(JSON.stringify(data)));
       },
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     return { connector: internetArchiveConnector(http.for(internetArchiveManifest)), asked };
   };
@@ -208,7 +208,7 @@ describe('internetArchiveConnector', () => {
   it('needs the client of its own source', () => {
     const http = new HttpClient({
       fetch: () => Promise.reject(new Error('nothing may be asked')),
-      userAgent: 'RulZAncestry/test',
+      userAgent: 'RulZKinspora/test',
     });
     expect(() =>
       internetArchiveConnector(http.for({ ...internetArchiveManifest, id: 'other' })),

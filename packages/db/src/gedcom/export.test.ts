@@ -124,9 +124,9 @@ describe('exporting a tree made in the app', () => {
 
     expect(exportLines(tree)).toEqual([
       '0 HEAD',
-      '1 SOUR RULZ_ANCESTRY',
+      '1 SOUR RULZ_KINSPORA',
       '2 VERS 0.0.0-test',
-      '2 NAME RulZ Ancestry',
+      '2 NAME RulZ Kinspora',
       '1 DATE 11 NOV 2026',
       '2 TIME 12:34:56',
       '1 SUBM @SUBM1@',
@@ -190,9 +190,9 @@ describe('exporting a tree made in the app', () => {
       '0 HEAD',
       '1 GEDC',
       '2 VERS 7.0',
-      '1 SOUR RULZ_ANCESTRY',
+      '1 SOUR RULZ_KINSPORA',
       '2 VERS 0.0.0-test',
-      '2 NAME RulZ Ancestry',
+      '2 NAME RulZ Kinspora',
       '1 DATE 11 NOV 2026',
       '2 TIME 12:34:56Z',
       '0 @I1@ INDI',
@@ -263,9 +263,9 @@ describe('exporting an imported tree in the version it came in', () => {
     // The header names this app as the writer, and points to the submitter the file has.
     expect(lines.slice(0, 12)).toEqual([
       '0 HEAD',
-      '1 SOUR RULZ_ANCESTRY',
+      '1 SOUR RULZ_KINSPORA',
       '2 VERS 0.0.0-test',
-      '2 NAME RulZ Ancestry',
+      '2 NAME RulZ Kinspora',
       '1 DATE 11 NOV 2026',
       '2 TIME 12:34:56',
       '1 SUBM @SUBM1@',

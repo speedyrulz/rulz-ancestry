@@ -4,8 +4,8 @@ import { API_METHODS } from '../src/shared/ipc';
 import { expect, test } from './fixtures';
 
 test('opens the main window', async ({ window }) => {
-  await expect(window).toHaveTitle('RulZ Ancestry');
-  await expect(window.getByRole('heading', { level: 1, name: 'RulZ Ancestry' })).toBeVisible();
+  await expect(window).toHaveTitle('RulZ Kinspora');
+  await expect(window.getByRole('heading', { level: 1, name: 'RulZ Kinspora' })).toBeVisible();
   await expect(window.getByTestId('app-error')).toHaveCount(0);
 });
 

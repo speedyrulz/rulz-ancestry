@@ -37,7 +37,7 @@ async function connectAi(appTarget: AppTarget, userDataDir: string): Promise<Cli
     new StdioClientTransport({
       command: process.execPath,
       args: [bridgeFile(appTarget)],
-      env: { RULZ_ANCESTRY_PROFILE: userDataDir },
+      env: { RULZ_KINSPORA_PROFILE: userDataDir },
     }),
   );
   return client;
@@ -198,14 +198,14 @@ test('the AI assistant is off until its notice is agreed to; a session is listed
   await connect.getByTestId('ai-connector-show').click();
   const shown = await handedOver(app);
   expect(shown).toHaveLength(1);
-  expect(shown[0]).toMatch(/^show .*[\\/]out[\\/]connector[\\/]rulz-ancestry\.mcpb$/);
+  expect(shown[0]).toMatch(/^show .*[\\/]out[\\/]connector[\\/]rulz-kinspora\.mcpb$/);
   expect(existsSync((shown[0] ?? '').slice('show '.length))).toBe(true);
   const command = (await connect.getByTestId('ai-connector-command').textContent()) ?? '';
   // This run keeps its data in a folder of its own, so the command says where.
   expect(command).toMatch(
-    /^claude mcp add rulz-ancestry --scope user --transport stdio --env "RULZ_ANCESTRY_PROFILE=[^"]+" "--" node "[^"]+bridge\.cjs"$/,
+    /^claude mcp add rulz-kinspora --scope user --transport stdio --env "RULZ_KINSPORA_PROFILE=[^"]+" "--" node "[^"]+bridge\.cjs"$/,
   );
-  expect(command).toContain(`RULZ_ANCESTRY_PROFILE=${userDataDir}"`);
+  expect(command).toContain(`RULZ_KINSPORA_PROFILE=${userDataDir}"`);
   // And the window names that folder for the connector's setting in Claude Desktop.
   await expect(connect.getByTestId('ai-connector-data-folder')).toHaveText(userDataDir);
   await expect(connect.getByTestId('ai-connector-ways')).toContainText('Install Extension');
@@ -444,7 +444,7 @@ test('the bridge lists the tools at any time, gives nothing without a session, a
   await expect(window.getByTestId('start-screen')).toBeVisible();
   const ai = await connectAi(appTarget, userDataDir);
   try {
-    expect(ai.getServerVersion()?.name).toBe('rulz-ancestry');
+    expect(ai.getServerVersion()?.name).toBe('rulz-kinspora');
     expect((await ai.listTools()).tools.map((tool) => tool.name)).toEqual([
       'get_session',
       'list_sources',

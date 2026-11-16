@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BACKUP_DIR_NAME,
+  addFamilyEvent,
+  addPersonEvent,
+  createFamily,
+  createPerson,
   getSetting,
   listNames,
   openAppDatabase,
@@ -52,6 +56,8 @@ import {
   type RecordSearchSetup,
   type RecordSourceKeyResult,
   type RelationshipInfo,
+  type ReportPreview,
+  type ReportSaved,
   type SourceChange,
   type SourceDetails,
   type SourceListPage,
@@ -73,6 +79,7 @@ import {
 } from './records';
 import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
 import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
+import type { ReportRenderJob } from './report';
 import { TreeSession } from './session';
 
 const MISSING = '00000000-0000-7000-8000-000000000000';
@@ -269,10 +276,13 @@ let filesDialogs: number;
 let openedFiles: string[];
 let shownFiles: string[];
 let copied: string[];
+/** The reports the platform was asked to render or print, and whether printing goes ahead. */
+let reportJobs: ReportRenderJob[];
+let printAnswer: boolean;
 
 /** What the app hands out for connecting an AI app, as these tests have it. */
-const CONNECTOR_PATH = 'C:\\app\\out\\connector\\rulz-ancestry.mcpb';
-const CONNECTOR_COMMAND = 'claude mcp add rulz-ancestry -- node bridge.cjs';
+const CONNECTOR_PATH = 'C:\\app\\out\\connector\\rulz-kinspora.mcpb';
+const CONNECTOR_COMMAND = 'claude mcp add rulz-kinspora -- node bridge.cjs';
 
 const platform: Platform = {
   openInBrowser: (url) => {
@@ -306,6 +316,14 @@ const platform: Platform = {
   },
   showFileInFolder: (file) => {
     shownFiles.push(file);
+  },
+  reportToPdf: (job) => {
+    reportJobs.push(job);
+    return Promise.resolve(Buffer.from('%PDF-1.7 made up for a test'));
+  },
+  printReport: (job) => {
+    reportJobs.push(job);
+    return Promise.resolve(printAnswer);
   },
 };
 
@@ -399,6 +417,8 @@ beforeEach(() => {
   openedFiles = [];
   shownFiles = [];
   copied = [];
+  reportJobs = [];
+  printAnswer = true;
 });
 
 afterEach(async () => {
@@ -2063,7 +2083,7 @@ describe('the search for records', () => {
     // The name and the years, and nothing else of the tree.
     expect(Object.fromEntries(asked.searchParams)).toEqual({
       action: 'searchPerson',
-      appId: 'RulZAncestry',
+      appId: 'RulZKinspora',
       FirstName: 'Ada',
       LastName: 'Test',
       BirthDate: '1850',
@@ -5507,5 +5527,234 @@ describe('connecting an AI app', () => {
     await expect(call('copyAiConnectorCommand', 'some text')).rejects.toThrow();
     expect(shownFiles).toEqual([]);
     expect(copied).toEqual([]);
+  });
+});
+
+describe('reports', () => {
+  const FAMILY_SHEET = { kind: 'family-group' as const };
+
+  /** A dead husband and a living wife, whose facts are made up and recognisable. */
+  async function marriedCouple(): Promise<{ husband: string; wife: string; family: string }> {
+    await openNewTree();
+    const tree = session.tree;
+    const husband = createPerson(tree, {
+      sex: 'M',
+      living: false,
+      name: { given: 'Walter', surname: 'Tarrowby' },
+    });
+    addPersonEvent(tree, husband.id, { type: 'birth', date: '1840', place: 'Oldtown' });
+    const wife = createPerson(tree, {
+      sex: 'F',
+      living: true,
+      name: { given: 'Livia', surname: 'Secretname' },
+    });
+    addPersonEvent(tree, wife.id, { type: 'birth', date: '1990', place: 'Secretville' });
+    updatePerson(tree, wife.id, { note: 'A secret note about Livia' });
+    const family = createFamily(tree, { partner1Id: husband.id, partner2Id: wife.id });
+    addFamilyEvent(tree, family.id, {
+      type: 'marriage',
+      date: '1 MAY 2015',
+      place: 'Secretchurch',
+    });
+    return { husband: husband.id, wife: wife.id, family: family.id };
+  }
+
+  const SEALED = {
+    javascript: false,
+    sandbox: true,
+    contextIsolation: true,
+    nodeIntegration: false,
+    preload: null,
+    partition: 'in-memory',
+    requests: 'document-only',
+  };
+
+  it('previews a family group sheet with the living partner shown only as "Living"', async () => {
+    const { family } = await marriedCouple();
+    const preview = await call<ReportPreview>('previewReport', {
+      ...FAMILY_SHEET,
+      familyId: family,
+      includeLiving: false,
+    });
+    expect(preview.title).toBe('Family group sheet: Walter Tarrowby and Living');
+    expect(preview).toMatchObject({ livingOmitted: 1, notesOmitted: 0, mediaOmitted: 0 });
+    expect(preview.html).toContain('Walter');
+    expect(preview.html).toContain('Oldtown');
+    for (const secret of ['Livia', 'Secretname', 'Secretville', 'secret note', 'Secretchurch']) {
+      expect(preview.html, secret).not.toContain(secret);
+    }
+
+    const everyone = await call<ReportPreview>('previewReport', {
+      ...FAMILY_SHEET,
+      familyId: family,
+      includeLiving: true,
+    });
+    expect(everyone.title).toBe('Family group sheet: Walter Tarrowby and Livia Secretname');
+    expect(everyone.livingOmitted).toBe(0);
+    for (const shown of ['Secretville', 'A secret note about Livia', 'Secretchurch']) {
+      expect(everyone.html, shown).toContain(shown);
+    }
+  });
+
+  it('takes no person from the page: only the kind, a family and the choice about living people', async () => {
+    const { husband, wife, family } = await marriedCouple();
+    const good = { ...FAMILY_SHEET, familyId: family, includeLiving: false };
+    for (const bad of [
+      { ...good, personId: wife },
+      { ...good, livingIds: [] },
+      { ...good, living: [wife] },
+      { ...good, kind: 'ahnentafel' },
+      { ...good, familyId: 'not an id' },
+      { kind: good.kind, familyId: family },
+      { ...good, includeLiving: 'no' },
+      { ...good, includeLiving: undefined },
+    ]) {
+      expect((await errorOf('previewReport', bad)).code, JSON.stringify(bad)).toBe('invalid');
+    }
+    // A person's id is not a family, so nothing about the wife is read through it.
+    expect((await errorOf('previewReport', { ...good, familyId: MISSING })).code).toBe('not-found');
+    expect((await errorOf('previewReport', { ...good, familyId: wife })).code).toBe('not-found');
+    expect(husband).not.toBe(wife);
+    // Saving and printing take the same few fields and no more.
+    savePath = join(root, 'extra.pdf');
+    for (const method of ['saveReport', 'printReport'] as const) {
+      const request = { ...good, paper: 'A4', format: 'pdf', personId: wife };
+      expect((await errorOf(method, request)).code, method).toBe('invalid');
+    }
+    expect((await errorOf('saveReport', { ...good, paper: 'A3', format: 'pdf' })).code).toBe(
+      'invalid',
+    );
+    expect((await errorOf('saveReport', { ...good, paper: 'A4', format: 'docx' })).code).toBe(
+      'invalid',
+    );
+    expect(existsSync(savePath)).toBe(false);
+    expect(reportJobs).toEqual([]);
+  });
+
+  it('refuses a report whose subject is living unless living people are included, and needs a tree', async () => {
+    const request = { ...FAMILY_SHEET, familyId: MISSING, includeLiving: false };
+    expect((await errorOf('previewReport', request)).code).toBe('no-tree');
+    await openNewTree();
+    const tree = session.tree;
+    const first = createPerson(tree, { living: true, name: { given: 'Odette', surname: 'Hidden' } });
+    const second = createPerson(tree, { living: true, name: { given: 'Ben', surname: 'Hidden' } });
+    const family = createFamily(tree, { partner1Id: first.id, partner2Id: second.id });
+    const asked = { ...FAMILY_SHEET, familyId: family.id, includeLiving: false };
+
+    const refused = await errorOf('previewReport', asked);
+    expect(refused.code).toBe('rule');
+    expect(refused.message).toMatch(/living/i);
+    expect(refused.message).not.toContain('Hidden');
+    savePath = join(root, 'refused.pdf');
+    expect((await errorOf('saveReport', { ...asked, paper: 'A4', format: 'pdf' })).code).toBe(
+      'rule',
+    );
+    expect((await errorOf('printReport', { ...asked, paper: 'A4' })).code).toBe('rule');
+    // Refused before any dialog or window.
+    expect(dialogDefaults).toEqual([]);
+    expect(reportJobs).toEqual([]);
+    expect(existsSync(savePath)).toBe(false);
+
+    const allowed = await call<ReportPreview>('previewReport', { ...asked, includeLiving: true });
+    expect(allowed.html).toContain('Odette Hidden');
+  });
+
+  it('asks the platform for a sealed window and writes the PDF it gets, named from the filtered title', async () => {
+    const { family } = await marriedCouple();
+    const request = {
+      ...FAMILY_SHEET,
+      familyId: family,
+      includeLiving: false,
+      format: 'pdf',
+      paper: 'Letter',
+    };
+
+    // Cancelled: no window is made and nothing is written.
+    expect(await call('saveReport', request)).toBeNull();
+    expect(reportJobs).toEqual([]);
+    expect(dialogDefaults[0]).toBe(
+      join(root, 'Trees', 'Family group sheet - Walter Tarrowby and Living.pdf'),
+    );
+
+    // A name typed without an extension gets .pdf.
+    savePath = join(root, 'sheet');
+    const saved = await call<ReportSaved>('saveReport', request);
+    expect(saved).toEqual({
+      file: join(root, 'sheet.pdf'),
+      format: 'pdf',
+      livingOmitted: 1,
+      notesOmitted: 0,
+      citationTextsOmitted: 0,
+      mediaOmitted: 0,
+    });
+    expect(readFileSync(saved.file, 'latin1').startsWith('%PDF')).toBe(true);
+
+    expect(reportJobs).toHaveLength(1);
+    const job = reportJobs[0] as ReportRenderJob;
+    expect(job.seal).toEqual(SEALED);
+    expect(job.paper).toBe('Letter');
+    // The window is given the report as it was filtered, and a footer made from its title.
+    const preview = await call<ReportPreview>('previewReport', {
+      ...FAMILY_SHEET,
+      familyId: family,
+      includeLiving: false,
+    });
+    expect(job.html).toBe(preview.html);
+    expect(job.footerTemplate).toContain('Family group sheet: Walter Tarrowby and Living');
+    expect(job.footerTemplate).toContain('class="pageNumber"');
+    expect(job.footerTemplate).not.toContain('Livia');
+    expect(dialogDefaults[0]).not.toContain('Livia');
+    expect(job.html).not.toContain('Livia');
+  });
+
+  it('saves a web page without a window, and prints through the platform', async () => {
+    const { family } = await marriedCouple();
+    savePath = join(root, 'sheet.html');
+    const saved = await call<ReportSaved>('saveReport', {
+      ...FAMILY_SHEET,
+      familyId: family,
+      includeLiving: false,
+      format: 'html',
+      paper: 'A4',
+    });
+    expect(saved.format).toBe('html');
+    const html = readFileSync(saved.file, 'utf8');
+    expect(html).toContain('<!doctype html>');
+    expect(html).toContain('Walter');
+    expect(html).not.toContain('Livia');
+    expect(reportJobs).toEqual([]);
+
+    const asked = { ...FAMILY_SHEET, familyId: family, includeLiving: false, paper: 'A4' };
+    printAnswer = true;
+    expect(await call('printReport', asked)).toBe(true);
+    printAnswer = false;
+    expect(await call('printReport', asked)).toBe(false);
+    expect(reportJobs).toHaveLength(2);
+    for (const job of reportJobs) {
+      expect(job.seal).toEqual(SEALED);
+      expect(job.paper).toBe('A4');
+      expect(job.html).not.toContain('Livia');
+    }
+  });
+
+  it('says on the person page why someone is taken to be living or deceased', async () => {
+    const { husband, wife } = await marriedCouple();
+    expect((await call<PersonPage>('getPersonPage', husband)).livingReason).toBe(
+      'Marked deceased by hand',
+    );
+    expect((await call<PersonPage>('getPersonPage', wife)).livingReason).toBe(
+      'Marked living by hand',
+    );
+    const tree = session.tree;
+    const old = createPerson(tree, { name: { given: 'Old', surname: 'Timer' } });
+    addPersonEvent(tree, old.id, { type: 'death', date: '1900' });
+    expect((await call<PersonPage>('getPersonPage', old.id)).livingReason).toBe(
+      'Deceased: death recorded',
+    );
+    const young = createPerson(tree, { name: { given: 'Young', surname: 'Timer' } });
+    addPersonEvent(tree, young.id, { type: 'birth', date: '1995' });
+    expect((await call<PersonPage>('getPersonPage', young.id)).livingReason).toBe(
+      'Presumed living: no death recorded and born less than 110 years ago',
+    );
   });
 });

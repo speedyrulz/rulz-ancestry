@@ -145,7 +145,24 @@ export {
   type VitalEvent,
 } from './search';
 export { checkTreeEngine, type TreeEngineCheck } from './selfcheck';
-export { PRESUMED_LIVING_YEARS, presumedLivingIds } from './living';
+export {
+  PRESUMED_LIVING_YEARS,
+  livingReason,
+  presumedLivingIds,
+  type LivingReason,
+  type LivingVerdict,
+} from './living';
+export {
+  REPORT_BUILDERS,
+  ReportFilter,
+  ReportRefusedError,
+  buildFamilyGroupSheet,
+  buildReport,
+  type ReportBuild,
+  type ReportOmissions,
+  type ReportPrivacy,
+  type ReportSubject,
+} from './report';
 export {
   MAX_CHART_DESCENDANTS,
   MAX_CHART_GENERATIONS,

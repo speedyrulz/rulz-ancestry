@@ -420,7 +420,7 @@ export interface RecordSearchOptions {
 
 /** What the app calls itself to a source: its name, its version and where its code is. */
 export function userAgentOf(appVersion: string): string {
-  return `RulZAncestry/${appVersion} (+https://github.com/speedyrulz/rulz-ancestry)`;
+  return `RulZKinspora/${appVersion} (+https://github.com/speedyrulz/rulz-ancestry)`;
 }
 
 const EMPTY_QUERY: PersonQuery = { given: '', surname: '', birthYear: null, deathYear: null };

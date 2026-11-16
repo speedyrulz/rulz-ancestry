@@ -168,3 +168,4 @@ export {
   type Pedigree,
   type Sex,
 } from './model';
+export * from './report';

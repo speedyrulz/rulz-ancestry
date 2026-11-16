@@ -1,6 +1,6 @@
 {
   "configVersion": 1,
-  "name": "RulZ Ancestry",
+  "name": "RulZ Kinspora",
   "approval": {
     "default": "auto",
     "source": "Memory commit-and-push-after-every-update (2026-11-13): \"from now on always commit and push after an update\". Memory wiki-update-after-push (2026-11-11): \"after every push or merge i would like you to update the wiki with changes.\" Destructive git (force push, history rewrite) still needs asking."
