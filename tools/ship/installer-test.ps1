@@ -282,7 +282,7 @@ $next = Get-NextPatch $version
 Say "building installers $version and $next"
 
 Invoke-Pnpm @('build')
-Invoke-Pnpm @('--filter', '@rulz/desktop', 'exec', 'electron-builder', '--', '--win', 'nsis', '--x64', '--publish', 'never')
+Invoke-Pnpm @('--filter', '@rulz/desktop', 'exec', 'electron-builder', '--win', 'nsis', '--x64', '--publish', 'never')
 $first = Get-SetupPath $Root $version
 Install-Silent $first
 
@@ -310,7 +310,7 @@ foreach ($path in $preserved) { $before[$path] = Get-Sha256 $path }
 
 # The second installer is a higher version only for this build. The files stay as they are.
 Invoke-Pnpm @(
-  '--filter', '@rulz/desktop', 'exec', 'electron-builder', '--',
+  '--filter', '@rulz/desktop', 'exec', 'electron-builder',
   '--win', 'nsis', '--x64', '--publish', 'never',
   "-c.extraMetadata.version=$next"
 )
