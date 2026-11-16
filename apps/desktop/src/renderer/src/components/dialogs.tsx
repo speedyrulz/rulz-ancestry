@@ -1,5 +1,5 @@
 import { NAME_TYPES, NOTE_MAX, SEXES, type NameType } from '@rulz/core';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type {
   BackupInfo,
   EventInfo,
@@ -229,7 +229,7 @@ export function RelativeDialog({
             testId="relative-search"
             autoFocus
           />
-          <ul className="pick-list" data-testid="relative-results">
+          <ul className="pick-list" aria-label="People found" data-testid="relative-results">
             {found === null && <li className="muted">Looking…</li>}
             {found !== null && found.persons.length === 0 && (
               <li className="muted">
@@ -492,6 +492,21 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [confirming, setConfirming] = useState<BackupInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Set while the question about restoring is shown: the focus goes back to the list when it ends. */
+  const asked = useRef(false);
+
+  useEffect(() => {
+    if (confirming !== null) {
+      asked.current = true;
+    } else if (asked.current) {
+      asked.current = false;
+      const dialog = document.querySelector('[data-testid="backups-dialog"]');
+      const back =
+        dialog?.querySelector<HTMLElement>('[data-testid="backup-row"] button') ??
+        dialog?.querySelector<HTMLElement>('[data-testid="backup-now"]');
+      back?.focus();
+    }
+  }, [confirming]);
 
   // Reload the list when the dialog opens and whenever the newest backup changes.
   useEffect(() => {
@@ -555,12 +570,16 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
         </p>
       )}
 
-      {message !== null && (
-        <p
-          className={message.error ? 'error' : 'notice'}
-          role={message.error ? 'alert' : 'status'}
-          data-testid="backups-message"
-        >
+      {/* The place for a note stays in the page, so that a screen reader hears what is put in it. */}
+      <div role="status">
+        {message !== null && !message.error && (
+          <p className="notice" data-testid="backups-message">
+            {message.text}
+          </p>
+        )}
+      </div>
+      {message?.error === true && (
+        <p className="error" role="alert" data-testid="backups-message">
           {message.text}
         </p>
       )}
@@ -573,7 +592,7 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
             first, so you can come back to it.
           </p>
           <div className="dialog-actions">
-            <button type="button" onClick={() => setConfirming(null)} disabled={busy}>
+            <button type="button" onClick={() => setConfirming(null)} disabled={busy} autoFocus>
               Cancel
             </button>
             <button
@@ -589,7 +608,7 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
         </div>
       ) : (
         <>
-          <table className="table" data-testid="backups-list">
+          <table className="table" aria-label="Backups" data-testid="backups-list">
             <thead>
               <tr>
                 <th scope="col">Made</th>
@@ -619,7 +638,12 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
                   <td>{formatWhen(backup.at)}</td>
                   <td>{formatSize(backup.size)}</td>
                   <td className="row-actions">
-                    <button type="button" disabled={busy} onClick={() => setConfirming(backup)}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={`Restore… the backup of ${formatWhen(backup.at)}`}
+                      onClick={() => setConfirming(backup)}
+                    >
                       Restore…
                     </button>
                   </td>

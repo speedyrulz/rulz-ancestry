@@ -286,7 +286,11 @@ function SearchNotice({ personId, onAgreed, onClose }: SearchNoticeProps) {
           {error}
         </p>
       )}
-      {setup === null && error === null && <p className="muted">Loading…</p>}
+      {setup === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
       {setup !== null && (
         <RecordNotice
           sources={setup.sources}
@@ -375,7 +379,9 @@ function ConnectSection({ info }: { info: AiAssistantInfo }) {
               >
                 Copy the command
               </button>
-              {copied && <span data-testid="ai-connector-copied"> Copied.</span>}
+              <span role="status">
+                {copied && <span data-testid="ai-connector-copied"> Copied.</span>}
+              </span>
             </>
           )}
         </li>
@@ -523,6 +529,8 @@ function ApiControls({
               spellCheck={false}
               maxLength={300}
               onChange={(event) => setHasKeyText(event.target.value.trim() !== '')}
+              aria-invalid={keyProblem !== null ? true : undefined}
+              aria-describedby={keyProblem !== null ? 'ai-key-problem' : undefined}
               data-testid="ai-key-input"
             />
             <button type="submit" disabled={!hasKeyText || keyBusy} data-testid="ai-key-save">
@@ -531,7 +539,7 @@ function ApiControls({
           </form>
         )}
         {keyProblem !== null && (
-          <p className="error" role="alert" data-testid="ai-key-problem">
+          <p className="error" role="alert" id="ai-key-problem" data-testid="ai-key-problem">
             {keyProblem}
           </p>
         )}
@@ -642,7 +650,7 @@ function RunView({
   const modelLabel = MODEL_LABELS[run.settings.model as ApiModel] ?? run.settings.model;
   return (
     <div className="ai-run" data-testid="ai-run">
-      <p className="dialog-text" data-testid="ai-run-status">
+      <p className="dialog-text" role="status" data-testid="ai-run-status">
         {run.running ? (
           <>
             A run is under way ({modelLabel}, {run.settings.effort} effort).{' '}
@@ -682,10 +690,16 @@ function RunView({
         </li>
         <li data-testid="ai-run-last-tool">Last tool called: {progress.lastTool ?? 'none yet'}</li>
       </ul>
+      {/* Said once, when the AI has finished writing; the words themselves are not read as they come. */}
+      <p className="visually-hidden" role="status">
+        {!run.running && progress.text !== ''
+          ? 'The AI has finished writing. Its words are above.'
+          : ''}
+      </p>
       {progress.text !== '' && (
         <div className="ai-run-text-box" data-testid="ai-run-text-section">
           <h3>The AI&apos;s own words (may repeat what a record says)</h3>
-          <p className="ai-run-text" data-testid="ai-run-text">
+          <p className="ai-run-text" aria-live="off" data-testid="ai-run-text">
             {progress.text}
           </p>
         </div>
@@ -724,9 +738,23 @@ function SessionView({
   };
   const sourceName = (sourceId: string) =>
     session.sources.find((source) => source.id === sourceId)?.name ?? sourceId;
+  const sectionRef = useRef<HTMLElement>(null);
+  // Starting or stopping a session swaps the button that had the focus for other content.
+  // The focus then stays with the session, not with the page.
+  useEffect(() => {
+    if (document.activeElement === document.body || document.activeElement === null) {
+      sectionRef.current?.focus();
+    }
+  }, [session.status]);
   return (
-    <section className="ai-session" data-testid="ai-session">
-      <p className="dialog-text" data-testid="ai-session-status">
+    <section
+      ref={sectionRef}
+      tabIndex={-1}
+      aria-label="AI session"
+      className="ai-session"
+      data-testid="ai-session"
+    >
+      <p className="dialog-text" role="status" data-testid="ai-session-status">
         {session.status === 'running' ? (
           <>
             A session is under way.
@@ -750,7 +778,7 @@ function SessionView({
         </p>
       )}
       {session.status === 'running' && session.route === 'app' && connection.problem === '' && (
-        <p className="dialog-text" data-testid="ai-session-clients">
+        <p className="dialog-text" role="status" data-testid="ai-session-clients">
           {connection.clients.length === 0
             ? 'No AI app is connected to this session yet. One connects when you ask it to work with RulZ Kinspora.'
             : `Connected now: ${connection.clients
@@ -916,7 +944,11 @@ function SessionPlan({
           {error}
         </p>
       )}
-      {plan === null && error === null && <p className="muted">Loading…</p>}
+      {plan === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
       {plan !== null && (
         <>
           <fieldset className="options" data-testid="ai-route">
@@ -1026,7 +1058,7 @@ function SessionPlan({
             </>
           )}
 
-          <p className="dialog-text" data-testid="ai-plan-count">
+          <p className="dialog-text" role="status" data-testid="ai-plan-count">
             {chosen.length === 0
               ? 'Tick a service the AI may ask.'
               : eligible.length === 0
@@ -1170,7 +1202,11 @@ export function AiAssistantDialog({
           {error}
         </p>
       )}
-      {info === null && error === null && <p className="muted">Loading…</p>}
+      {info === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
 
       {info !== null && !info.agreed && (
         <AiNotice info={info} onAgree={agree} onLog={() => setShowLog(true)} onClose={onClose} />
@@ -1345,7 +1381,11 @@ function AiActivityDialog({ logDays, onClose }: AiActivityDialogProps) {
           {error}
         </p>
       )}
-      {page === null && error === null && <p className="muted">Loading…</p>}
+      {page === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
       {page !== null && page.items.length === 0 && (
         <p className="muted" data-testid="ai-log-empty">
           The log is empty.

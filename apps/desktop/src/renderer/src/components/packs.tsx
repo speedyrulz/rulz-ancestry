@@ -343,7 +343,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
   return (
     <Dialog title="Packs" onClose={onClose} testId="packs-dialog" wide>
       {state === null ? (
-        <p className="muted pad" data-testid="packs-loading">
+        <p className="muted pad" role="status" data-testid="packs-loading">
           Looking…
         </p>
       ) : (
@@ -356,10 +356,13 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
 
           {job !== null && (
             <section className="pack-job" data-testid="pack-job">
-              <p className="dialog-text" role="status">
-                <strong data-testid="pack-job-title">{job.title}</strong>
-                {' — '}
-                <span data-testid="pack-job-phase">{PHASE_WORDS[job.phase]}</span>
+              <p className="dialog-text">
+                {/* Only the title and the step are announced; the figures change too often. */}
+                <span role="status">
+                  <strong data-testid="pack-job-title">{job.title}</strong>
+                  {' — '}
+                  <span data-testid="pack-job-phase">{PHASE_WORDS[job.phase]}</span>
+                </span>
                 {formatJobProgress(job) !== '' && (
                   <>
                     {': '}
@@ -423,6 +426,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                       <td className="row-actions">
                         <button
                           type="button"
+                          aria-label={`Remove ${pack.title}`}
                           onClick={() => setRemoving(pack)}
                           data-testid="pack-remove"
                         >
@@ -479,6 +483,13 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                         <button
                           type="button"
                           data-testid={`census-install-${item.code}`}
+                          aria-label={`${
+                            item.installed === 'current'
+                              ? 'Up to date'
+                              : item.installed === 'update'
+                                ? 'Update'
+                                : 'Install'
+                          }: ${item.name}`}
                           disabled={
                             item.installed === 'current' ||
                             censusExpired ||
@@ -531,7 +542,11 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                 >
                   Look up Open Archives&apos; archives
                 </button>
-                {lookingUp && <span className="muted">Looking…</span>}
+                {lookingUp && (
+                  <span className="muted" role="status">
+                    Looking…
+                  </span>
+                )}
               </div>
               <p className="hint">
                 This asks openarchieven.nl for its list of archives. Nothing about you or your tree
@@ -572,6 +587,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                               : 'packs-archive-row'
                           }
                           data-testid={`packs-archive-${archive.code}`}
+                          aria-pressed={selectedCode === archive.code}
                           onClick={() => void handleSelectArchive(archive.code)}
                         >
                           <span className="packs-archive-header">
@@ -604,7 +620,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                 )}
 
                 {describing && (
-                  <p className="muted pad" data-testid="packs-offer-loading">
+                  <p className="muted pad" role="status" data-testid="packs-offer-loading">
                     Looking…
                   </p>
                 )}

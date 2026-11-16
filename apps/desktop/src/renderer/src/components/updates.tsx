@@ -59,7 +59,7 @@ export function Updates() {
         <button ref={checkButton} onClick={() => void check()}>
           Check for a new version
         </button>
-        {message && <p role="status">{message}</p>}
+        <p role="status">{message}</p>
         <label>
           <input
             type="checkbox"

@@ -6,7 +6,7 @@ import {
   type PersonQuery,
   type TextQuery,
 } from '@rulz/core';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CENSUS_PACK_KIND, type PackInfo } from '../../../shared/ipc';
 import type {
   PersonCitationInfo,
@@ -320,9 +320,23 @@ export function Result({
   onDecline,
   onAllow,
 }: ResultProps) {
+  const titleId = useId();
+  const itemRef = useRef<HTMLLIElement>(null);
+  const first = useRef(true);
+  // Attaching or keeping a result swaps its button for a badge. The focus was on the button,
+  // so it would fall to the page; it stays with the result instead.
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (document.activeElement === document.body || document.activeElement === null) {
+      itemRef.current?.focus();
+    }
+  }, [attached, mark]);
   return (
-    <li data-testid="record-result">
-      <a href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
+    <li ref={itemRef} tabIndex={-1} className="record-result" data-testid="record-result">
+      <a id={titleId} href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
         {record.title}
       </a>
       {fit !== undefined && (
@@ -350,14 +364,25 @@ export function Result({
             <span className="badge" data-testid="record-declined">
               Turned down
             </span>{' '}
-            <button type="button" onClick={onAllow} disabled={busy} data-testid="record-allow">
+            <button
+              type="button"
+              onClick={onAllow}
+              disabled={busy}
+              aria-describedby={titleId}
+              data-testid="record-allow"
+            >
               Allow again
             </button>
           </>
         ) : (
           <>
             {record.kind !== 'text' && (
-              <button type="button" onClick={onCompare} data-testid="record-compare-open">
+              <button
+                type="button"
+                onClick={onCompare}
+                aria-describedby={titleId}
+                data-testid="record-compare-open"
+              >
                 Compare
               </button>
             )}{' '}
@@ -366,11 +391,23 @@ export function Result({
                 Kept for later
               </span>
             ) : (
-              <button type="button" onClick={onKeep} disabled={busy} data-testid="record-keep">
+              <button
+                type="button"
+                onClick={onKeep}
+                disabled={busy}
+                aria-describedby={titleId}
+                data-testid="record-keep"
+              >
                 Keep for later
               </button>
             )}{' '}
-            <button type="button" onClick={onDecline} disabled={busy} data-testid="record-decline">
+            <button
+              type="button"
+              onClick={onDecline}
+              disabled={busy}
+              aria-describedby={titleId}
+              data-testid="record-decline"
+            >
               {declineWords(record)}
             </button>{' '}
             {attached ? (
@@ -378,7 +415,13 @@ export function Result({
                 Attached as a source
               </span>
             ) : (
-              <button type="button" onClick={onAttach} disabled={busy} data-testid="record-attach">
+              <button
+                type="button"
+                onClick={onAttach}
+                disabled={busy}
+                aria-describedby={titleId}
+                data-testid="record-attach"
+              >
                 Attach as a source
               </button>
             )}
@@ -452,9 +495,21 @@ function SourceResults({
   const visible = found.items.filter(
     (record) => showDeclined || found.marks[record.key] !== 'declined',
   );
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const shownBefore = useRef(visible.length);
+  // A result that is turned down leaves the list with the focus on it: the heading takes it.
+  useEffect(() => {
+    if (
+      visible.length < shownBefore.current &&
+      (document.activeElement === document.body || document.activeElement === null)
+    ) {
+      headingRef.current?.focus();
+    }
+    shownBefore.current = visible.length;
+  }, [visible.length]);
   return (
     <section className="record-source" data-testid={`records-${source.id}`}>
-      <h3>
+      <h3 ref={headingRef} tabIndex={-1}>
         {source.name}
         {found.total !== null && (
           <span className="muted" data-testid="record-total">
@@ -519,6 +574,16 @@ function SourceResults({
           {problemWords(found.problem)}
         </p>
       )}
+      {/* Always there, so a change in it is read out: the wait, then how many were found. */}
+      <p className="visually-hidden" role="status">
+        {found.busy
+          ? 'Searching…'
+          : found.problem !== null
+            ? ''
+            : found.items.length > 0 || found.total !== null
+              ? countOf(found.total ?? found.items.length, 'result', 'results')
+              : ''}
+      </p>
       {found.busy && (
         <p className="muted" data-testid="record-busy">
           Searching…
@@ -609,16 +674,42 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
       .finally(() => setBusy(false));
   };
 
+  const boxRef = useRef<HTMLDivElement>(null);
+  const keyState = source.key;
+  const keyBefore = useRef(keyState);
+  // Saving or removing the key swaps the button that had the focus; the focus stays in the box.
+  useEffect(() => {
+    if (
+      keyState !== keyBefore.current &&
+      (document.activeElement === document.body || document.activeElement === null)
+    ) {
+      boxRef.current?.focus();
+    }
+    keyBefore.current = keyState;
+  }, [keyState]);
+
   const quota = source.quota;
   /** The count shown is the keyless one: no key of the user's own is saved. */
   const keyless = source.keyOptional && (source.key === 'missing' || source.key === 'unavailable');
   const howTo = (
-    <a href={keyPage} target="_blank" rel="noreferrer">
+    <a
+      href={keyPage}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`How to ask for one: ${source.name}`}
+    >
       How to ask for one
     </a>
   );
   return (
-    <div className="record-key" data-testid={`record-key-${source.id}`}>
+    <div
+      ref={boxRef}
+      tabIndex={-1}
+      role="group"
+      aria-label={`Key for ${source.name}`}
+      className="record-key"
+      data-testid={`record-key-${source.id}`}
+    >
       {source.keyOptional && source.key === 'missing' ? (
         <p data-testid="record-key-state">
           <strong>{source.name}</strong> is ready. Add your own free key. Without one, Papers Past
@@ -641,13 +732,20 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
       {source.key === 'saved' && (
         <p data-testid="record-key-state">
           A key is saved, encrypted by Windows for your account. The app does not show it again.{' '}
-          <button type="button" disabled={busy} onClick={testKey} data-testid="record-key-test">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={testKey}
+            aria-label={`Test the key for ${source.name}`}
+            data-testid="record-key-test"
+          >
             Test the key
           </button>{' '}
           <button
             type="button"
             disabled={busy}
             onClick={() => done(api.removeRecordSourceKey(source.id))}
+            aria-label={`Remove the key for ${source.name}`}
             data-testid="record-key-remove"
           >
             Remove the key
@@ -672,7 +770,7 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
             if (fits && !busy) save();
           }}
         >
-          <label htmlFor={`record-key-input-${source.id}`}>Your key</label>
+          <label htmlFor={`record-key-input-${source.id}`}>Your key for {source.name}</label>
           <input
             id={`record-key-input-${source.id}`}
             type="password"
@@ -683,7 +781,12 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
             onChange={(event) => setTyped(event.target.value)}
             data-testid="record-key-input"
           />
-          <button type="submit" disabled={!fits || busy} data-testid="record-key-save">
+          <button
+            type="submit"
+            disabled={!fits || busy}
+            aria-label={`Save the key for ${source.name}`}
+            data-testid="record-key-save"
+          >
             Save the key
           </button>
         </form>
@@ -1091,7 +1194,11 @@ export function RecordSearchDialog({
           {error}
         </p>
       )}
-      {setup === null && error === null && <p className="muted">Loading…</p>}
+      {setup === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
 
       {setup !== null && !setup.allowed && (
         <div data-testid="record-search-living">
@@ -1145,9 +1252,7 @@ export function RecordSearchDialog({
               onChange={set('birthYear')}
               maxLength={4}
               testId="record-birth"
-              hint={
-                birthYear === undefined ? <p className="error">A year, such as 1850.</p> : undefined
-              }
+              error={birthYear === undefined ? 'A year, such as 1850.' : null}
             />
             <TextField
               label="Died in (year)"
@@ -1155,9 +1260,7 @@ export function RecordSearchDialog({
               onChange={set('deathYear')}
               maxLength={4}
               testId="record-death"
-              hint={
-                deathYear === undefined ? <p className="error">A year, such as 1910.</p> : undefined
-              }
+              error={deathYear === undefined ? 'A year, such as 1910.' : null}
             />
             <p className="hint" data-testid="record-sends">
               &quot;Search&quot; sends what this form shows, and nothing else:
@@ -1240,9 +1343,7 @@ export function RecordSearchDialog({
               onChange={setText('fromYear')}
               maxLength={4}
               testId="record-from"
-              hint={
-                fromYear === undefined ? <p className="error">A year, such as 1850.</p> : undefined
-              }
+              error={fromYear === undefined ? 'A year, such as 1850.' : null}
             />
             <TextField
               label="Printed until (year)"
@@ -1250,9 +1351,7 @@ export function RecordSearchDialog({
               onChange={setText('toYear')}
               maxLength={4}
               testId="record-to"
-              hint={
-                toYear === undefined ? <p className="error">A year, such as 1911.</p> : undefined
-              }
+              error={toYear === undefined ? 'A year, such as 1911.' : null}
             />
             <div className="field">
               <label htmlFor="record-state">
@@ -1346,11 +1445,17 @@ export function RecordSearchDialog({
                   <button
                     type="button"
                     onClick={() => setClip({ site: link })}
+                    aria-label={`Cite a page you found there, at ${link.name}`}
                     data-testid={`record-clip-${link.id}`}
                   >
                     Cite a page you found there
                   </button>
-                  <a href={link.termsUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={link.termsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Terms of use of ${link.name}`}
+                  >
                     Terms of use
                   </a>
                 </li>

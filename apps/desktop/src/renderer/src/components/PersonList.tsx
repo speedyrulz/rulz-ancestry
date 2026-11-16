@@ -94,12 +94,17 @@ export function PersonList({ revision, query, selectedId, onSelect }: PersonList
     if (box.scrollTop + box.clientHeight >= box.scrollHeight - 400) loadMore();
   };
 
-  /** Up and Down move between rows, as in any list. */
+  /** Up and Down move between rows, as in any list; Home and End go to the first and the last. */
   const onKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button.row')];
     const at = rows.findIndex((row) => row === document.activeElement);
-    const next = rows[at + (event.key === 'ArrowDown' ? 1 : -1)];
+    const next =
+      event.key === 'Home'
+        ? rows[0]
+        : event.key === 'End'
+          ? rows.at(-1)
+          : rows[at + (event.key === 'ArrowDown' ? 1 : -1)];
     if (next) {
       event.preventDefault();
       next.focus();

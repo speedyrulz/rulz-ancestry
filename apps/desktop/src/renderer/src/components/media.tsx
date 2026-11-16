@@ -530,6 +530,7 @@ function ImageStage({ src, alt, onSize }: ImageStageProps) {
         ref={stageRef}
         className={current !== null && view !== null ? 'viewer-stage movable' : 'viewer-stage'}
         tabIndex={0}
+        role="group"
         aria-label="The picture. Plus and minus zoom, 0 fits it, 1 shows it full size, the arrow keys move it."
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -648,6 +649,7 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
   const [pixels, setPixels] = useState<Size | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const attachedRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -678,7 +680,9 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
   if (loaded === null || loaded.mediaId !== mediaId) {
     return (
       <Dialog title="Picture or document" onClose={onClose} testId="media-viewer" full>
-        <p className="muted">Loading…</p>
+        <p className="muted" role="status">
+          Loading…
+        </p>
       </Dialog>
     );
   }
@@ -867,7 +871,9 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
             )}
           </dl>
 
-          <h3>Attached to</h3>
+          <h3 ref={attachedRef} tabIndex={-1}>
+            Attached to
+          </h3>
           {uses.length === 0 ? (
             <p className="muted" data-testid="media-unattached">
               Nothing. It is listed under “Media” on the tree screen.
@@ -876,15 +882,20 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
             <ul className="media-uses" data-testid="media-uses">
               {uses.map((use) => (
                 <li key={`${use.type}|${use.id}`} data-testid="media-use">
-                  <span>
+                  <span id={`media-use-${use.type}-${use.id}`}>
                     <UseLine use={use} {...(show ? { onSelect: show } : {})} />
                   </span>
                   <button
                     type="button"
                     className="small"
+                    aria-describedby={`media-use-${use.type}-${use.id}`}
                     onClick={() =>
                       attempt(
-                        api.unlinkMedia(media.id, { type: use.type, id: use.id }).then(onTree),
+                        api
+                          .unlinkMedia(media.id, { type: use.type, id: use.id })
+                          .then(onTree)
+                          // The row with the focus is gone; the heading above the list takes it.
+                          .then(() => attachedRef.current?.focus()),
                       )
                     }
                     data-testid="media-detach"
@@ -1164,7 +1175,11 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
             </p>
           )}
           <div className="scroll-box tall" data-testid="library-list">
-            {page === null && <p className="muted">Looking…</p>}
+            {page === null && (
+              <p className="muted" role="status">
+                Looking…
+              </p>
+            )}
             {page !== null && page.media.length === 0 && (
               <p className="muted" data-testid="library-none">
                 No file found.
@@ -1176,7 +1191,7 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
           </div>
           {page !== null && (
             <div className="actions">
-              <span className="muted" data-testid="library-count">
+              <span className="muted" role="status" data-testid="library-count">
                 {page.total > page.media.length
                   ? `${page.media.length.toLocaleString()} of ${page.total.toLocaleString()} shown.`
                   : countOf(page.total, 'file', 'files')}

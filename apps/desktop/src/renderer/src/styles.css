@@ -6,6 +6,8 @@
   --text: #111114;
   --muted: #5f6068;
   --border: #d9d9de;
+  /* The edge of a button, a field or a chart box: at least 3:1 against the page, as WCAG asks of a control. */
+  --control-border: #767680;
   --accent: #ed000d;
   --accent-strong: #c8000b;
   --accent-hover: #c8000b;
@@ -31,6 +33,7 @@
     --text: #f2f2f3;
     --muted: #a3a3ab;
     --border: #232328;
+    --control-border: #8a8a93;
     --accent: #ed000d;
     --accent-strong: #ff6b72;
     --accent-hover: #ff2633;
@@ -126,7 +129,7 @@ textarea {
 
 button {
   padding: 6px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: var(--surface);
   cursor: pointer;
@@ -196,7 +199,7 @@ select,
 textarea {
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: var(--surface);
 }
@@ -441,7 +444,8 @@ textarea {
   line-height: 1.3;
 }
 
-.tree-title strong {
+.tree-title h1 {
+  margin: 0;
   overflow: hidden;
   color: var(--accent-strong);
   font-size: 17px;
@@ -982,7 +986,7 @@ details > .hint {
   justify-content: center;
   padding: 2px 8px 2px 10px;
   overflow: hidden;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-left: 4px solid var(--line);
   border-radius: 6px;
   background: var(--bg);
@@ -2222,4 +2226,498 @@ ul.run-list {
   margin-right: 0.5rem;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* Accessibility: bypass link, outline of a chart, large text, high contrast and reduced motion */
+
+/* The hint under a field is one block for a screen reader (aria-describedby) and takes no room of its own. */
+.field-hint {
+  display: contents;
+}
+
+.field-error {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* The first stop of the keyboard: it jumps past the toolbar to the person. Shown only while it has the focus. */
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 6px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* The text outline of a chart: the same people as the drawing, as nested lists. */
+.chart-outline {
+  max-height: 30vh;
+  margin: 4px 0 0;
+  padding: 4px 0 8px;
+  overflow: auto;
+}
+
+.chart-outline ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.chart-outline > ul {
+  padding-left: 0;
+  list-style: none;
+}
+
+.chart-outline li {
+  padding: 2px 0;
+}
+
+.chart-outline .outline-role {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chart-outline-toggle {
+  margin: 0 24px 8px;
+  font-size: 13px;
+}
+
+.chart-outline h3 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+/* Large text: at 200% a window of 1280 pixels is 640 pixels wide, so the two columns become one and the page scrolls as a whole. */
+@media (max-width: 900px) {
+  .workspace {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .tree-title {
+    max-width: none;
+  }
+
+  .topbar .search {
+    flex-basis: 200px;
+  }
+
+  .topbar .actions {
+    justify-content: flex-start;
+  }
+
+  .panes {
+    display: block;
+    overflow: visible;
+  }
+
+  .panes > nav {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .person-list {
+    height: auto;
+    max-height: 40vh;
+  }
+
+  .panes > main {
+    overflow: visible;
+  }
+
+  .person-page {
+    padding: 16px;
+  }
+
+  .person-head {
+    flex-wrap: wrap;
+  }
+
+  .person-actions {
+    justify-content: flex-start;
+  }
+
+  .chart-view {
+    height: 90vh;
+    min-height: 360px;
+  }
+
+  .chart-bar {
+    padding: 12px 16px 8px;
+  }
+
+  .chart-hint {
+    padding: 0 16px 8px;
+  }
+
+  .table th,
+  .table .row-actions {
+    white-space: normal;
+  }
+
+  .table tbody th {
+    width: auto;
+  }
+
+  .row-actions button {
+    margin: 2px 6px 2px 0;
+  }
+
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell {
+    padding: 24px 16px;
+  }
+
+  .status > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .recent li {
+    flex-wrap: wrap;
+  }
+
+  .life-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .dialog {
+    padding: 16px;
+  }
+
+  .dialog-actions {
+    flex-wrap: wrap;
+  }
+
+  .report-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * Windows high contrast. The system takes over the colours, so what a colour
+ * alone showed gets a border, an outline or an underline here, and nothing is
+ * left to a background that the system removes.
+ */
+@media (forced-colors: active) {
+  button,
+  input,
+  select,
+  textarea,
+  .card,
+  .table,
+  .family,
+  .options,
+  .pick-list,
+  .scroll-box,
+  .status,
+  .chart-scroll,
+  .report-preview {
+    border-color: ButtonText;
+  }
+
+  button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  button.primary {
+    border-width: 2px;
+  }
+
+  button.danger {
+    border-width: 2px;
+    border-style: dashed;
+  }
+
+  button.link {
+    color: LinkText;
+  }
+
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  /* The current row of a list, the chosen kind of chart and the picked place carry a mark besides colour. */
+  .person-list .row.selected {
+    background: Highlight;
+    color: HighlightText;
+    box-shadow: none;
+    forced-color-adjust: none;
+  }
+
+  .person-list .row.selected .row-life {
+    color: HighlightText;
+  }
+
+  .person-list .row {
+    border-bottom-color: GrayText;
+  }
+
+  .segmented button.selected,
+  button[aria-pressed='true'],
+  button[aria-checked='true'] {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    forced-color-adjust: none;
+  }
+
+  /* A box of a chart keeps its edge; the person at the centre gets a thick one. */
+  .chart-box {
+    border: 1px solid ButtonText;
+    border-left-width: 4px;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .chart-box.root {
+    border-width: 3px;
+    box-shadow: none;
+  }
+
+  .chart-box.partner {
+    border-style: dashed;
+  }
+
+  .chart-name,
+  .chart-years {
+    color: CanvasText;
+  }
+
+  .chart-lines path {
+    stroke: CanvasText;
+  }
+
+  .fan-segment path,
+  .fan-segment circle {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .fan-empty {
+    stroke: GrayText;
+  }
+
+  .fan-root circle {
+    stroke-width: 3;
+  }
+
+  .fan-segment:hover path,
+  .fan-segment:hover circle,
+  .fan-segment:focus-visible path,
+  .fan-segment:focus-visible circle {
+    stroke: Highlight;
+    stroke-width: 4;
+  }
+
+  .fan text,
+  .fan .fan-years {
+    fill: CanvasText;
+  }
+
+  /* The dot on the timeline and the numbered marks on the map are drawn with a background. */
+  .life-row::before {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .life-row.relative::before {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  .map-number {
+    border-color: ButtonText;
+    color: ButtonText;
+  }
+
+  .badge,
+  .notice,
+  .banner,
+  .confirm-box {
+    border: 1px solid CanvasText;
+  }
+
+  p.error,
+  div.error {
+    border-left-color: CanvasText;
+  }
+
+  .dialog {
+    border: 2px solid CanvasText;
+  }
+
+  .dialog::backdrop {
+    background: Canvas;
+    opacity: 0.6;
+  }
+
+  .skip-link {
+    border-color: ButtonText;
+  }
+}
+
+/* Things the code gives the focus to (tabindex -1) show it like any other control. */
+.record-list > li:focus-visible,
+.record-source > h3:focus-visible,
+.record-key:focus-visible,
+[data-testid='run-results']:focus-visible,
+.ai-session:focus-visible,
+.viewer-side h3:focus-visible,
+h1:focus-visible,
+h2:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .viewer {
+    flex-direction: column;
+    height: auto;
+    overflow-y: auto;
+  }
+
+  .viewer-stage {
+    min-height: 40vh;
+  }
+
+  .viewer-side {
+    width: 100%;
+    overflow-y: visible;
+  }
+
+  .record-actions,
+  .viewer-tools,
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .census-image-frame {
+    max-height: 50vh;
+  }
+}
+
+@media (forced-colors: active) {
+  .badge,
+  .badge.fit,
+  .compare-tick,
+  .packs-archive-row,
+  .media-tile,
+  .viewer-stage,
+  .record-list > li {
+    border: 1px solid ButtonText;
+  }
+
+  .census-districts button[aria-pressed='true'],
+  .packs-archive-row[aria-pressed='true'],
+  .packs-archive-row.selected,
+  .inbox-tabs [aria-pressed='true'] {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    outline: 2px solid Highlight;
+    forced-color-adjust: none;
+  }
+
+  .record-list > li:focus-visible,
+  .record-key:focus-visible,
+  .ai-session:focus-visible {
+    outline: 3px solid Highlight;
+  }
+}
+
+.fan .fan-gap {
+  font-size: 0;
+}
+
+@media (forced-colors: active) {
+  /*
+   * Sex is told by the colour of the edge of a box and the fill of a place in the fan, and
+   * the box says it nowhere in words. High contrast flattens colour, so the sexes also differ in
+   * the style of the edge: solid for male, double for female, dotted for the others. In the fan
+   * the outline is solid, dashed or dotted in the same way.
+   */
+  .chart-box.sex-M {
+    border-left-style: solid;
+  }
+
+  .chart-box.sex-F {
+    border-left-style: double;
+  }
+
+  .chart-box.sex-U,
+  .chart-box.sex-X {
+    border-left-style: dotted;
+  }
+
+  .fan-segment.sex-F path {
+    stroke-dasharray: 8 3;
+  }
+
+  .fan-segment.sex-U path,
+  .fan-segment.sex-X path {
+    stroke-dasharray: 2 3;
+  }
+
+  /* The chosen place on the map, and its row in the list below it. */
+  .map-marker circle {
+    fill: ButtonFace;
+    stroke: ButtonText;
+    stroke-width: 2;
+  }
+
+  .map-marker text {
+    fill: ButtonText;
+  }
+
+  .map-marker.selected circle {
+    fill: Highlight;
+    stroke: HighlightText;
+    stroke-width: 3;
+  }
+
+  .map-marker.selected text {
+    fill: HighlightText;
+  }
+
+  .map-legend li.selected {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .map-legend li.selected .hint,
+  .map-legend li.selected .muted {
+    color: HighlightText;
+  }
 }

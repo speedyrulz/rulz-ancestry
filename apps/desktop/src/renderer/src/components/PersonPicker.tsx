@@ -54,7 +54,7 @@ export function PersonPicker({ label, excludeId, chosenId, onChoose }: PersonPic
         testId="picker-search"
         autoFocus
       />
-      <ul className="pick-list" data-testid="picker-results">
+      <ul className="pick-list" aria-label="People found" data-testid="picker-results">
         {shown === null && <li className="muted">Looking…</li>}
         {shown !== null && shown.persons.length === 0 && (
           <li className="muted">

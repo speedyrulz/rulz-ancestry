@@ -236,6 +236,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
                 <button
                   type="button"
                   data-testid={`census-district-${item.id}`}
+                  aria-pressed={district?.id === item.id}
                   onClick={() => selectDistrict(item.id, item.generation)}
                 >
                   ED {item.ed || '—'}: {item.descriptionStart} ({item.pages} pages)
@@ -255,7 +256,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
             >
               Previous districts
             </button>
-            <span>{total} districts</span>
+            <span role="status">{total} districts</span>
             <button
               type="button"
               disabled={districts.length === 0 || offset + districts.length >= total}
@@ -331,7 +332,11 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
               Open at NARA
             </button>
           </div>
-          {busy && <p className="muted">Loading page…</p>}
+          {busy && (
+            <p className="muted" role="status">
+              Loading page…
+            </p>
+          )}
           {shown !== null && (
             <>
               <label>
@@ -350,7 +355,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
                 <img
                   data-testid="census-image"
                   src={shown.url}
-                  alt={`Census page ${shown.page}`}
+                  alt={`Census page ${shown.page} of district ${district.ed || 'without a number'}, a scanned page of handwriting`}
                   style={{ width: `${zoom}%` }}
                 />
               </div>

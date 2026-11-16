@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { GedcomImportResult, RecentTreeInfo, StartInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { formatWhen } from '../format';
@@ -24,6 +24,13 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
   const [recent, setRecent] = useState<RecentTreeInfo[]>(info.recent);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const title = useRef<HTMLHeadingElement>(null);
+
+  // A tree that was closed took the focus with it: the screen starts at its title.
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active === null || active === document.body) title.current?.focus();
+  }, []);
 
   /** Runs one action at a time and shows why it failed, if it did. */
   const run = async (action: () => Promise<void>) => {
@@ -75,7 +82,7 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
   return (
     <main className="shell" data-testid="start-screen">
       <header>
-        <h1 className="brand">
+        <h1 className="brand" ref={title} tabIndex={-1}>
           <LogoWordmark className="brand-logo" />
           <span className="brand-name" aria-hidden="true">
             KINSPORA
@@ -158,12 +165,14 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
               Choose a GEDCOM or GEDZip file…
             </button>
           </div>
-          {importing && (
-            <p className="muted" role="status" data-testid="importing">
-              Choose the file in the window that opened. Reading a large file then takes a few
-              seconds.
-            </p>
-          )}
+          <div role="status">
+            {importing && (
+              <p className="muted" data-testid="importing">
+                Choose the file in the window that opened. Reading a large file then takes a few
+                seconds.
+              </p>
+            )}
+          </div>
         </form>
       </section>
 
@@ -192,6 +201,7 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
                       type="button"
                       className="primary"
                       disabled={busy}
+                      aria-label={`Open ${tree.name}`}
                       onClick={() => void openRecent(tree.dir)}
                       data-testid="open-recent"
                     >
@@ -201,6 +211,7 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
                   <button
                     type="button"
                     disabled={busy}
+                    aria-label={`Remove from list: ${tree.name}`}
                     onClick={() => void forget(tree.dir)}
                     data-testid="forget-recent"
                   >

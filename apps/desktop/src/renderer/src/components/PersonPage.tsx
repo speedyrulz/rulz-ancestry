@@ -1,5 +1,5 @@
 import { PEDIGREES, SEXES, describeDate, type Pedigree, type Sex } from '@rulz/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   CitationTarget,
   EventInfo,
@@ -113,14 +113,21 @@ interface SourcesButtonProps {
   count: number;
   onClick: () => void;
   testId: string;
+  /** What the sources are for, so that a screen reader can tell the buttons of one page apart. */
+  about?: string;
 }
 
 /** Opens the list of sources a fact rests on; its label says how many there are. */
-function SourcesButton({ count, onClick, testId }: SourcesButtonProps) {
+function SourcesButton({ count, onClick, testId, about }: SourcesButtonProps) {
   return (
     <button
       type="button"
       title={count === 0 ? 'Record where this comes from' : 'See where this comes from'}
+      aria-label={
+        about === undefined
+          ? undefined
+          : `Sources${count === 0 ? '' : ` (${count.toLocaleString()})`} for ${about}`
+      }
       onClick={onClick}
       data-testid={testId}
     >
@@ -139,6 +146,11 @@ interface EventRowsProps {
   onMedia: (event: EventInfo) => void;
   onEdit: (event: EventInfo) => void;
   onDelete: (event: EventInfo) => void;
+}
+
+/** An event in a few words, to tell its buttons from those of the other rows: "Residence, 1900". */
+function eventName(event: EventInfo): string {
+  return [labelOf(event.type), event.dateText].filter((part) => part !== '').join(', ');
 }
 
 function EventRows({
@@ -185,16 +197,27 @@ function EventRows({
                 count={sourceCount(event.id)}
                 onClick={() => onSources(event)}
                 testId="event-sources"
+                about={eventName(event)}
               />
               <FilesButton
                 count={mediaCount(event.id)}
                 onClick={() => onMedia(event)}
                 testId="event-media"
               />
-              <button type="button" onClick={() => onEdit(event)} data-testid="edit-event">
+              <button
+                type="button"
+                aria-label={`Edit ${eventName(event)}`}
+                onClick={() => onEdit(event)}
+                data-testid="edit-event"
+              >
                 Edit
               </button>
-              <button type="button" onClick={() => onDelete(event)} data-testid="delete-event">
+              <button
+                type="button"
+                aria-label={`Delete ${eventName(event)}`}
+                onClick={() => onDelete(event)}
+                data-testid="delete-event"
+              >
                 Delete
               </button>
             </td>
@@ -219,6 +242,49 @@ const EVENT_HEAD = (
   </thead>
 );
 
+/** True when no control has the focus: the page has it, as after the control that had it was removed. */
+function focusIsLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body;
+}
+
+/** Where a control stood in the page: its section, its list of rows, its row, and its place in the row. */
+interface FocusSpot {
+  section: Element | null;
+  rows: Element | null;
+  row: number;
+  button: number;
+}
+
+function spotOf(element: Element | null): FocusSpot | null {
+  if (element === null) return null;
+  const row = element.closest('tr, li');
+  const rows = row?.parentElement ?? null;
+  return {
+    section: element.closest('section'),
+    rows,
+    row: row === null || rows === null ? 0 : Array.prototype.indexOf.call(rows.children, row),
+    button: row === null ? 0 : [...row.querySelectorAll<Element>('button')].indexOf(element),
+  };
+}
+
+/** The control that takes over the focus from one that went: the same place in the next row, or the section's first button. */
+function neighbourOf(spot: FocusSpot): HTMLElement | null {
+  if (spot.rows?.isConnected === true && spot.rows.children.length > 0) {
+    const row = spot.rows.children[Math.min(spot.row, spot.rows.children.length - 1)];
+    const buttons = [...(row?.querySelectorAll<HTMLElement>('button') ?? [])];
+    const near = buttons[Math.min(Math.max(spot.button, 0), buttons.length - 1)];
+    if (near) return near;
+  }
+  if (spot.section?.isConnected === true) {
+    return (
+      spot.section.querySelector<HTMLElement>('.actions button') ??
+      spot.section.querySelector<HTMLElement>('button')
+    );
+  }
+  return null;
+}
+
 /** One person: their details, names, events, parents, partners and children, all editable. */
 export function PersonPageView({
   personId,
@@ -237,6 +303,20 @@ export function PersonPageView({
     page: PersonPage | null;
   } | null>(null);
   const [open, setOpen] = useState<Open | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  /** Where the control that started a change stood, so that the focus can go to its neighbour. */
+  const kept = useRef<FocusSpot | null>(null);
+
+  // After a change the control that had the focus may be gone (a deleted row). Put the focus on
+  // its neighbour, or on the person's name when the page moved to another person.
+  useEffect(() => {
+    if (loaded === null) return;
+    const spot = kept.current;
+    kept.current = null;
+    if (!focusIsLost() || document.querySelector('dialog[open]')) return;
+    const near = spot === null ? null : neighbourOf(spot);
+    (near ?? heading.current)?.focus();
+  }, [loaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -257,7 +337,10 @@ export function PersonPageView({
   if (loaded === null || loaded.personId !== personId) {
     return (
       <div className="person-page" data-testid="person-page-loading">
-        <p className="muted">Loading…</p>
+        {/* A heading from the first paint, so that the focus has a place to go while the page is read. */}
+        <h2 tabIndex={-1} className="muted">
+          Loading…
+        </h2>
       </div>
     );
   }
@@ -282,7 +365,11 @@ export function PersonPageView({
   };
   /** Applies an edit made straight from the page, and reports a failure. */
   const direct = (edit: Promise<TreeState | PersonChange>) => {
-    apply(edit).catch((failure: unknown) => onProblem(errorMessage(failure)));
+    kept.current = spotOf(document.activeElement);
+    apply(edit).catch((failure: unknown) => {
+      kept.current = null;
+      onProblem(errorMessage(failure));
+    });
   };
 
   const living: LivingChoice = person.living === null ? 'unknown' : person.living ? 'yes' : 'no';
@@ -362,7 +449,9 @@ export function PersonPageView({
     <div className="person-page" data-testid="person-page">
       <header className="person-head">
         <div>
-          <h2 data-testid="person-name">{name}</h2>
+          <h2 ref={heading} tabIndex={-1} data-testid="person-name">
+            {name}
+          </h2>
           <p className="muted" data-testid="person-lifespan">
             {lifespan(summary) || 'No birth or death recorded'}
           </p>
@@ -487,7 +576,7 @@ export function PersonPageView({
         {page.names.length === 0 ? (
           <p className="muted">No name recorded.</p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Names">
             <tbody>
               {page.names.map((entry) => (
                 <tr key={entry.id} data-testid="name-row">
@@ -508,10 +597,12 @@ export function PersonPageView({
                         )
                       }
                       testId="name-sources"
+                      about={`the name ${fullName({ name: entry })}`}
                     />
                     {!entry.isPrimary && (
                       <button
                         type="button"
+                        aria-label={`Show this name: ${fullName({ name: entry })}`}
                         onClick={() => direct(api.setPrimaryName(entry.id))}
                         data-testid="make-primary"
                       >
@@ -520,6 +611,7 @@ export function PersonPageView({
                     )}
                     <button
                       type="button"
+                      aria-label={`Edit the name ${fullName({ name: entry })}`}
                       onClick={() => setOpen({ kind: 'name', name: entry })}
                       data-testid="edit-name"
                     >
@@ -527,6 +619,7 @@ export function PersonPageView({
                     </button>
                     <button
                       type="button"
+                      aria-label={`Delete the name ${fullName({ name: entry })}`}
                       onClick={() => direct(api.deleteName(entry.id))}
                       data-testid="delete-name"
                     >
@@ -550,7 +643,7 @@ export function PersonPageView({
         {page.events.length === 0 ? (
           <p className="muted">No events recorded.</p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Events">
             {EVENT_HEAD}
             <tbody>
               <EventRows
@@ -676,6 +769,7 @@ export function PersonPageView({
                   <button
                     type="button"
                     className="small"
+                    aria-label={`Remove from family: ${fullName(child.person)}`}
                     onClick={() => direct(api.removeChild(family.familyId, child.person.id))}
                     data-testid="remove-child"
                   >
@@ -685,7 +779,10 @@ export function PersonPageView({
               ))}
             </ul>
             {family.events.length > 0 && (
-              <table className="table">
+              <table
+                className="table"
+                aria-label={`Events of the family of ${couple(family.partner)}`}
+              >
                 {EVENT_HEAD}
                 <tbody>
                   <EventRows
@@ -732,6 +829,7 @@ export function PersonPageView({
                   )
                 }
                 testId="family-sources"
+                about={`the family of ${couple(family.partner)}`}
               />
               <FilesButton
                 count={mediaCount('family', family.familyId)}
@@ -801,7 +899,7 @@ export function PersonPageView({
             No sources recorded. Use “Sources” beside a name or an event to say where it comes from.
           </p>
         ) : (
-          <table className="table">
+          <table className="table" aria-label="Sources">
             <thead>
               <tr>
                 <th scope="col">Source</th>
@@ -827,6 +925,7 @@ export function PersonPageView({
                   <td className="row-actions">
                     <button
                       type="button"
+                      aria-label={`Edit the citation of ${sourceTitle(citation.sourceTitle)}`}
                       onClick={() => setOpen({ kind: 'citation', citationId: citation.id })}
                       data-testid="edit-person-citation"
                     >
@@ -845,6 +944,7 @@ export function PersonPageView({
               showSources({ type: 'person', id: person.id }, `Sources for ${name} in general`)
             }
             testId="person-sources"
+            about={`${name} in general`}
           />
           <span className="muted">for {name} in general, not one name or event</span>
         </div>

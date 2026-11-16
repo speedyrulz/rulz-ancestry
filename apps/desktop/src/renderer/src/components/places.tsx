@@ -281,7 +281,13 @@ function GazetteerPanel({ status, onStatus }: GazetteerPanelProps) {
     action().then(onStatus, (failure: unknown) => setError(errorMessage(failure)));
   };
 
-  if (status === null) return <p className="muted">Looking…</p>;
+  if (status === null) {
+    return (
+      <p className="muted" role="status">
+        Looking…
+      </p>
+    );
+  }
   const { installed, job } = status;
   const credit = (
     <>
@@ -301,7 +307,13 @@ function GazetteerPanel({ status, onStatus }: GazetteerPanelProps) {
     <section className="gazetteer-panel" data-testid="gazetteer-panel">
       {job !== null && (
         <>
-          <p className="dialog-text" role="status" data-testid="gazetteer-progress">
+          {/* The step is announced; the running figures below are not read out each time. */}
+          <p className="visually-hidden" role="status">
+            {job.phase === 'downloading'
+              ? 'Downloading the place list.'
+              : 'Putting the place list together.'}
+          </p>
+          <p className="dialog-text" data-testid="gazetteer-progress">
             {job.phase === 'downloading'
               ? `Downloading the place list: file ${job.step} of ${job.steps}, ${formatSize(job.bytes)} so far.`
               : `Putting the place list together: ${countOf(job.places, 'place', 'places')} so far.`}
@@ -448,14 +460,22 @@ function LinkPlaceDialog({ place, onLinked, onClose }: LinkPlaceDialogProps) {
         }
       />
       <div className="scroll-box places-box">
-        {shown === null && <p className="muted pad">Looking…</p>}
+        {shown === null && (
+          <p className="muted pad" role="status">
+            Looking…
+          </p>
+        )}
         {shown !== null && shown.length === 0 && (
-          <p className="muted pad" data-testid="link-place-empty">
+          <p className="muted pad" role="status" data-testid="link-place-empty">
             The place list has no place of that name.
           </p>
         )}
         {shown !== null && shown.length > 0 && (
-          <table className="table" data-testid="link-place-results">
+          <table
+            className="table"
+            aria-label="Places in the place list"
+            data-testid="link-place-results"
+          >
             <tbody>
               {shown.map((entry) => (
                 <tr key={entry.geonameId} data-testid="link-place-result">
@@ -464,7 +484,12 @@ function LinkPlaceDialog({ place, onLinked, onClose }: LinkPlaceDialogProps) {
                     <div className="hint">{entryNote(entry)}</div>
                   </td>
                   <td className="row-actions">
-                    <button type="button" onClick={() => link(entry)} data-testid="link-place-pick">
+                    <button
+                      type="button"
+                      onClick={() => link(entry)}
+                      aria-label={`Link ${entry.text}`}
+                      data-testid="link-place-pick"
+                    >
                       Link
                     </button>
                   </td>
@@ -602,6 +627,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
           <button
             type="button"
             onClick={() => change(api.unlinkPlace(place.text))}
+            aria-label={`Unlink ${place.text}`}
             data-testid="unlink-place"
           >
             Unlink
@@ -613,12 +639,22 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
                 <button
                   type="button"
                   onClick={() => change(api.linkPlace(place.text, offer.geonameId))}
+                  aria-label={`Link ${place.text} to ${offer.text}`}
                   data-testid="link-place-offer"
                 >
                   Link
                 </button>
               )}
-              <button type="button" onClick={() => setLinking(place.text)} data-testid="find-place">
+              <button
+                type="button"
+                onClick={() => setLinking(place.text)}
+                aria-label={
+                  offer !== null
+                    ? `Other… places for ${place.text}`
+                    : `Find… ${place.text} in the place list`
+                }
+                data-testid="find-place"
+              >
                 {offer !== null ? 'Other…' : 'Find…'}
               </button>
             </>
@@ -662,7 +698,11 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
         />
       </div>
       <div className="scroll-box places-box">
-        {page === null && failure === null && <p className="muted pad">Looking…</p>}
+        {page === null && failure === null && (
+          <p className="muted pad" role="status">
+            Looking…
+          </p>
+        )}
         {failure !== null && (
           <p className="error" role="alert">
             {failure}
@@ -679,7 +719,9 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
               <tr>
                 <th scope="col">Place</th>
                 <th scope="col">In the place list</th>
-                <th scope="col" />
+                <th scope="col">
+                  <span className="visually-hidden">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>{page.places.map((place) => row(place, offerOf(place)))}</tbody>
@@ -704,7 +746,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
           >
             Next
           </button>
-          <span className="hint" data-testid="places-range">
+          <span className="hint" role="status" data-testid="places-range">
             {(offset + 1).toLocaleString()} to{' '}
             {Math.min(offset + PAGE, page.total).toLocaleString()} of{' '}
             {countOf(page.total, 'place', 'places')}

@@ -120,8 +120,17 @@ function SourceListDialog({ tree, onOpen, onAdd, onClose }: SourceListDialogProp
         testId="sources-search"
         autoFocus
       />
+      <p className="visually-hidden" role="status">
+        {shown !== null && 'page' in shown
+          ? countOf(shown.page.total, 'source found', 'sources found')
+          : ''}
+      </p>
       <div className="scroll-box sources-box">
-        {shown === null && <p className="muted pad">Looking…</p>}
+        {shown === null && (
+          <p className="muted pad" role="status">
+            Looking…
+          </p>
+        )}
         {shown !== null && 'error' in shown && (
           <p className="error" role="alert">
             {shown.error}
@@ -135,7 +144,7 @@ function SourceListDialog({ tree, onOpen, onAdd, onClose }: SourceListDialogProp
           </p>
         )}
         {shown !== null && 'page' in shown && shown.page.sources.length > 0 && (
-          <table className="table" data-testid="sources-list">
+          <table className="table" aria-label="Sources" data-testid="sources-list">
             <thead>
               <tr>
                 <th scope="col">Title</th>
@@ -312,7 +321,9 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
   if (loaded === null) {
     return (
       <Dialog title="Source" onClose={onClose} testId="source-dialog" wide>
-        <p className="muted">Loading…</p>
+        <p className="muted" role="status">
+          Loading…
+        </p>
       </Dialog>
     );
   }
@@ -397,7 +408,11 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
         </p>
       ) : (
         <div className="scroll-box">
-          <table className="table" data-testid="source-citations">
+          <table
+            className="table"
+            aria-label="Citations of this source"
+            data-testid="source-citations"
+          >
             <thead>
               <tr>
                 <th scope="col">Where in the source, and what it says</th>
@@ -411,7 +426,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
               {details.citations.map((entry) => (
                 <tr key={entry.id} data-testid="source-citation">
                   <td>
-                    <div className="citation">
+                    <div className="citation" id={`source-citation-${entry.id}`}>
                       <CitationText citation={entry} />
                     </div>
                   </td>
@@ -428,6 +443,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
                     <button
                       type="button"
                       onClick={() => setOpen({ kind: 'citation', id: entry.id })}
+                      aria-describedby={`source-citation-${entry.id}`}
                       data-testid="edit-citation"
                     >
                       Edit
@@ -435,6 +451,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
                     <button
                       type="button"
                       onClick={() => setOpen({ kind: 'delete-citation', id: entry.id })}
+                      aria-describedby={`source-citation-${entry.id}`}
                       data-testid="delete-citation"
                     >
                       Delete

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   RECORD_INBOX_MAX,
   type AiConfidence,
@@ -117,12 +117,15 @@ function Entry({
   onRemove,
 }: EntryProps) {
   const { record, fit } = item;
+  const titleId = useId();
   return (
     <li data-testid="inbox-item">
       {item.url === '' ? (
-        <span data-testid="inbox-title">{item.title}</span>
+        <span id={titleId} data-testid="inbox-title">
+          {item.title}
+        </span>
       ) : (
-        <a href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
+        <a id={titleId} href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
           {item.title}
         </a>
       )}
@@ -170,7 +173,12 @@ function Entry({
         {tab === 'kept' ? (
           <>
             {record !== null && record.kind !== 'text' && (
-              <button type="button" onClick={onCompare} data-testid="inbox-compare">
+              <button
+                type="button"
+                onClick={onCompare}
+                aria-describedby={titleId}
+                data-testid="inbox-compare"
+              >
                 Compare
               </button>
             )}{' '}
@@ -180,22 +188,46 @@ function Entry({
               </span>
             ) : (
               item.canAttach && (
-                <button type="button" onClick={onAttach} disabled={busy} data-testid="inbox-attach">
+                <button
+                  type="button"
+                  onClick={onAttach}
+                  disabled={busy}
+                  aria-describedby={titleId}
+                  data-testid="inbox-attach"
+                >
                   Attach as a source
                 </button>
               )
             )}{' '}
             {item.canAttach && (
-              <button type="button" onClick={onDecline} disabled={busy} data-testid="inbox-decline">
+              <button
+                type="button"
+                onClick={onDecline}
+                disabled={busy}
+                aria-describedby={titleId}
+                data-testid="inbox-decline"
+              >
                 {record === null ? 'Not about this person' : declineWords(record)}
               </button>
             )}{' '}
-            <button type="button" onClick={onRemove} disabled={busy} data-testid="inbox-remove">
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={busy}
+              aria-describedby={titleId}
+              data-testid="inbox-remove"
+            >
               Remove
             </button>
           </>
         ) : (
-          <button type="button" onClick={onRemove} disabled={busy} data-testid="inbox-allow">
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={busy}
+            aria-describedby={titleId}
+            data-testid="inbox-allow"
+          >
             Allow again
           </button>
         )}
@@ -239,12 +271,15 @@ function ProposalEntry({
   onForget,
 }: ProposalEntryProps) {
   const { record, fit } = item;
+  const titleId = useId();
   return (
     <li data-testid="inbox-proposal">
       {item.url === '' ? (
-        <span data-testid="inbox-title">{item.title}</span>
+        <span id={titleId} data-testid="inbox-title">
+          {item.title}
+        </span>
       ) : (
-        <a href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
+        <a id={titleId} href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
           {item.title}
         </a>
       )}
@@ -284,7 +319,12 @@ function ProposalEntry({
       )}
       <div className="record-actions">
         {record.kind !== 'text' && (
-          <button type="button" onClick={onCompare} data-testid="proposal-compare">
+          <button
+            type="button"
+            onClick={onCompare}
+            aria-describedby={titleId}
+            data-testid="proposal-compare"
+          >
             Compare
           </button>
         )}{' '}
@@ -304,13 +344,20 @@ function ProposalEntry({
               onClick={onKeep}
               disabled={busy}
               title="Keeps the record as it is shown here, with what the AI says of it, in the place of what is kept"
+              aria-describedby={titleId}
               data-testid="proposal-keep"
             >
               Keep with these reasons
             </button>
           </>
         ) : (
-          <button type="button" onClick={onKeep} disabled={busy} data-testid="proposal-keep">
+          <button
+            type="button"
+            onClick={onKeep}
+            disabled={busy}
+            aria-describedby={titleId}
+            data-testid="proposal-keep"
+          >
             Keep for later
           </button>
         )}{' '}
@@ -319,7 +366,13 @@ function ProposalEntry({
             Attached as a source
           </span>
         ) : (
-          <button type="button" onClick={onAttach} disabled={busy} data-testid="proposal-attach">
+          <button
+            type="button"
+            onClick={onAttach}
+            disabled={busy}
+            aria-describedby={titleId}
+            data-testid="proposal-attach"
+          >
             Attach as a source
           </button>
         )}{' '}
@@ -328,11 +381,23 @@ function ProposalEntry({
             Turned down
           </span>
         ) : (
-          <button type="button" onClick={onDecline} disabled={busy} data-testid="proposal-decline">
+          <button
+            type="button"
+            onClick={onDecline}
+            disabled={busy}
+            aria-describedby={titleId}
+            data-testid="proposal-decline"
+          >
             {declineWords(record)}
           </button>
         )}{' '}
-        <button type="button" onClick={onForget} disabled={busy} data-testid="proposal-forget">
+        <button
+          type="button"
+          onClick={onForget}
+          disabled={busy}
+          aria-describedby={titleId}
+          data-testid="proposal-forget"
+        >
           Forget
         </button>
       </div>
@@ -518,9 +583,24 @@ export function RecordInboxDialog({
         : proposals.filter((item) => item.personId === filter);
   const loading = tab === 'proposals' ? shownProposals === null : page === null;
 
+  // A result that is kept, attached or turned down leaves this list with the focus on its
+  // button. The focus goes to the button of the list that is shown, not to the page.
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const listed = tab === 'proposals' ? (shownProposals?.length ?? 0) : (page?.items.length ?? 0);
+  const listedBefore = useRef(listed);
+  useEffect(() => {
+    if (
+      listed < listedBefore.current &&
+      (document.activeElement === document.body || document.activeElement === null)
+    ) {
+      tabsRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
+    }
+    listedBefore.current = listed;
+  }, [listed]);
+
   return (
     <Dialog title="Inbox: records kept for later" onClose={onClose} testId="record-inbox" wide>
-      <div className="actions inbox-tabs">
+      <div ref={tabsRef} className="actions inbox-tabs" role="group" aria-label="Show">
         <button
           type="button"
           className="small"
@@ -578,7 +658,11 @@ export function RecordInboxDialog({
           {error}
         </p>
       )}
-      {loading && error === null && <p className="muted">Loading…</p>}
+      {loading && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
       {tab === 'proposals' && shownProposals !== null && shownProposals.length === 0 && (
         <p className="muted" data-testid="inbox-empty">
           The AI has proposed nothing.
@@ -619,7 +703,7 @@ export function RecordInboxDialog({
       )}
       {tab !== 'proposals' && page !== null && page.items.length > 0 && (
         <>
-          <p className="muted" data-testid="inbox-count">
+          <p className="muted" role="status" data-testid="inbox-count">
             {page.items.length < page.total
               ? `The latest ${page.items.length.toLocaleString()} of ${page.total.toLocaleString()} results.`
               : `${countOf(page.total, 'result', 'results')}.`}

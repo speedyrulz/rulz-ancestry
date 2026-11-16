@@ -23,6 +23,10 @@ interface DialogProps {
   full?: boolean;
 }
 
+/** What can take the focus by keyboard. */
+const FOCUSABLE =
+  'button:not(:disabled), [href], input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])';
+
 /** A modal dialog. It is mounted while it is open and removed when closed. */
 export function Dialog({
   title,
@@ -34,17 +38,59 @@ export function Dialog({
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  /** The control that had the focus when the dialog opened; the focus goes back to it. */
+  const [opener] = useState<Element | null>(() => document.activeElement);
 
   useEffect(() => {
     const dialog = ref.current;
-    if (dialog && !dialog.open) dialog.showModal();
-  }, []);
+    if (!dialog) return undefined;
+    if (!dialog.open) {
+      dialog.showModal();
+      // The browser starts at the first control; a field that asked for the focus gets it.
+      dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus();
+    }
+
+    // When the control that has the focus is removed (a button that turns into
+    // something else), the focus falls to the page. Bring it back into the dialog.
+    // This is the last resort: it waits a moment so that a screen that knows where the focus
+    // belongs (a heading, a result) gets there first, then looks again.
+    let waiting = 0;
+    const rescue = () => {
+      waiting = 0;
+      const active = document.activeElement;
+      if (active !== null && active !== document.body) return;
+      if (!dialog.isConnected || !dialog.open || dialog.querySelector('dialog[open]') !== null) {
+        return;
+      }
+      const first = dialog.querySelector<HTMLElement>(FOCUSABLE);
+      (first ?? dialog.querySelector<HTMLElement>('h2'))?.focus();
+    };
+    const observer = new MutationObserver(() => {
+      const active = document.activeElement;
+      if (active !== null && active !== document.body) return;
+      if (waiting === 0) waiting = window.setTimeout(rescue, 50);
+    });
+    observer.observe(dialog, { childList: true, subtree: true });
+
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(waiting);
+      // The dialog is gone: hand the focus back to what opened it, unless something took it.
+      queueMicrotask(() => {
+        if (dialog.isConnected) return;
+        const active = document.activeElement;
+        if (active !== null && active !== document.body) return;
+        if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      });
+    };
+  }, [opener]);
 
   return (
     <dialog
       ref={ref}
       className={full ? 'dialog full' : wide ? 'dialog wide' : 'dialog'}
       aria-labelledby={titleId}
+      aria-modal="true"
       data-testid={testId}
       onCancel={(event) => {
         // Escape: let the owner unmount the dialog instead of leaving it closed but mounted.
@@ -52,7 +98,9 @@ export function Dialog({
         onClose();
       }}
     >
-      <h2 id={titleId}>{title}</h2>
+      <h2 id={titleId} tabIndex={-1}>
+        {title}
+      </h2>
       {children}
     </dialog>
   );
@@ -201,6 +249,24 @@ interface TextFieldProps {
   maxLength?: number;
   /** Text shown under the field. */
   hint?: ReactNode;
+  /** Says what is wrong with the value; the field is marked invalid and the text is read with it. */
+  error?: string | null;
+}
+
+/** The ids that tie a field to the text under it, and what a screen reader reads with the field. */
+function useDescription(hint: ReactNode, error: string | null | undefined) {
+  const hintId = useId();
+  const errorId = useId();
+  const hasHint = hint !== undefined && hint !== null && hint !== false;
+  const hasError = error !== undefined && error !== null && error !== '';
+  const ids = [hasHint ? hintId : null, hasError ? errorId : null].filter((id) => id !== null);
+  return {
+    hintId,
+    errorId,
+    hasHint,
+    hasError,
+    describedBy: ids.length === 0 ? undefined : ids.join(' '),
+  };
 }
 
 export function TextField({
@@ -212,8 +278,10 @@ export function TextField({
   placeholder,
   maxLength = 200,
   hint,
+  error,
 }: TextFieldProps) {
   const id = useId();
+  const { hintId, errorId, hasHint, hasError, describedBy } = useDescription(hint, error);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
@@ -224,12 +292,24 @@ export function TextField({
         maxLength={maxLength}
         placeholder={placeholder}
         autoFocus={autoFocus}
+        data-autofocus={autoFocus ? 'true' : undefined}
         autoComplete="off"
         spellCheck={false}
+        aria-invalid={hasError ? true : undefined}
+        aria-describedby={describedBy}
         data-testid={testId}
         onChange={(event) => onChange(event.target.value)}
       />
-      {hint}
+      {hasHint && (
+        <div id={hintId} className="field-hint">
+          {hint}
+        </div>
+      )}
+      {hasError && (
+        <p id={errorId} className="error field-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -258,6 +338,7 @@ export function TextAreaField({
   hint,
 }: TextAreaFieldProps) {
   const id = useId();
+  const { hintId, hasHint, describedBy } = useDescription(hint, null);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
@@ -268,10 +349,15 @@ export function TextAreaField({
         maxLength={maxLength}
         placeholder={placeholder}
         spellCheck={false}
+        aria-describedby={describedBy}
         data-testid={testId}
         onChange={(event) => onChange(event.target.value)}
       />
-      {hint}
+      {hasHint && (
+        <div id={hintId} className="field-hint">
+          {hint}
+        </div>
+      )}
     </div>
   );
 }

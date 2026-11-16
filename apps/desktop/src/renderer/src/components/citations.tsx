@@ -1,5 +1,5 @@
 import { CITATION_LIMITS, SOURCE_LIMITS, webAddressProblem } from '@rulz/core';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type {
   CitationInfo,
   CitationInput,
@@ -248,7 +248,7 @@ export function CitationFields({
         autoFocus={autoFocus && addressFirst}
         hint={
           problem !== null ? (
-            <p className="error" data-testid="citation-url-problem">
+            <p className="error" role="alert" data-testid="citation-url-problem">
               {problem}
             </p>
           ) : undefined
@@ -555,7 +555,11 @@ function AddCitationForm({
             testId="source-search"
             autoFocus={clip === undefined}
           />
-          <ul className="pick-list" data-testid="source-results">
+          <p className="visually-hidden" role="status">
+            {/* Always there, and it changes only when an answer arrives, not on each key. */}
+            {found === null ? '' : countOf(found.sources.length, 'source found', 'sources found')}
+          </p>
+          <ul className="pick-list" aria-label="Sources found" data-testid="source-results">
             {shown === null && <li className="muted">Looking…</li>}
             {shown !== null && shown.sources.length === 0 && (
               <li className="muted">No source found.</li>
@@ -720,12 +724,27 @@ export function FactSourcesDialog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const editing = own.find((citation) => citation.id === editingId) ?? null;
+  const addRef = useRef<HTMLButtonElement>(null);
+  const wasAdding = useRef(false);
+
+  // The button that opened the form gets the focus back when the form closes.
+  useEffect(() => {
+    if (wasAdding.current && !adding) addRef.current?.focus();
+    wasAdding.current = adding;
+  }, [adding]);
 
   const remove = (citation: PersonCitationInfo) => {
     setProblem(null);
-    api.unlinkCitation(citation.id, target).then(onTree, (failure: unknown) => {
-      setProblem(errorMessage(failure));
-    });
+    api.unlinkCitation(citation.id, target).then(
+      (next) => {
+        onTree(next);
+        // The row with the focus is gone; the focus goes to the button that is always there.
+        addRef.current?.focus();
+      },
+      (failure: unknown) => {
+        setProblem(errorMessage(failure));
+      },
+    );
   };
 
   return (
@@ -771,6 +790,7 @@ export function FactSourcesDialog({
                     <button
                       type="button"
                       onClick={() => setEditingId(citation.id)}
+                      aria-label={`Edit ${sourceTitle(citation.sourceTitle)}`}
                       data-testid="edit-citation"
                     >
                       Edit
@@ -778,6 +798,7 @@ export function FactSourcesDialog({
                     <button
                       type="button"
                       onClick={() => remove(citation)}
+                      aria-label={`Remove ${sourceTitle(citation.sourceTitle)}`}
                       data-testid="remove-citation"
                     >
                       Remove
@@ -793,7 +814,12 @@ export function FactSourcesDialog({
             </p>
           )}
           <div className="dialog-actions">
-            <button type="button" onClick={() => setAdding(true)} data-testid="add-citation">
+            <button
+              ref={addRef}
+              type="button"
+              onClick={() => setAdding(true)}
+              data-testid="add-citation"
+            >
               Add a source
             </button>
             <button

@@ -120,6 +120,8 @@ interface FieldRowProps<Relation extends string> {
   ticked: boolean;
   busy: boolean;
   onTick: (ticked: boolean) => void;
+  /** Which event the row is of, for the name of the tick box ("birth", "death, number 2"). */
+  context: string;
   testId: string;
 }
 
@@ -131,6 +133,7 @@ function FieldRow<Relation extends string>({
   ticked,
   busy,
   onTick,
+  context,
   testId,
 }: FieldRowProps<Relation>) {
   return (
@@ -148,6 +151,7 @@ function FieldRow<Relation extends string>({
           <label className="compare-tick">
             <input
               type="checkbox"
+              aria-label={`${field.tree === '' ? 'Take it over' : 'Replace with what the record says'}: ${context}, ${label.toLowerCase()}, ${field.record === '' ? 'nothing' : show(field.record)}`}
               checked={ticked}
               disabled={busy}
               onChange={(event) => onTick(event.target.checked)}
@@ -182,6 +186,7 @@ function TargetRows({ type, target, position, choice, busy, onChoose }: TargetRo
     choice.date ? target.date.record : target.date.tree,
     choice.place ? target.place.record : target.place.tree,
   ];
+  const context = `${word}${position !== null ? `, number ${position.index + 1}` : ''}`;
   return (
     <tbody data-testid={`compare-${type}`}>
       <tr>
@@ -210,6 +215,7 @@ function TargetRows({ type, target, position, choice, busy, onChoose }: TargetRo
           ticked={choice.date}
           busy={busy}
           onTick={(date) => onChoose({ date })}
+          context={context}
           testId={`compare-${type}-date`}
         />
       )}
@@ -222,6 +228,7 @@ function TargetRows({ type, target, position, choice, busy, onChoose }: TargetRo
           ticked={choice.place}
           busy={busy}
           onTick={(place) => onChoose({ place })}
+          context={context}
           testId={`compare-${type}-place`}
         />
       )}
@@ -389,7 +396,11 @@ export function RecordCompareDialog({
           {error}
         </p>
       )}
-      {comparison === null && error === null && <p className="muted">Loading…</p>}
+      {comparison === null && error === null && (
+        <p className="muted" role="status">
+          Loading…
+        </p>
+      )}
       {comparison !== null && (
         <>
           <p className="dialog-text">
@@ -435,10 +446,12 @@ export function RecordCompareDialog({
             what to take over is for you to decide. Nothing is ticked, and nothing is written until
             you press the button.
           </p>
-          <table className="table compare">
+          <table className="table compare" aria-label="The record beside your tree">
             <thead>
               <tr>
-                <td />
+                <th scope="col">
+                  <span className="visually-hidden">Fact</span>
+                </th>
                 <th scope="col">Your tree</th>
                 <th scope="col">The record</th>
                 <th scope="col">How they stand</th>
@@ -502,7 +515,7 @@ export function RecordCompareDialog({
             </p>
           )}
           {done !== null && (
-            <p className="notice" data-testid="compare-done">
+            <p className="notice" role="status" data-testid="compare-done">
               {done === 'taken'
                 ? 'Taken over, and the record is cited as the source. Undo takes all of it back in one step.'
                 : 'The record is cited as the source, and nothing else was changed. Undo takes it back in one step.'}

@@ -216,10 +216,16 @@ export function MergeDialog({
             children. Only exact repeats are dropped. Choose which record to keep; its main name and
             its details come first.
           </p>
-          <table className="table compare" data-testid="merge-compare-table">
+          <table
+            className="table compare"
+            aria-label="The two records side by side"
+            data-testid="merge-compare-table"
+          >
             <thead>
               <tr>
-                <td />
+                <td>
+                  <span className="visually-hidden">What is recorded</span>
+                </td>
                 {([first, second] as const).map((page, index) => {
                   const which = index === 0 ? 'first' : 'second';
                   return (
@@ -356,7 +362,11 @@ export function DuplicatesDialog({ tree, onTree, onMerged, onClose }: Duplicates
           </p>
           {list.pairs.length > 0 && (
             <div className="scroll-box">
-              <table className="table" data-testid="duplicates-list">
+              <table
+                className="table"
+                aria-label="Possible duplicates"
+                data-testid="duplicates-list"
+              >
                 <thead>
                   <tr>
                     <th scope="col">One record</th>
@@ -384,6 +394,7 @@ export function DuplicatesDialog({ tree, onTree, onMerged, onClose }: Duplicates
                       <td className="row-actions">
                         <button
                           type="button"
+                          aria-label={`Compare ${fullName(pair.a)} and ${fullName(pair.b)}`}
                           onClick={() => setOpen({ aId: pair.a.id, bId: pair.b.id })}
                           data-testid="duplicate-compare"
                         >

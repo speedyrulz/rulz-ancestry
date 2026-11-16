@@ -407,6 +407,15 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
       .finally(() => setBusy(null));
   };
 
+  // "Start" is gone once the search runs. The focus goes to the results, not to the page.
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const started = run !== null;
+  useEffect(() => {
+    if (started && (document.activeElement === document.body || document.activeElement === null)) {
+      resultsRef.current?.focus();
+    }
+  }, [started]);
+
   const all = Object.values(answers);
   const declined = all.reduce(
     (sum, answer) =>
@@ -423,7 +432,9 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
         </p>
       )}
       {error === null && (plan === null || (!plan.agreed && setup === null)) && (
-        <p className="muted">Loading…</p>
+        <p className="muted" role="status">
+          Loading…
+        </p>
       )}
 
       {plan !== null && !plan.agreed && setup !== null && (
@@ -480,7 +491,12 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
                 </label>
                 <div className="hint">
                   It is sent {source.asks}.{' '}
-                  <a href={source.termsUrl} target="_blank" rel="noreferrer">
+                  <a
+                    href={source.termsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Terms of use of ${source.name}`}
+                  >
                     Terms of use
                   </a>
                   {source.pausedUntil !== null &&
@@ -565,8 +581,14 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
       )}
 
       {run !== null && asked !== null && (
-        <div data-testid="run-results">
-          <p className="dialog-text" data-testid="run-status">
+        <div
+          ref={resultsRef}
+          tabIndex={-1}
+          role="region"
+          aria-label="Results of the search"
+          data-testid="run-results"
+        >
+          <p className="dialog-text" role="status" data-testid="run-status">
             {run.status === 'running'
               ? 'Searching… '
               : run.status === 'finished'
@@ -603,7 +625,12 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
                   )}
                   <div className="hint">
                     {source.attribution}.{' '}
-                    <a href={source.termsUrl} target="_blank" rel="noreferrer">
+                    <a
+                      href={source.termsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={`Terms of use of ${source.name}`}
+                    >
                       Terms of use
                     </a>
                   </div>
@@ -685,6 +712,12 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
                     <button
                       type="button"
                       className="small"
+                      aria-expanded={open}
+                      aria-label={
+                        open
+                          ? `Hide the results for ${person.name}`
+                          : `Show ${countOf(count, 'result', 'results')} for ${person.name}`
+                      }
                       onClick={() => setUnfolded((now) => ({ ...now, [person.personId]: !open }))}
                       data-testid="run-person-toggle"
                     >

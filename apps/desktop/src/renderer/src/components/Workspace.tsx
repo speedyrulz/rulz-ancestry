@@ -37,6 +37,12 @@ function typingOrInDialog(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
 }
 
+/** True when no control has the focus: the page has it, as after the control that had it was removed. */
+function focusIsLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body;
+}
+
 /** The screen for an open tree: search and commands on top, everyone on the left, one person on the right. */
 export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -63,6 +69,14 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   const [view, setView] = useState<'person' | 'chart'>('person');
   const [busy, setBusy] = useState(false);
   const searchBox = useRef<HTMLInputElement>(null);
+  const mainPane = useRef<HTMLElement>(null);
+  const treeTitle = useRef<HTMLHeadingElement>(null);
+  /** What had the focus when a command began, so that the focus can go back to it when the command ends. */
+  const focusBeforeCommand = useRef<HTMLElement | null>(null);
+  const previous = useRef<{ view: 'person' | 'chart'; selectedId: string | null }>({
+    view: 'person',
+    selectedId: null,
+  });
   /**
    * The session of the AI assistant and the count of its proposals. Kept here,
    * in one place, so that the line in the notice bar, the inbox and the
@@ -138,6 +152,11 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
       .then(takeAi, (failure: unknown) => setNotice({ text: errorMessage(failure), error: true }));
   };
 
+  // The start screen was left with its focus: the new screen starts at its title.
+  useEffect(() => {
+    if (focusIsLost()) treeTitle.current?.focus();
+  }, []);
+
   useEffect(() => {
     document.title = `${tree.name} - RulZ Kinspora`;
     return () => {
@@ -151,6 +170,32 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     return () => clearTimeout(timer);
   }, [searchText]);
 
+  /** Puts the focus on the heading of the main pane, or on the list when there is none. */
+  const focusMain = useCallback(() => {
+    const heading = mainPane.current?.querySelector<HTMLElement>('h2');
+    if (heading) {
+      if (!heading.hasAttribute('tabindex')) heading.tabIndex = -1;
+      heading.focus();
+      return;
+    }
+    const row = document.querySelector<HTMLElement>('.person-list button.row');
+    (row ?? searchBox.current)?.focus();
+  }, []);
+
+  // After a screen changed under the keyboard, the focus must not be left on the page. A
+  // button that switched the view, or the person who was deleted, is gone with its focus.
+  useEffect(() => {
+    const was = previous.current;
+    previous.current = { view, selectedId };
+    if (document.querySelector('dialog[open]')) return;
+    if (was.selectedId !== null && selectedId === null && focusIsLost()) {
+      const row = document.querySelector<HTMLElement>('.person-list button.row');
+      (row ?? searchBox.current)?.focus();
+    } else if (was.view !== view && focusIsLost()) {
+      focusMain();
+    }
+  }, [view, selectedId, focusMain]);
+
   const showProblem = useCallback(
     (message: string) => setNotice({ text: message, error: true }),
     [],
@@ -160,6 +205,8 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
   const run = useCallback(
     async (action: () => Promise<string | null>) => {
       if (busy) return;
+      focusBeforeCommand.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setBusy(true);
       try {
         const done = await action();
@@ -172,6 +219,19 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
     },
     [busy],
   );
+
+  // A command that disables the buttons while it runs takes the focus with it: give it back.
+  useEffect(() => {
+    if (busy) return;
+    const before = focusBeforeCommand.current;
+    focusBeforeCommand.current = null;
+    if (before === null || !focusIsLost() || document.querySelector('dialog[open]')) return;
+    if (before.isConnected && !(before instanceof HTMLButtonElement && before.disabled)) {
+      before.focus();
+    } else {
+      focusMain();
+    }
+  }, [busy, tree.undo, tree.redo, focusMain]);
 
   const undo = useCallback(
     () =>
@@ -237,9 +297,21 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
 
   return (
     <div className="workspace" data-testid="workspace">
+      <a
+        href="#main"
+        className="skip-link"
+        onClick={(event) => {
+          event.preventDefault();
+          focusMain();
+        }}
+      >
+        Skip to the main part of the screen
+      </a>
       <header className="topbar">
         <div className="tree-title">
-          <strong data-testid="tree-name">{tree.name}</strong>
+          <h1 ref={treeTitle} tabIndex={-1} data-testid="tree-name">
+            {tree.name}
+          </h1>
           <span className="muted" data-testid="tree-backup">
             {tree.lastBackupAt === null
               ? 'No backup yet'
@@ -442,7 +514,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
             onSelect={setSelectedId}
           />
         </nav>
-        <main>
+        <main id="main" ref={mainPane}>
           {selectedId === null ? (
             <div className="person-page" data-testid="nobody-selected">
               <p className="muted">

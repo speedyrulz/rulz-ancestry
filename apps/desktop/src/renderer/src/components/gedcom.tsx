@@ -72,7 +72,11 @@ export function ImportReportDialog({ report, onClose }: ImportReportDialogProps)
             {countOf(report.issueCount, 'place', 'places')} in the file did not follow the rules of
             the format. Nothing was thrown away because of them; this is what the app did instead.
           </p>
-          <table className="table" data-testid="import-report-issues">
+          <table
+            className="table"
+            aria-label="Places that did not follow the format"
+            data-testid="import-report-issues"
+          >
             <thead>
               <tr>
                 <th scope="col">Line</th>
