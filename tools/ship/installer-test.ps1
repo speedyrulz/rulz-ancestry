@@ -391,7 +391,7 @@ if (-not (Same-Path $upgraded.InstallDir $installed.InstallDir)) {
 Stop-ForceRunApp $upgraded.InstallDir
 # The relaunched app used the real profile, so it wrote its database there. That is the
 # profile this test made, and it is removed next; the check below then proves it is gone.
-$relaunchDb = Join-Path $env:APPDATA 'RulZ Kinsporapp.db'
+$relaunchDb = Join-Path $env:APPDATA 'RulZ Kinspora\app.db'
 if (Test-Path -LiteralPath $relaunchDb) { Say 'the relaunched app wrote its database; removing it' }
 Remove-RelaunchFiles $profileFile $treeFile $packFile
 Assert-RealDatabaseStaysAbsent
