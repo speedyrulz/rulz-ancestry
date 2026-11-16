@@ -58,7 +58,13 @@ export function launchApp(
   userDataDir: string,
   appArgs: string[] = [],
 ): Promise<ElectronApplication> {
-  const args = [`--user-data-dir=${userDataDir}`, ...windowArgs, ...appArgs];
+  // The update check uses Node's fetch, which Playwright's route blocking does not see. Unless a
+  // spec brings its own feed, the built app asks a port nobody listens on, so no test reaches
+  // GitHub. (The packaged app ignores the switch by design and still asks GitHub.)
+  const feed = appArgs.some((arg) => arg.startsWith('--rulz-update-feed='))
+    ? []
+    : ['--rulz-update-feed=http://127.0.0.1:1/latest.yml'];
+  const args = [`--user-data-dir=${userDataDir}`, ...windowArgs, ...feed, ...appArgs];
   // colorScheme null: Playwright otherwise makes every page report a light scheme, whatever the
   // window's theme is. The app sets its own theme (dark unless the user chose light).
   return appTarget === 'packaged'

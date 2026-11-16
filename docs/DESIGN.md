@@ -188,11 +188,13 @@ is the one `primary`. Then the list of people (320 px) and the person or chart. 
 900 px) both bars stop being sticky and the page scrolls as a whole, so a focused control is never hidden behind them.
 
 **App updates** (`components/updates.tsx`): `UpdatesProvider` (in `App.tsx`) keeps what is known and the panel, a
-`Dialog` named "App updates" with the check button (the dialog's one primary), the "Check for a new version at
-startup" box and what leaves the PC. `UpdatesButton` is the icon button that opens it (in the top bar, and in the
-hero of the start screen; a red dot shows while a newer version is out). `UpdateNotice` is a thin `notice accent`
-under the action bar (and under the hero), only while a newer version is out: "Open release page" and "Dismiss"
-(Dismiss opens the panel at its check button).
+`Dialog` named "App updates": "Update now" is its one primary while a newer version is out, "Check now" otherwise;
+the switch "Check for updates when the app starts" (`role="switch"`), the release-page link and what leaves the PC.
+While an update runs it shows a `.progress` bar with the percentage in text, then "waiting" or a failure with the
+link; one hidden live region announces phase changes only. `UpdatesButton` is the icon button that opens it (in the
+top bar, and in the hero of the start screen; a red dot shows while a newer version is out). `UpdateNotice` is a thin
+`notice accent` under the action bar (and under the hero) while a newer version is out: "Update now" (red primary),
+"Not now" (ghost; hides that version and moves the focus to the updates button) and the startup switch.
 
 ### The person page and the charts
 

@@ -1,13 +1,41 @@
 /* The update controls: a notice that appears only while a newer version is out, and the panel. */
 .update-notice {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
 }
 
-.update-notice > span {
-  flex: 1;
+.update-notice > .update-text {
+  flex: 1 1 14rem;
+}
+
+/* The download bar, the wait or the failure: a row of its own in the notice, above the buttons in the panel. */
+.update-progress {
+  display: grid;
+  flex: 1 1 100%;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.update-progress:focus-visible {
+  outline-offset: 2px;
+}
+
+.update-line {
+  margin: 0;
+}
+
+.update-failure {
+  color: var(--danger-text);
+}
+
+.update-switch {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 /* A newer version is out: the icon button gets a red dot at its corner (the notice says it in words). */

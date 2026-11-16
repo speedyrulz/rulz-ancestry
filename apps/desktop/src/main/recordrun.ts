@@ -250,6 +250,11 @@ export class RecordRun {
     return this.#update(run, request.since);
   }
 
+  /** True while a run is asking sources. */
+  get running(): boolean {
+    return this.#run?.status === 'running';
+  }
+
   /** Ends the run that is under way: nothing more is sent, and an answer on its way is dropped. */
   stop(): void {
     if (this.#run !== null) this.#close(this.#run, 'stopped', '');

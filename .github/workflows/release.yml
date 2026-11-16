@@ -1,5 +1,6 @@
-# A pushed tag v* builds the Windows installer and uploads it to a draft
-# GitHub Release. The draft stays unpublished until someone publishes it.
+# A pushed tag v* builds the Windows installer, uploads it to a draft GitHub
+# Release, then publishes the release with that version's section of
+# docs/RELEASE-NOTES.md. Installed copies offer it as an update from then on.
 # CI does not run this workflow. `pnpm package` passes --publish never.
 
 name: Release
@@ -38,6 +39,12 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
 
+      # Fails before the build when docs/RELEASE-NOTES.md has no section for this version.
+      - name: Take this version's release notes
+        run: node tools/ship/release-notes.mjs "$($env:TAG.Substring(1))" "$env:RUNNER_TEMP\notes.md"
+        env:
+          TAG: ${{ github.ref_name }}
+
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
@@ -49,3 +56,12 @@ jobs:
         run: pnpm package:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The draft is published only once the installer, its .blockmap and latest.yml are all
+      # on it, so an installed copy never sees a release whose files are not there yet.
+      - name: Publish the release with its notes
+        run: gh release edit "$env:TAG" --repo "$env:REPO" --draft=false --latest --title "RulZ Kinspora $($env:TAG.Substring(1))" --notes-file "$env:RUNNER_TEMP\notes.md"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}

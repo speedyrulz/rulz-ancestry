@@ -3,23 +3,60 @@
   "name": "RulZ Kinspora",
   "approval": {
     "default": "auto",
-    "source": "Memory commit-and-push-after-every-update (2026-11-13): \"from now on always commit and push after an update\". Memory wiki-update-after-push (2026-11-11): \"after every push or merge i would like you to update the wiki with changes.\" Destructive git (force push, history rewrite) still needs asking."
+    "source": "Owner, 2026-11-16 (releasing 0.9.0): \"when it's ready, commit, create pr, merge and release. going forward always do this.\" Memory commit-and-push-after-every-update. Memory wiki-update-after-push (2026-11-11): \"after every push or merge i would like you to update the wiki with changes.\" Destructive git (force push, history rewrite) still needs asking."
   },
   "checks": [
-    { "run": "pnpm lint", "shell": "powershell" },
-    { "run": "pnpm typecheck", "shell": "powershell" },
-    { "run": "pnpm test", "shell": "powershell" }
+    {
+      "run": "pnpm lint",
+      "shell": "powershell"
+    },
+    {
+      "run": "pnpm typecheck",
+      "shell": "powershell"
+    },
+    {
+      "run": "pnpm test",
+      "shell": "powershell"
+    }
   ],
   "neverStage": ["AGENTS.md", "CLAUDE.md"],
   "delivery": {
-    "mode": "direct-push",
+    "mode": "pr",
     "base": "main",
+    "mergeMethod": "squash",
     "ci": "wait",
+    "branchPrefix": "ship/",
     "commitStyle": "Plain sentence saying what the change does, phase in brackets when it is plan work, e.g. \"Search the US National Archives with a key of the user's own (Phase 3e)\"."
   },
-  "version": { "source": "none" },
-  "tag": { "create": "none" },
-  "release": { "mode": "none" },
+  "version": {
+    "source": "files",
+    "bump": "feature-minor",
+    "when": "in-pr",
+    "files": [
+      {
+        "path": "package.json",
+        "json": "version"
+      },
+      {
+        "path": "apps/desktop/package.json",
+        "json": "version"
+      }
+    ]
+  },
+  "tag": {
+    "pattern": "v{version}",
+    "create": "push"
+  },
+  "release": {
+    "mode": "ci-on-tag",
+    "workflow": "release.yml",
+    "expectAssets": [
+      "RulZ-Kinspora-Setup-*.exe",
+      "RulZ-Kinspora-Setup-*.exe.blockmap",
+      "latest.yml"
+    ],
+    "skipWhenOnly": [".claude/**", "docs/**", "README.md", "LOGO-NOTICE.md"]
+  },
   "wiki": {
     "enabled": true,
     "when": "every-ship",
@@ -32,9 +69,18 @@
       "entry": "Date, link to the commit or PR, what changed."
     },
     "pages": [
-      { "paths": ["docs/PLAN.md"], "pages": ["Roadmap.md", "Home.md"] },
-      { "paths": ["packages/connectors/**", "docs/ACCESS.md"], "pages": ["Data-Sources.md"] },
-      { "paths": ["packages/**", "apps/**"], "pages": ["Architecture.md"] },
+      {
+        "paths": ["docs/PLAN.md"],
+        "pages": ["Roadmap.md", "Home.md"]
+      },
+      {
+        "paths": ["packages/connectors/**", "docs/ACCESS.md"],
+        "pages": ["Data-Sources.md"]
+      },
+      {
+        "paths": ["packages/**", "apps/**"],
+        "pages": ["Architecture.md"]
+      },
       {
         "paths": [
           "package.json",
@@ -50,10 +96,12 @@
       }
     ],
     "review": ["Home.md", "_Sidebar.md", "Roadmap.md"],
-    "order": "after-merge",
+    "order": "after-release",
     "rules": "Home.md holds the status line; Roadmap.md the phase status, 'Waiting on outside parties' and decisions. New pages go in _Sidebar.md. Never use places or names from the owner's real Ancestry export as examples, in the wiki or anywhere else."
   },
-  "pulls": { "mainCheckout": true },
+  "pulls": {
+    "mainCheckout": true
+  },
   "extraSteps": [],
-  "notes": "Stage changed files by name (never git add -A) and scan the diff for personal details before committing; say plainly in the report if a check failed. Watch the CI run on main after the push (ci.yml runs format, lint, typecheck, tests, e2e and the packaged-app test). pnpm format:check is left out of the local checks because Prettier flags the untracked AGENTS.md here; CI runs it. Run tools via package scripts: pnpm exec / pnpm vitest fail with \"'node' is not recognized\" on this PC. Run every wiki git command as git -C <wiki folder>. The project hook .claude/hooks/wiki-reminder.cjs reminds about the wiki after git push / gh pr merge and stays silent for pushes from a folder whose path contains 'wiki'. AGENTS.md and CLAUDE.md stay untracked: they were once pushed by mistake and erased from the public history."
+  "notes": "Every release needs a \"## <version>\" section at the top of docs/RELEASE-NOTES.md, written in the PR: the release workflow takes the GitHub Release body from it and fails before the build without it. The workflow builds on the tag, uploads to a draft and publishes it, so installed copies offer the update from then on; check the release is published with the installer, its .blockmap and latest.yml. Stage changed files by name (never git add -A) and scan the diff for personal details before committing; say plainly in the report if a check failed. Watch the CI run on main after the push (ci.yml runs format, lint, typecheck, tests, e2e and the packaged-app test). pnpm format:check is left out of the local checks because Prettier flags the untracked AGENTS.md here; CI runs it. Run tools via package scripts: pnpm exec / pnpm vitest fail with \"'node' is not recognized\" on this PC. Run every wiki git command as git -C <wiki folder>. The project hook .claude/hooks/wiki-reminder.cjs reminds about the wiki after git push / gh pr merge and stays silent for pushes from a folder whose path contains 'wiki'. AGENTS.md and CLAUDE.md stay untracked: they were once pushed by mistake and erased from the public history."
 }

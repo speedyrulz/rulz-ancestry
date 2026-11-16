@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { GedcomImportResult, RecentTreeInfo, StartInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { formatWhen } from '../format';
+import { HelpButton } from './help';
 import { LogoWordmark } from './Logo';
 import { SystemCheck } from './SystemCheck';
 import { TextField, ThemeButton } from './ui';
@@ -246,6 +247,7 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
           </div>
           <div className="hero-tools">
             <UpdatesButton />
+            <HelpButton />
             <ThemeButton />
           </div>
         </div>
