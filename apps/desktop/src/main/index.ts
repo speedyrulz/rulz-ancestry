@@ -32,7 +32,8 @@ import { AiSessionService, type AiConnector } from './aisession';
 import { USUAL_PROFILES } from '../bridge/profile';
 import { packsPath, profilePath, treesPath } from './rename';
 import { connectorCommandOf } from './connectorcommand';
-import { createHandlers, toIpcError, type Platform } from './handlers';
+import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
+import { createUpdateHandlers } from './updates';
 import { printReportPages, renderReportPdf } from './reportwindow';
 import { GazetteerService } from './gazetteer';
 import { CensusOffers } from './censusoffers';
@@ -397,18 +398,21 @@ function registerIpc(
   censusOffers: CensusOffers,
   census: CensusService,
 ): void {
-  const handlers = createHandlers(
-    session,
-    platform,
-    places,
-    records,
-    ai,
-    runs,
-    packManager,
-    packOffers,
-    censusOffers,
-    census,
-  );
+  const handlers: ApiHandlers = {
+    ...createHandlers(
+      session,
+      platform,
+      places,
+      records,
+      ai,
+      runs,
+      packManager,
+      packOffers,
+      censusOffers,
+      census,
+    ),
+    ...createUpdateHandlers(),
+  };
   for (const method of API_METHODS) {
     ipcMain.handle(
       channelFor(method),

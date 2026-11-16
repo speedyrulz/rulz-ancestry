@@ -1358,10 +1358,10 @@ Planned on 2026-11-15 from two design views (Codex and a Claude Sonnet agent, ea
 
 1. **Signing the installer:** unsigned, with the SmartScreen warning explained in the guide (recommended for now, since no signature removes the warning at once); Azure Artifact Signing at $9.99 a month, only for an individual in the US or Canada; an OV certificate at about $220-440 a year.
 2. **The first version:** 0.9.0 after part 6.5, and 1.0.0 once it has been used for a while (recommended); 1.0.0 at once.
-3. **Reports in the first release:** family group sheet, Ahnentafel and the four charts, with the narrative report later (recommended); the narrative as well.
-4. **A living person in a report:** kept in place as "Living" with nothing else (recommended); left out entirely.
-5. **Updates, while the installer is unsigned:** say that a new version exists and link to its release page (recommended, since an unsigned update proves only that it is whole); ask before downloading and before restarting; download by itself and install on quit.
-6. **The name.** "Ancestry" is another company's trademark. Nothing in Phase 6 depends on it, but a public release makes the name more visible; the owner may want to keep it or choose another before 1.0.
+3. **Reports in the first release:** family group sheet, Ahnentafel and the four charts, with the narrative report later (recommended); the narrative as well. **Decided 2026-11-15: as recommended; the narrative report is left for later.**
+4. **A living person in a report:** kept in place as "Living" with nothing else (recommended); left out entirely. **Decided 2026-11-15: as recommended; built in part 6.1.**
+5. **Updates, while the installer is unsigned:** say that a new version exists and link to its release page (recommended, since an unsigned update proves only that it is whole); ask before downloading and before restarting; download by itself and install on quit. **Decided 2026-11-15: as recommended. The app says a new version exists and links to its release page; it downloads and installs nothing.**
+6. **The name.** "Ancestry" is another company's trademark. Nothing in Phase 6 depends on it, but a public release makes the name more visible; the owner may want to keep it or choose another before 1.0. **Decided 2026-11-15: the app is renamed RulZ Kinspora, and the repository `speedyrulz/rulz-kinspora`.**
 
 **Left out of Phase 6:** the Microsoft Store build; the narrative report, if decision 3 says so; DNA, OCR and face regions; Word files; text written by an AI; telemetry and crash upload; accounts; translations; ARM64 and other systems; winget (possible later; an unsigned installer may be flagged by its scans).
 

@@ -140,6 +140,7 @@ import {
   RECORD_INBOX_MAX,
   RECORD_RUN_MAX_GENERATIONS,
 } from '../shared/ipc';
+import type { UpdateMethod } from '../shared/updates';
 import type { AiSessionService } from './aisession';
 import type { CensusOffers } from './censusoffers';
 import type { CensusService } from './censuspages';
@@ -224,6 +225,9 @@ type Result<K extends ApiMethod> = Awaited<ReturnType<RulzApi[K]>>;
 type Handler<K extends ApiMethod> = (...raw: unknown[]) => Result<K> | Promise<Result<K>>;
 
 export type ApiHandlers = { [K in ApiMethod]: Handler<K> };
+
+/** Every handler but those of the update check, which `main/updates.ts` makes. */
+export type CoreHandlers = Omit<ApiHandlers, UpdateMethod>;
 
 /**
  * Removes object keys whose value is `undefined`. A form that leaves a field
@@ -539,7 +543,7 @@ export function createHandlers(
   censusOffers: CensusOffers | null = null,
   /** Browsing the packs of the 1950 census, viewing and citing a page. */
   census: CensusService | null = null,
-): ApiHandlers {
+): CoreHandlers {
   // What was found for one tree is not kept for the next, however the tree is
   // left; a search for several people ends with its tree, and so does a
   // session of the AI assistant, with what it proposed.

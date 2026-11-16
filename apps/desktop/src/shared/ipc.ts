@@ -24,6 +24,7 @@ import type {
   TakeType,
   TextQuery,
 } from '@rulz/core';
+import { UPDATE_METHODS, type UpdateApi } from './updates';
 
 export interface AppInfo {
   appVersion: string;
@@ -1858,7 +1859,7 @@ export interface MergeInfo {
   families: number;
 }
 
-export interface RulzApi {
+export interface RulzApi extends UpdateApi {
   getAppInfo(): Promise<AppInfo>;
 
   // Opening and closing trees.
@@ -2353,6 +2354,7 @@ export const API_METHODS = [
   'showBackupsFolder',
   'openMedia',
   'showMediaInFolder',
+  ...UPDATE_METHODS,
 ] as const satisfies readonly ApiMethod[];
 
 // Fails to compile when a function of RulzApi is missing from the list above.
