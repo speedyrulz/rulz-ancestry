@@ -23,7 +23,7 @@
   "wiki": {
     "enabled": true,
     "when": "every-ship",
-    "url": "https://github.com/speedyrulz/rulz-ancestry.wiki.git",
+    "url": "https://github.com/speedyrulz/rulz-kinspora.wiki.git",
     "branch": "master",
     "clone": "scratchpad",
     "public": true,

@@ -362,7 +362,7 @@ now:
   29 records it called a fit, the engine in 22 of 24; the AI said "may fit" to
   more records of other people. See part 4b.5 of the plan.
 
-The [wiki](https://github.com/speedyrulz/rulz-ancestry/wiki) has the roadmap,
+The [wiki](https://github.com/speedyrulz/rulz-kinspora/wiki) has the roadmap,
 architecture, data sources, development guide and changelog. It is updated after
 every push or merge to `main`; `.claude/hooks/wiki-reminder.cjs` reminds Claude
 Code sessions to do so.

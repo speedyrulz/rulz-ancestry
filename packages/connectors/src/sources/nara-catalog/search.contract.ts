@@ -17,7 +17,7 @@ describe('The National Archives, asked for their specification', () => {
     const answer = await fetch(`${naraCatalogManifest.baseUrl}/swagger.json`, {
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
+        'User-Agent': 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-kinspora)',
       },
       signal: AbortSignal.timeout(60_000),
     });

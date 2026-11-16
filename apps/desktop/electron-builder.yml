@@ -61,5 +61,5 @@ nsis:
 publish:
   provider: github
   owner: speedyrulz
-  repo: rulz-ancestry
+  repo: rulz-kinspora
   releaseType: draft

@@ -15,7 +15,7 @@ describe('Open Archives, asked live', () => {
   it('answers a search for a person in the shape the connector reads', async () => {
     const http = new HttpClient({
       fetch: (url, init) => fetch(url, init),
-      userAgent: 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-ancestry)',
+      userAgent: 'RulZKinspora/contract-check (+https://github.com/speedyrulz/rulz-kinspora)',
       timeoutMs: 60_000,
     });
     const connector = openArchivesConnector(http.for(openArchivesManifest));
