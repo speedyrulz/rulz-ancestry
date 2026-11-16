@@ -85,7 +85,9 @@ sup.note { font-size: 70%; line-height: 0; }
 .living { font-style: italic; }
 .years { color: #444; }
 figure { margin: 0.6em 0; break-inside: avoid; }
-figure svg { max-width: 100%; height: auto; }
+figure svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+body.landscape figure.chart svg { max-height: 5in; }
+body.portrait figure.chart svg { max-height: 7.5in; }
 figcaption { font-size: 9.5pt; color: #333; }
 section.break { break-before: page; }
 @media print { body { font-size: 10.5pt; } a { color: inherit; } }
@@ -259,7 +261,7 @@ function blockHtml(block: Block): string {
       return `<${tag}>${items}</${tag}>`;
     }
     case 'svg':
-      return `<figure role="img" aria-label="${escapeHtml(block.title)}">${checkSvg(block.svg)}<figcaption>${escapeHtml(block.title)}</figcaption></figure>`;
+      return `<figure${block.fitPage === true ? ' class="chart"' : ''} role="img" aria-label="${escapeHtml(block.title)}">${checkSvg(block.svg)}<figcaption>${escapeHtml(block.title)}</figcaption></figure>`;
   }
 }
 
@@ -295,7 +297,7 @@ export function renderHtml(report: ReportDocument): string {
     `<title>${escapeHtml(report.title)}</title>`,
     `<style>${STYLE}</style>`,
     '</head>',
-    '<body>',
+    `<body class="${report.orientation ?? 'portrait'}">`,
     `<header><h1>${escapeHtml(report.title)}</h1>${subtitle}${metadata}</header>`,
     `<main>${report.sections.map(sectionHtml).join('')}</main>`,
     '</body>',

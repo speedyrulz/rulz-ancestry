@@ -37,6 +37,22 @@ function clampGenerations(value: number): number {
 }
 
 /**
+ * The family a person is shown as the child of in a pedigree: the one marked
+ * as birth parents, or the first recorded. The same choice `getAncestorSlots`
+ * makes, so the two agree. Null when no parent is recorded.
+ */
+export function getParentFamilyId(tree: Tree, personId: string): string | null {
+  const row = sql(
+    tree.db,
+    `SELECT f.id AS id FROM family_child fc JOIN family f ON f.id = fc.family_id
+     WHERE fc.child_id = ? AND (f.partner1_id IS NOT NULL OR f.partner2_id IS NOT NULL)
+     ORDER BY fc.pedigree <> 'birth', fc.id
+     LIMIT 1`,
+  ).get(personId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
+/**
  * The person and their ancestors for `generations` generations. A person with
  * several sets of parents is shown with their birth parents, or with the
  * first set recorded when none is marked as birth. The same ancestor appears

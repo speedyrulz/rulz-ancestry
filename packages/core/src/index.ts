@@ -16,6 +16,7 @@ export {
 export * from './gedcom';
 export {
   CHART_METRICS,
+  CHART_PRINT_METRICS,
   FAN_MAX_GENERATIONS,
   layoutDescendants,
   layoutFan,

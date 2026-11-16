@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   BACKUP_DIR_NAME,
+  addChild,
   addFamilyEvent,
   addPersonEvent,
   createFamily,
@@ -64,6 +65,7 @@ import {
   type TakeRecordFactsResult,
   type TreeState,
 } from '../shared/ipc';
+import { UPDATE_METHODS } from '../shared/updates';
 import { AiSessionService } from './aisession';
 import { GazetteerService } from './gazetteer';
 import { RECORD_RUN_GAP_MS, RecordRun } from './recordrun';
@@ -328,15 +330,12 @@ const platform: Platform = {
 };
 
 /** Calls a handler the way the IPC layer does, with arguments of any shape. */
-async function call<T>(method: (typeof API_METHODS)[number], ...args: unknown[]): Promise<T> {
+async function call<T>(method: keyof ApiHandlers, ...args: unknown[]): Promise<T> {
   return (await handlers[method](...args)) as T;
 }
 
 /** The error the page would receive for a call. */
-async function errorOf(
-  method: (typeof API_METHODS)[number],
-  ...args: unknown[]
-): Promise<IpcError> {
+async function errorOf(method: keyof ApiHandlers, ...args: unknown[]): Promise<IpcError> {
   try {
     await handlers[method](...args);
   } catch (error) {
@@ -435,14 +434,17 @@ afterEach(async () => {
 
 describe('the handler table', () => {
   it('has a handler for every function of the contract and nothing else', () => {
-    expect(Object.keys(handlers).sort()).toEqual([...API_METHODS].sort());
+    // The update check's handlers are made by main/updates.ts and added in index.ts.
+    const core = API_METHODS.filter((m) => !(UPDATE_METHODS as readonly string[]).includes(m));
+    expect(Object.keys(handlers).sort()).toEqual([...core].sort());
+    expect(core.length + UPDATE_METHODS.length).toBe(API_METHODS.length);
   });
 });
 
 describe('argument checks', () => {
   it('rejects arguments of the wrong shape before anything runs', async () => {
     await openNewTree();
-    const bad: [(typeof API_METHODS)[number], ...unknown[]][] = [
+    const bad: [keyof ApiHandlers, ...unknown[]][] = [
       ['addPerson'],
       ['addPerson', { given: 5 }],
       ['addPerson', { given: 'Ada', admin: true }],
@@ -1031,7 +1033,7 @@ describe('charts, relationships and duplicates', () => {
       ['findDuplicates'],
       ['mergePersons', MISSING, MISSING],
       ['markNotDuplicate', MISSING, MISSING],
-    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+    ] as [keyof ApiHandlers, ...unknown[]][]) {
       expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
     }
   });
@@ -1180,7 +1182,7 @@ describe('sources and citations', () => {
       ['linkCitation', MISSING, target],
       ['unlinkCitation', MISSING, target],
       ['deleteCitation', MISSING],
-    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+    ] as [keyof ApiHandlers, ...unknown[]][]) {
       expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
     }
   });
@@ -1530,7 +1532,7 @@ describe('pictures and documents', () => {
       ['findMediaFiles'],
       ['openMedia', MISSING],
       ['showMediaInFolder', MISSING],
-    ] as [(typeof API_METHODS)[number], ...unknown[]][]) {
+    ] as [keyof ApiHandlers, ...unknown[]][]) {
       expect((await errorOf(method, ...args)).code, method).toBe('no-tree');
     }
     expect(filesDialogs).toBe(0);
@@ -5738,6 +5740,234 @@ describe('reports', () => {
       expect(job.paper).toBe('A4');
       expect(job.html).not.toContain('Livia');
     }
+  });
+
+  /**
+   * A dead man, Hal Tarrowby, whose father Abel Tarrowby is dead and whose mother is living,
+   * and who has a living son and a dead son. Everything about the living is recognisable.
+   */
+  async function lineageWithLiving() {
+    await openNewTree();
+    const tree = session.tree;
+    const make = (given: string, surname: string, living: boolean, place: string) => {
+      const person = createPerson(tree, { sex: 'U', living, name: { given, surname } });
+      addPersonEvent(tree, person.id, { type: 'birth', date: living ? '1960' : '1840', place });
+      return person.id;
+    };
+    const hal = make('Hal', 'Tarrowby', false, 'Oldtown');
+    const abel = make('Abel', 'Tarrowby', false, 'Firstvale');
+    const mother = make('Livia', 'Secretname', true, 'Secretville');
+    const son = make('Rowan', 'Secretname', true, 'Secretcity');
+    const deadSon = make('Wren', 'Tarrowby', false, 'Newtown');
+    addChild(tree, createFamily(tree, { partner1Id: abel, partner2Id: mother }).id, hal);
+    const own = createFamily(tree, { partner1Id: hal, partner2Id: null });
+    addChild(tree, own.id, son);
+    addChild(tree, own.id, deadSon);
+    return { hal, abel, mother, son, deadSon };
+  }
+
+  const PERSON_KINDS = [
+    'ahnentafel',
+    'chart-pedigree',
+    'chart-descendants',
+    'chart-hourglass',
+    'chart-fan',
+  ] as const;
+
+  it('makes the Ahnentafel and the four charts from a person, with the living shown only as "Living"', async () => {
+    const { hal } = await lineageWithLiving();
+    for (const kind of PERSON_KINDS) {
+      const asked = { kind, personId: hal, generations: 3, includeLiving: false };
+      const preview = await call<ReportPreview>('previewReport', asked);
+      expect(preview.html, kind).toContain('Hal Tarrowby');
+      expect(preview.html, kind).toContain('Living');
+      for (const secret of ['Livia', 'Rowan', 'Secretname', 'Secretville', 'Secretcity']) {
+        expect(preview.html, `${kind}: ${secret}`).not.toContain(secret);
+      }
+      expect(preview.livingOmitted, kind).toBeGreaterThan(0);
+      const everyone = await call<ReportPreview>('previewReport', {
+        ...asked,
+        includeLiving: true,
+      });
+      expect(everyone.livingOmitted).toBe(0);
+    }
+    const ahnentafel = await call<ReportPreview>('previewReport', {
+      kind: 'ahnentafel',
+      personId: hal,
+      generations: 3,
+      includeLiving: true,
+    });
+    expect(ahnentafel.title).toBe('Ahnentafel: Hal Tarrowby');
+    expect(ahnentafel.html).toContain('Livia Secretname');
+    expect(ahnentafel.html).toContain('Firstvale');
+  });
+
+  it('takes from the page only the kind, the person, the generations and the choice about living people', async () => {
+    const { hal, deadSon } = await lineageWithLiving();
+    const good = { kind: 'chart-pedigree', personId: hal, generations: 3, includeLiving: false };
+    await call('previewReport', good);
+    for (const bad of [
+      { ...good, familyId: deadSon },
+      { ...good, livingIds: [] },
+      { ...good, svg: '<svg/>' },
+      { ...good, html: '<p>x</p>' },
+      { ...good, personId: 'not an id' },
+      { ...good, generations: 1 },
+      { ...good, generations: 6 },
+      { ...good, generations: 3.5 },
+      { ...good, generations: '3' },
+      { ...good, generations: undefined },
+      { ...good, includeLiving: undefined },
+      { ...good, kind: 'chart-sphere' },
+      { kind: 'ahnentafel', personId: hal, generations: 11, includeLiving: false },
+      { kind: 'ahnentafel', personId: hal, includeLiving: false },
+      { kind: 'family-group', personId: hal, generations: 3, includeLiving: false },
+    ]) {
+      expect((await errorOf('previewReport', bad)).code, JSON.stringify(bad)).toBe('invalid');
+    }
+    // Saving and printing take no more than that and the paper and the format.
+    savePath = join(root, 'extra.pdf');
+    for (const method of ['saveReport', 'printReport'] as const) {
+      const request = { ...good, paper: 'A4', format: 'pdf', svg: '<svg/>' };
+      expect((await errorOf(method, request)).code, method).toBe('invalid');
+    }
+    expect((await errorOf('saveReport', { ...good, paper: 'A4', format: 'png' })).code).toBe(
+      'invalid',
+    );
+    expect(existsSync(savePath)).toBe(false);
+    expect(reportJobs).toEqual([]);
+    expect((await errorOf('previewReport', { ...good, personId: MISSING })).code).toBe('not-found');
+    // The person's id is not a family's, and the other way round.
+    expect(
+      (await errorOf('previewReport', { ...FAMILY_SHEET, familyId: hal, includeLiving: false }))
+        .code,
+    ).toBe('not-found');
+  });
+
+  it('refuses a chart or an Ahnentafel of a living person unless living people are included', async () => {
+    const { son } = await lineageWithLiving();
+    savePath = join(root, 'refused.pdf');
+    for (const kind of PERSON_KINDS) {
+      const asked = { kind, personId: son, generations: 3, includeLiving: false };
+      const refused = await errorOf('previewReport', asked);
+      expect(refused.code, kind).toBe('rule');
+      expect(refused.message).toMatch(/living/i);
+      expect(refused.message).not.toMatch(/Rowan|Secret/);
+      expect((await errorOf('saveReport', { ...asked, paper: 'A4', format: 'pdf' })).code).toBe(
+        'rule',
+      );
+      expect((await errorOf('printReport', { ...asked, paper: 'A4' })).code).toBe('rule');
+      const allowed = await call<ReportPreview>('previewReport', { ...asked, includeLiving: true });
+      expect(allowed.html, kind).toContain('Rowan Secretname');
+    }
+    // Refused before any dialog or window.
+    expect(dialogDefaults).toEqual([]);
+    expect(reportJobs).toEqual([]);
+    expect(existsSync(savePath)).toBe(false);
+  });
+
+  it('puts nothing of the living into a PDF, a footer, a file name, an SVG file or a web page, and names them with the filter off', async () => {
+    const { hal } = await lineageWithLiving();
+    const secrets = ['Livia', 'Rowan', 'Secretname', 'Secretville', 'Secretcity'];
+    const landscape = {
+      'chart-pedigree': true,
+      'chart-descendants': true,
+      'chart-hourglass': true,
+      'chart-fan': true,
+    };
+    for (const kind of PERSON_KINDS) {
+      for (const includeLiving of [false, true]) {
+        const base = { kind, personId: hal, generations: 3, includeLiving };
+        const formats =
+          kind === 'ahnentafel' ? (['pdf', 'html'] as const) : (['pdf', 'html', 'svg'] as const);
+        for (const format of formats) {
+          reportJobs = [];
+          dialogDefaults.length = 0;
+          savePath = join(root, `made.${format}`);
+          const saved = await call<ReportSaved>('saveReport', { ...base, format, paper: 'A4' });
+          const written = readFileSync(saved.file, 'utf8');
+          const surfaces = [written, dialogDefaults.join('\n')];
+          if (format === 'pdf') {
+            expect(reportJobs).toHaveLength(1);
+            const job = reportJobs[0] as ReportRenderJob;
+            surfaces.push(job.html, job.footerTemplate);
+            expect(job.landscape, `${kind} landscape`).toBe(kind in landscape);
+          }
+          if (includeLiving) {
+            // With living people included the names are in what the user saved.
+            if (format !== 'pdf') expect(written, `${kind} ${format}`).toMatch(/Livia|Rowan/);
+          } else {
+            for (const secret of secrets) {
+              for (const surface of surfaces) {
+                expect(surface, `${kind} ${format} filter on: ${secret}`).not.toContain(secret);
+              }
+            }
+            expect(saved.livingOmitted, kind).toBeGreaterThan(0);
+          }
+          if (format === 'svg') {
+            expect(written.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns=')).toBe(
+              true,
+            );
+            expect(written).not.toMatch(/<script|href=|https?:\/\/(?!www\.w3\.org\/2000\/svg)/i);
+          }
+        }
+      }
+    }
+  });
+
+  it('saves a picture of a chart only for a chart, and before any dialog for anything else', async () => {
+    const { hal } = await lineageWithLiving();
+    savePath = join(root, 'not-a-chart.svg');
+    const tree = session.tree;
+    const family = createFamily(tree, { partner1Id: hal, partner2Id: null }).id;
+    for (const request of [
+      { kind: 'ahnentafel', personId: hal, generations: 3 },
+      { kind: 'family-group', familyId: family },
+    ]) {
+      const error = await errorOf('saveReport', {
+        ...request,
+        includeLiving: false,
+        paper: 'A4',
+        format: 'svg',
+      });
+      expect(error.code).toBe('rule');
+      expect(error.message).toMatch(/only a chart/i);
+    }
+    expect(dialogDefaults).toEqual([]);
+    expect(existsSync(savePath)).toBe(false);
+  });
+
+  it('names a chart file from the filtered title and prints a chart on its side and the Ahnentafel upright', async () => {
+    const { hal } = await lineageWithLiving();
+    savePath = null;
+    expect(
+      await call('saveReport', {
+        kind: 'chart-fan',
+        personId: hal,
+        generations: 3,
+        includeLiving: false,
+        paper: 'Letter',
+        format: 'pdf',
+      }),
+    ).toBeNull();
+    expect(dialogDefaults[0]).toBe(join(root, 'Trees', 'Fan chart - Hal Tarrowby.pdf'));
+    printAnswer = true;
+    await call('printReport', {
+      kind: 'chart-pedigree',
+      personId: hal,
+      generations: 3,
+      includeLiving: false,
+      paper: 'A4',
+    });
+    await call('printReport', {
+      kind: 'ahnentafel',
+      personId: hal,
+      generations: 3,
+      includeLiving: false,
+      paper: 'A4',
+    });
+    expect(reportJobs.map((job) => job.landscape)).toEqual([true, false]);
+    for (const job of reportJobs) expect(job.seal).toEqual(SEALED);
   });
 
   it('says on the person page why someone is taken to be living or deceased', async () => {

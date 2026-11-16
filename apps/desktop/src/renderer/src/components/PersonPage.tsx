@@ -31,7 +31,7 @@ import { EventDialog, NameDialog, NoteDialog, RelativeDialog } from './dialogs';
 import { MergeDialog } from './duplicates';
 import { FilesButton, PersonMediaSection, TargetMediaDialog } from './media';
 import { RelationshipDialog } from './relationship';
-import { ReportDialog, familyChoices } from './reports';
+import { AhnentafelDialog, ReportDialog, familyChoices } from './reports';
 import { ConfirmDialog, SelectField } from './ui';
 
 const SEX_OPTIONS = SEXES.map((sex) => [sex, SEX_LABELS[sex]] as const);
@@ -58,6 +58,7 @@ type Open =
   | { kind: 'child'; familyId?: string; surname: string }
   | { kind: 'relationship' }
   | { kind: 'report' }
+  | { kind: 'ahnentafel' }
   | { kind: 'records' }
   | { kind: 'record-run' }
   | { kind: 'merge' }
@@ -395,6 +396,19 @@ export function PersonPageView({
             data-testid="open-report"
           >
             Family group sheet
+          </button>
+          <button
+            type="button"
+            title={
+              page.parentFamilies.length === 0
+                ? 'Add a parent first'
+                : 'Make a numbered list of the ancestors to save as a PDF or print'
+            }
+            disabled={page.parentFamilies.length === 0}
+            onClick={() => setOpen({ kind: 'ahnentafel' })}
+            data-testid="open-ahnentafel"
+          >
+            Ahnentafel
           </button>
           <button
             type="button"
@@ -965,6 +979,9 @@ export function PersonPageView({
         />
       )}
       {open?.kind === 'report' && <ReportDialog page={page} onClose={() => setOpen(null)} />}
+      {open?.kind === 'ahnentafel' && (
+        <AhnentafelDialog page={page} onClose={() => setOpen(null)} />
+      )}
       {open?.kind === 'relationship' && (
         <RelationshipDialog person={summary} onClose={() => setOpen(null)} onSelect={onSelect} />
       )}

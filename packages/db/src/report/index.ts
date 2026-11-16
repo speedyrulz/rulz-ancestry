@@ -1,15 +1,32 @@
-import { REPORT_KINDS, type ReportKind } from '@rulz/core';
+import { REPORT_KINDS, type PersonReportKind, type ReportKind } from '@rulz/core';
 import type { Tree } from '../tree';
+import { buildAhnentafel } from './ahnentafel';
+import { buildChartReport } from './chart';
 import { buildFamilyGroupSheet, type ReportBuild } from './familygroup';
 import type { ReportPrivacy } from './filter';
 
 export { ReportFilter, ReportRefusedError } from './filter';
 export type { ReportOmissions, ReportPrivacy } from './filter';
 export { buildFamilyGroupSheet } from './familygroup';
+export { buildAhnentafel } from './ahnentafel';
+export { buildChartReport, requireGenerations } from './chart';
 export type { ReportBuild } from './familygroup';
 
 /** What a report is about, named by kind. The page sends nothing else. */
-export type ReportSubject = { kind: 'family-group'; familyId: string };
+export type ReportSubject =
+  | { kind: 'family-group'; familyId: string }
+  | PersonSubject<'ahnentafel'>
+  | PersonSubject<'chart-pedigree'>
+  | PersonSubject<'chart-descendants'>
+  | PersonSubject<'chart-hourglass'>
+  | PersonSubject<'chart-fan'>;
+
+/** A report of one person, back or down this many generations (the person counts as the first). */
+type PersonSubject<K extends PersonReportKind> = {
+  kind: K;
+  personId: string;
+  generations: number;
+};
 
 type Builder<K extends ReportKind> = (
   tree: Tree,
@@ -25,6 +42,16 @@ type Builder<K extends ReportKind> = (
 export const REPORT_BUILDERS: { readonly [K in ReportKind]: Builder<K> } = {
   'family-group': (tree, subject, privacy) =>
     buildFamilyGroupSheet(tree, subject.familyId, privacy),
+  ahnentafel: (tree, subject, privacy) =>
+    buildAhnentafel(tree, subject.personId, subject.generations, privacy),
+  'chart-pedigree': (tree, subject, privacy) =>
+    buildChartReport(tree, subject.kind, subject.personId, subject.generations, privacy),
+  'chart-descendants': (tree, subject, privacy) =>
+    buildChartReport(tree, subject.kind, subject.personId, subject.generations, privacy),
+  'chart-hourglass': (tree, subject, privacy) =>
+    buildChartReport(tree, subject.kind, subject.personId, subject.generations, privacy),
+  'chart-fan': (tree, subject, privacy) =>
+    buildChartReport(tree, subject.kind, subject.personId, subject.generations, privacy),
 };
 
 /** Builds a report of any kind. The living filter is an argument that cannot be left out. */
@@ -35,5 +62,11 @@ export function buildReport(
 ): ReportBuild {
   const kinds: readonly string[] = REPORT_KINDS;
   if (!kinds.includes(subject.kind)) throw new Error(`unknown kind of report: ${subject.kind}`);
-  return REPORT_BUILDERS[subject.kind](tree, subject, privacy);
+  // The table is typed so that each builder gets its own kind of subject; the kind just checked picks it.
+  const build = REPORT_BUILDERS[subject.kind] as (
+    tree: Tree,
+    subject: ReportSubject,
+    privacy: ReportPrivacy,
+  ) => ReportBuild;
+  return build(tree, subject, privacy);
 }

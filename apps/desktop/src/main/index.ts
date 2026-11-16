@@ -32,8 +32,8 @@ import { AiSessionService, type AiConnector } from './aisession';
 import { USUAL_PROFILES } from '../bridge/profile';
 import { packsPath, profilePath, treesPath } from './rename';
 import { connectorCommandOf } from './connectorcommand';
-import { createHandlers, toIpcError, type ApiHandlers, type Platform } from './handlers';
-import { createUpdateHandlers } from './updates';
+import { createHandlers, toIpcError, type HandlerTable, type Platform } from './handlers';
+import { createUpdateHandlers, scheduleStartupUpdate, UpdateService } from './updates';
 import { printReportPages, renderReportPdf } from './reportwindow';
 import { GazetteerService } from './gazetteer';
 import { CensusOffers } from './censusoffers';
@@ -397,8 +397,9 @@ function registerIpc(
   packOffers: PackOffers,
   censusOffers: CensusOffers,
   census: CensusService,
+  updates: UpdateService,
 ): void {
-  const handlers: ApiHandlers = {
+  const handlers: HandlerTable = {
     ...createHandlers(
       session,
       platform,
@@ -411,7 +412,7 @@ function registerIpc(
       censusOffers,
       census,
     ),
-    ...createUpdateHandlers(),
+    ...createUpdateHandlers(updates),
   };
   for (const method of API_METHODS) {
     ipcMain.handle(
@@ -469,7 +470,9 @@ if (!app.requestSingleInstanceLock()) {
 
   // A session ends with the app, while its end can still be written to the
   // log. The pipe an AI app reached it by goes with it.
+  let stopStartupUpdate: (() => void) | undefined;
   app.on('before-quit', (event) => {
+    stopStartupUpdate?.();
     aiSession?.stop('quit');
     censusService?.cancelImage();
     // A pack that is being built is given up, and what it made so far is
@@ -618,6 +621,18 @@ if (!app.requestSingleInstanceLock()) {
       connector: findConnector(),
     });
     aiSession = ai;
+    const updates = new UpdateService({
+      db: appDb,
+      version: app.getVersion(),
+      packaged: app.isPackaged,
+      feed:
+        app.commandLine.getSwitchValue('rulz-update-feed') || process.env['RULZ_UPDATE_FEED'] || '',
+      busy: () =>
+        treeSession?.importing === true || manager.running || ai.status()?.status === 'running',
+      // Electron net.fetch cancels manual redirects; Node fetch exposes the 302 and Location.
+      fetch: (url, init) => fetch(url, init),
+      open: (url) => shell.openExternal(url),
+    });
     registerIpc(
       treeSession,
       gazetteer,
@@ -628,7 +643,9 @@ if (!app.requestSingleInstanceLock()) {
       packOffers,
       censusOffers,
       census,
+      updates,
     );
+    stopStartupUpdate = scheduleStartupUpdate(updates);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded

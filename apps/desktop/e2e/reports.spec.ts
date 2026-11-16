@@ -85,7 +85,7 @@ test('refuses a sheet whose partners may all be living, and says why a person is
   window,
 }) => {
   await createTree(window, 'Living report test');
-  await addPerson(window, { given: 'Ann', surname: 'Now', sex: 'Female', birthDate: '1990' });
+  await addPerson(window, { given: 'Odile', surname: 'Now', sex: 'Female', birthDate: '1990' });
   await expect(window.getByTestId('living-reason')).toHaveText(
     'Presumed living: no death recorded and born less than 110 years ago',
   );
@@ -100,6 +100,82 @@ test('refuses a sheet whose partners may all be living, and says why a person is
 
   await dialog.getByTestId('report-include-living').check();
   const preview = window.frameLocator('[data-testid="report-preview"]');
-  await expect(preview.locator('body')).toContainText('Ann Now');
+  await expect(preview.locator('body')).toContainText('Odile Now');
   await expect(dialog.getByTestId('report-save-pdf')).toBeEnabled();
+});
+
+test('makes the Ahnentafel of a person, with a living parent shown only as "Living"', async ({
+  app,
+  window,
+  userDataDir,
+}) => {
+  await createTree(window, 'Ahnentafel test');
+  await addPerson(window, {
+    given: 'Hal',
+    surname: 'Marsh',
+    sex: 'Male',
+    birthDate: '1850',
+    birthPlace: 'Oldtown',
+    deathDate: '1910',
+  });
+  await window.getByTestId('add-parent').click();
+  await addRelative(window, {
+    given: 'Abe',
+    surname: 'Marsh',
+    sex: 'Male',
+    birthDate: '1820',
+    birthPlace: 'Firstvale',
+  });
+  await window.getByTestId('add-other-parent').click();
+  await addRelative(window, {
+    given: 'Wenna',
+    surname: 'Secretname',
+    sex: 'Female',
+    birthDate: '1995',
+    birthPlace: 'Secretville',
+  });
+
+  await window.getByTestId('open-ahnentafel').click();
+  const dialog = window.getByTestId('report-dialog');
+  await expect(dialog).toBeVisible();
+  const preview = window.frameLocator('[data-testid="report-preview"]');
+  await expect(preview.locator('h1')).toContainText('Ahnentafel: Hal Marsh');
+
+  // Hal is 1, his father 2 and his mother 3; the mother may be living, so she is only "Living".
+  const rows = preview.locator('tbody tr');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('Hal Marsh');
+  await expect(rows.nth(1)).toContainText('Abe Marsh');
+  await expect(rows.nth(1)).toContainText('1820, Firstvale');
+  await expect(rows.nth(2)).toContainText('Living');
+  await expect(preview.locator('body')).not.toContainText('Wenna');
+  await expect(preview.locator('body')).not.toContainText('Secretville');
+  await expect(preview.locator('h2')).toHaveText([
+    'About the numbers',
+    'Generation 1: The person',
+    'Generation 2: Parents',
+  ]);
+  await expect(dialog.getByTestId('report-omitted')).toContainText(
+    '1 entry shown only as "Living"',
+  );
+
+  // More generations can be chosen, up to ten.
+  await expect(dialog.getByTestId('report-generations').locator('option')).toHaveCount(9);
+  await dialog.getByTestId('report-generations').selectOption('3');
+  await expect(preview.locator('h1')).toContainText('Ahnentafel: Hal Marsh');
+
+  const pdf = join(userDataDir, 'ahnentafel.pdf');
+  await answerSaveDialog(app, pdf);
+  await dialog.getByTestId('report-save-pdf').click();
+  await expect(dialog.getByTestId('report-outcome')).toContainText('Saved to');
+  expect(readFileSync(pdf).subarray(0, 4).toString('latin1')).toBe('%PDF');
+
+  // An Ahnentafel is a list, so there is no picture to save.
+  await expect(dialog.getByTestId('report-save-svg')).toHaveCount(0);
+
+  await dialog.getByTestId('report-include-living').check();
+  await expect(rows.nth(2)).toContainText('Wenna Secretname');
+  await expect(rows.nth(2)).toContainText('1995, Secretville');
+  await dialog.getByTestId('report-close').click();
+  await expect(dialog).toHaveCount(0);
 });

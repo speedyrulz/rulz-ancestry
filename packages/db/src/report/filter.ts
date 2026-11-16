@@ -42,6 +42,7 @@ export class ReportFilter {
   readonly #livingShown = new Set<string>();
   readonly #media = new Set<string>();
   #notes = 0;
+  #livingPlaces = 0;
   #citationTexts = 0;
 
   constructor(privacy: ReportPrivacy) {
@@ -92,6 +93,20 @@ export class ReportFilter {
     if (this.includeLiving) return true;
     this.#media.add(mediaId);
     return false;
+  }
+
+  /**
+   * Counts one place of the report that says "Living" (a row, a box). A report
+   * in which one person can stand in several places counts these, not the people:
+   * the number of people would say that two "Living" places are one person.
+   */
+  countLivingPlace(personId: string): void {
+    if (this.hides(personId)) this.#livingPlaces += 1;
+  }
+
+  /** The places counted with {@link countLivingPlace}. */
+  get livingPlaces(): number {
+    return this.#livingPlaces;
   }
 
   omissions(): ReportOmissions {

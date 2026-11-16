@@ -1,5 +1,5 @@
 import { rename, rm, writeFile } from 'node:fs/promises';
-import { escapeHtml } from '@rulz/core';
+import { ReportError, checkSvg, escapeHtml, type ReportDocument } from '@rulz/core';
 import type { ReportPaper } from '../shared/ipc';
 
 /**
@@ -46,6 +46,8 @@ export interface ReportRenderJob {
   paper: ReportPaper;
   /** The footer of every page of the PDF; the page numbers are filled in by the PDF engine. */
   footerTemplate: string;
+  /** True turns the paper on its side, as the charts ask. */
+  landscape: boolean;
   seal: ReportWindowSeal;
 }
 
@@ -109,6 +111,24 @@ export function reportFileName(title: string): string {
     .replace(/[. ]+$/, '');
   if (name === '' || RESERVED.test(name)) name = 'Report';
   return name;
+}
+
+/**
+ * The drawing of a chart as the text of an SVG file. The drawing is checked
+ * again (plain shapes and text only), given a white page to sit on, and only
+ * then given the namespace that a file of its own needs; the namespace is a
+ * name, not an address that is ever fetched.
+ */
+export function standaloneSvg(model: ReportDocument): string {
+  const block = model.sections.flatMap((section) => section.blocks).find((b) => b.kind === 'svg');
+  if (block?.kind !== 'svg') throw new ReportError('This report has no drawing to save.');
+  const svg = checkSvg(block.svg);
+  const size = /^<svg viewBox="0 0 ([0-9.]+) ([0-9.]+)"[^>]*>/.exec(svg);
+  const [open = '', width = '0', height = '0'] = size ?? [];
+  if (size === null) throw new ReportError('This report has no drawing to save.');
+  const page = `<rect x="0" y="0" width="${width}" height="${height}" fill="#fff"/>`;
+  const whole = checkSvg(`${open}${page}${svg.slice(open.length)}`);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${whole.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ')}\n`;
 }
 
 /** Writes the report to the file the user chose. */

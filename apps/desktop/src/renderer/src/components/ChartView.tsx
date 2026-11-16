@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import type { ChartInfo, PersonSummary } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { NO_NAME, fullName, lifespan } from '../format';
+import { ChartExportDialog } from './reports';
 
 export type ChartKind = 'pedigree' | 'descendants' | 'hourglass' | 'fan';
 
@@ -236,6 +237,7 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
   const [kind, setKind] = useState<ChartKind>('pedigree');
   const [generations, setGenerations] = useState(DEFAULT_GENERATIONS);
   const [zoom, setZoom] = useState(1);
+  const [exporting, setExporting] = useState(false);
   const [loaded, setLoaded] = useState<{
     key: string;
     kind: ChartKind;
@@ -420,6 +422,14 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
               Fit
             </button>
           </div>
+          <button
+            type="button"
+            title="Save this chart as a PDF or an SVG picture, or print it"
+            onClick={() => setExporting(true)}
+            data-testid="chart-export"
+          >
+            Save or print…
+          </button>
         </div>
       </header>
 
@@ -462,6 +472,14 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
           </div>
         )}
       </div>
+      {exporting && (
+        <ChartExportDialog
+          personId={personId}
+          chart={kind}
+          generations={shown}
+          onClose={() => setExporting(false)}
+        />
+      )}
     </div>
   );
 }

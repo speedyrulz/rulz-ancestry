@@ -8,7 +8,6 @@ import { HttpError } from '@rulz/connectors';
 import type { PageRequest, TextQuery, TextRecord } from '@rulz/core';
 import { listCitations, openAppDatabase, type Db } from '@rulz/db';
 import type {
-  API_METHODS,
   AttachRecordResult,
   GedcomExportInfo,
   PersonChange,
@@ -119,7 +118,7 @@ const secrets: SecretStore = {
   },
 };
 
-async function call<T>(method: (typeof API_METHODS)[number], ...args: unknown[]): Promise<T> {
+async function call<T>(method: keyof ApiHandlers, ...args: unknown[]): Promise<T> {
   return (await handlers[method](...args)) as T;
 }
 

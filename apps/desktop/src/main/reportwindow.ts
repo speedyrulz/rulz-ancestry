@@ -72,6 +72,7 @@ export function renderReportPdf(job: ReportRenderJob): Promise<Uint8Array> {
   return inSealedWindow(job, (contents) =>
     contents.printToPDF({
       pageSize: job.paper,
+      landscape: job.landscape,
       printBackground: true,
       displayHeaderFooter: true,
       headerTemplate: '<span></span>',
@@ -91,11 +92,14 @@ export function printReportPages(job: ReportRenderJob): Promise<boolean> {
         // Electron 45 has no switch for Chromium's page header and footer (the title and
         // the data address). They are printed only when `header` or `footer` text is
         // given, so neither is passed.
-        contents.print({ silent: false, printBackground: true, pageSize: job.paper }, (ok, why) => {
-          if (ok) resolve(true);
-          else if (why === 'cancelled' || why === 'Print job canceled') resolve(false);
-          else reject(new Error(why === '' ? 'the report could not be printed' : why));
-        });
+        contents.print(
+          { silent: false, printBackground: true, pageSize: job.paper, landscape: job.landscape },
+          (ok, why) => {
+            if (ok) resolve(true);
+            else if (why === 'cancelled' || why === 'Print job canceled') resolve(false);
+            else reject(new Error(why === '' ? 'the report could not be printed' : why));
+          },
+        );
       }),
   );
 }

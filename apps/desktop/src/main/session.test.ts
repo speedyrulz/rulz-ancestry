@@ -49,6 +49,14 @@ afterEach(() => {
 });
 
 describe('creating a tree', () => {
+  it('clears the import flag when an import fails', () => {
+    const session = startSession();
+    expect(session.importing).toBe(false);
+    expect(() =>
+      session.importGedcom(join(root, 'missing.ged'), '', join(root, 'Trees')),
+    ).toThrow();
+    expect(session.importing).toBe(false);
+  });
   it('starts with no tree open', () => {
     const session = startSession();
     expect(session.isOpen).toBe(false);

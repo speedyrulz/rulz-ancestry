@@ -3,6 +3,7 @@ import type { GedcomImportInfo, StartInfo, TreeState } from '../../shared/ipc';
 import { api, errorMessage } from './api';
 import { StartScreen } from './components/StartScreen';
 import { Workspace } from './components/Workspace';
+import { Updates } from './components/updates';
 
 type Loaded =
   | { state: 'loading' }
@@ -72,32 +73,38 @@ export function App() {
 
   if (tree !== null) {
     return (
-      <Workspace
-        // A different tree starts with a fresh screen: nobody selected, empty search.
-        key={tree.id + tree.dir}
-        tree={tree}
-        imported={imported}
-        onTree={setTree}
-        onClosed={(backupError) => {
-          const notice =
-            backupError === null
-              ? null
-              : `The tree was closed, but its backup could not be made. ${errorMessage(backupError)}`;
-          api.getStartInfo().then((info) => show(info, notice), fail);
-        }}
-      />
+      <>
+        <Updates />
+        <Workspace
+          // A different tree starts with a fresh screen: nobody selected, empty search.
+          key={tree.id + tree.dir}
+          tree={tree}
+          imported={imported}
+          onTree={setTree}
+          onClosed={(backupError) => {
+            const notice =
+              backupError === null
+                ? null
+                : `The tree was closed, but its backup could not be made. ${errorMessage(backupError)}`;
+            api.getStartInfo().then((info) => show(info, notice), fail);
+          }}
+        />
+      </>
     );
   }
 
   return (
-    <StartScreen
-      info={loaded.info}
-      notice={loaded.notice}
-      onOpened={setTree}
-      onImported={(result) => {
-        setImported(result.report);
-        setTree(result.tree);
-      }}
-    />
+    <>
+      <Updates />
+      <StartScreen
+        info={loaded.info}
+        notice={loaded.notice}
+        onOpened={setTree}
+        onImported={(result) => {
+          setImported(result.report);
+          setTree(result.tree);
+        }}
+      />
+    </>
   );
 }

@@ -59,6 +59,19 @@ export const CHART_METRICS: ChartMetrics = {
   padding: 24,
 };
 
+/**
+ * The same chart drawn for paper: smaller boxes and gaps, so that a chart of
+ * several generations still fits one page with text that can be read.
+ */
+export const CHART_PRINT_METRICS: ChartMetrics = {
+  boxWidth: 176,
+  boxHeight: 40,
+  gapX: 36,
+  gapY: 6,
+  partnerGap: 3,
+  padding: 12,
+};
+
 export type ChartRole = 'root' | 'ancestor' | 'descendant' | 'partner';
 
 export interface ChartBox {

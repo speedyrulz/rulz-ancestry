@@ -372,11 +372,16 @@ export function buildFamilyGroupSheet(
   })();
 }
 
-function plural(count: number, one: string, many: string): string {
+export function plural(count: number, one: string, many: string): string {
   return `${count.toLocaleString('en-US')} ${count === 1 ? one : many}`;
 }
 
-function metadataOf(includeLiving: boolean, omissions: ReportOmissions): KeyValueRow[] {
+export function metadataOf(
+  includeLiving: boolean,
+  omissions: ReportOmissions,
+  /** What the count of hidden people counts: people, or places in a report where a person can repeat. */
+  unit: 'people' | 'entries' = 'people',
+): KeyValueRow[] {
   if (includeLiving) {
     return [{ label: 'Living people', value: ['Included in full.'] }];
   }
@@ -386,7 +391,11 @@ function metadataOf(includeLiving: boolean, omissions: ReportOmissions): KeyValu
       value: [
         omissions.livingOmitted === 0
           ? 'Anyone who may be living would be shown only as "Living". No one is.'
-          : `${plural(omissions.livingOmitted, 'person is', 'people are')} shown only as "Living".`,
+          : `${
+              unit === 'people'
+                ? plural(omissions.livingOmitted, 'person is', 'people are')
+                : plural(omissions.livingOmitted, 'entry is', 'entries are')
+            } shown only as "Living".`,
       ],
     },
   ];

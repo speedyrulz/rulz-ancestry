@@ -18,8 +18,8 @@ import type {
   NameType,
   Pedigree,
   PersonQuery,
+  PersonReportKind,
   PlaceRelation,
-  ReportKind,
   Sex,
   TakeType,
   TextQuery,
@@ -1749,18 +1749,24 @@ export interface GedcomExportInfo {
 }
 
 /**
- * What a report is about. The page names the kind and the family and nothing
- * else: the main process reads the tree itself, so a page cannot ask for a
- * living person's record by passing an id.
+ * What a report is about. The page names the kind, the family or the person,
+ * and for a report of one person how many generations (the person counts as
+ * the first), and nothing else: the main process reads the tree itself and
+ * works out who may be living, so a page cannot ask for a living person's
+ * record by passing an id. A report of a living person is refused unless
+ * living people are included.
  */
-export type ReportSubject = { kind: ReportKind; familyId: string };
+export type ReportSubject =
+  | { kind: 'family-group'; familyId: string }
+  | { kind: PersonReportKind; personId: string; generations: number };
 
 export type ReportRequest = ReportSubject & {
   /** False (the page's default) shows anyone who may be living only as "Living". */
   includeLiving: boolean;
 };
 
-export type ReportFormat = 'pdf' | 'html';
+/** A chart (and only a chart) can also be saved as an SVG picture. */
+export type ReportFormat = 'pdf' | 'html' | 'svg';
 export type ReportPaper = 'A4' | 'Letter';
 
 /** What a report left out because of the living filter. All zero when living people are included. */

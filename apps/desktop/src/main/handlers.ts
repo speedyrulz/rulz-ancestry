@@ -3,6 +3,7 @@ import {
   MEDIA_LIMITS,
   NAME_TYPES,
   PEDIGREES,
+  REPORT_GENERATIONS,
   SEXES,
   NOTE_MAX,
   PLACE_TEXT_MAX,
@@ -19,6 +20,7 @@ import {
   renderHtml,
   webAddressProblem,
   type GazetteerPlace,
+  type PersonReportKind,
 } from '@rulz/core';
 import {
   BackupError,
@@ -113,6 +115,8 @@ import {
   type SourceRef as TreeSourceRef,
   type Tree,
   type TreePlace,
+  ReportRefusedError,
+  type ReportSubject,
 } from '@rulz/db';
 import { dirname, extname, join } from 'node:path';
 import { z } from 'zod';
@@ -152,6 +156,7 @@ import {
   REPORT_WINDOW,
   footerTemplate,
   reportFileName,
+  standaloneSvg,
   writeReportFile,
   type ReportRenderJob,
 } from './report';
@@ -224,10 +229,11 @@ type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
 type Result<K extends ApiMethod> = Awaited<ReturnType<RulzApi[K]>>;
 type Handler<K extends ApiMethod> = (...raw: unknown[]) => Result<K> | Promise<Result<K>>;
 
-export type ApiHandlers = { [K in ApiMethod]: Handler<K> };
+/** Every handler the main process registers, those of the update check included. */
+export type HandlerTable = { [K in ApiMethod]: Handler<K> };
 
 /** Every handler but those of the update check, which `main/updates.ts` makes. */
-export type CoreHandlers = Omit<ApiHandlers, UpdateMethod>;
+export type ApiHandlers = Omit<HandlerTable, UpdateMethod>;
 
 /**
  * Removes object keys whose value is `undefined`. A form that leaves a field
@@ -272,12 +278,38 @@ const none = z.tuple([]);
 /** The number GeoNames gives a place. */
 const geonameId = z.number().int().positive().max(4_000_000_000);
 
-/** What the page may say about a report: its kind, its family and whether living people are in it. */
-const reportShape = {
-  kind: z.literal('family-group'),
-  familyId: id,
-  includeLiving: z.boolean(),
-};
+/**
+ * What the page may say about a report: its kind, its family or its person
+ * and the generations, and whether living people are in it. `extra` adds the
+ * fields of a request that also saves or prints (the paper, the format).
+ */
+function reportRequest<S extends z.ZodRawShape>(extra: S) {
+  const ofPerson = <K extends PersonReportKind>(kind: K) =>
+    z.strictObject({
+      kind: z.literal(kind),
+      personId: id,
+      generations: z
+        .number()
+        .int()
+        .min(REPORT_GENERATIONS[kind].min)
+        .max(REPORT_GENERATIONS[kind].max),
+      includeLiving: z.boolean(),
+      ...extra,
+    });
+  return z.discriminatedUnion('kind', [
+    z.strictObject({
+      kind: z.literal('family-group'),
+      familyId: id,
+      includeLiving: z.boolean(),
+      ...extra,
+    }),
+    ofPerson('ahnentafel'),
+    ofPerson('chart-pedigree'),
+    ofPerson('chart-descendants'),
+    ofPerson('chart-hourglass'),
+    ofPerson('chart-fan'),
+  ]);
+}
 const reportPaper = z.enum(['A4', 'Letter']);
 
 const draft = z.strictObject({
@@ -474,9 +506,10 @@ const GEDZIP_FILTERS = [
 ];
 
 /** What the file dialog for saving a report offers. */
-const REPORT_FILTERS: Record<'pdf' | 'html', { name: string; extensions: string[] }[]> = {
+const REPORT_FILTERS: Record<'pdf' | 'html' | 'svg', { name: string; extensions: string[] }[]> = {
   pdf: [{ name: 'PDF files', extensions: ['pdf'] }],
   html: [{ name: 'Web pages', extensions: ['html', 'htm'] }],
+  svg: [{ name: 'SVG pictures', extensions: ['svg'] }],
 };
 
 /** What the file dialog for adding pictures and documents offers. Any file may be added. */
@@ -543,7 +576,7 @@ export function createHandlers(
   censusOffers: CensusOffers | null = null,
   /** Browsing the packs of the 1950 census, viewing and citing a page. */
   census: CensusService | null = null,
-): CoreHandlers {
+): ApiHandlers {
   // What was found for one tree is not kept for the next, however the tree is
   // left; a search for several people ends with its tree, and so does a
   // session of the AI assistant, with what it proposed.
@@ -561,23 +594,37 @@ export function createHandlers(
    */
   const makeReport = (request: ReportRequest) => {
     const tree = session.tree;
-    const built = buildReport(
-      tree,
-      { kind: request.kind, familyId: request.familyId },
-      { livingIds: presumedLivingIds(tree), includeLiving: request.includeLiving },
-    );
+    // Only the named fields are passed on, whatever else the request carries.
+    const subject: ReportSubject =
+      request.kind === 'family-group'
+        ? { kind: 'family-group', familyId: request.familyId }
+        : ({
+            kind: request.kind,
+            personId: request.personId,
+            generations: request.generations,
+          } as ReportSubject);
+    const built = buildReport(tree, subject, {
+      livingIds: presumedLivingIds(tree),
+      includeLiving: request.includeLiving,
+    });
     const html = renderHtml(built.model);
     if (Buffer.byteLength(html, 'utf8') > MAX_REPORT_HTML_BYTES) {
       throw new SessionError(
         'This report is too large to make. Leave out some people and try again.',
       );
     }
-    return { built, html };
+    return { built, html, landscape: built.model.orientation === 'landscape' };
   };
-  const renderJob = (html: string, title: string, paper: ReportPaper): ReportRenderJob => ({
+  const renderJob = (
+    html: string,
+    title: string,
+    paper: ReportPaper,
+    landscape: boolean,
+  ): ReportRenderJob => ({
     html,
     paper,
     footerTemplate: footerTemplate(title),
+    landscape,
     seal: REPORT_WINDOW,
   });
 
@@ -775,7 +822,7 @@ export function createHandlers(
       () => presumedLivingIds(session.tree).size,
     ),
 
-    previewReport: define<'previewReport'>(z.tuple([z.strictObject(reportShape)]), (request) => {
+    previewReport: define<'previewReport'>(z.tuple([reportRequest({})]), (request) => {
       const { built, html } = makeReport(request);
       return {
         title: built.model.title,
@@ -788,13 +835,16 @@ export function createHandlers(
     }),
 
     saveReport: define<'saveReport'>(
-      z.tuple([
-        z.strictObject({ ...reportShape, format: z.enum(['pdf', 'html']), paper: reportPaper }),
-      ]),
+      z.tuple([reportRequest({ format: z.enum(['pdf', 'html', 'svg']), paper: reportPaper })]),
       async (request) => {
-        const { built, html } = makeReport(request);
+        const { built, html, landscape } = makeReport(request);
         const title = built.model.title;
-        const extension = request.format === 'pdf' ? 'pdf' : 'html';
+        const extension = request.format;
+        // Refused before the dialog: only a chart is a picture.
+        if (request.format === 'svg' && !request.kind.startsWith('chart-')) {
+          throw new ReportRefusedError('Only a chart can be saved as an SVG picture.');
+        }
+        const picture = request.format === 'svg' ? standaloneSvg(built.model) : null;
         const chosen = await platform.chooseFileToSave({
           title: 'Save this report',
           buttonLabel: 'Save',
@@ -807,9 +857,11 @@ export function createHandlers(
         if (chosen === null) return null;
         const file = extname(chosen) === '' ? `${chosen}.${extension}` : chosen;
         const data =
-          request.format === 'pdf'
-            ? await platform.reportToPdf(renderJob(html, title, request.paper))
-            : html;
+          picture !== null
+            ? picture
+            : request.format === 'pdf'
+              ? await platform.reportToPdf(renderJob(html, title, request.paper, landscape))
+              : html;
         await writeReportFile(file, data);
         return {
           file,
@@ -823,10 +875,10 @@ export function createHandlers(
     ),
 
     printReport: define<'printReport'>(
-      z.tuple([z.strictObject({ ...reportShape, paper: reportPaper })]),
+      z.tuple([reportRequest({ paper: reportPaper })]),
       (request) => {
-        const { built, html } = makeReport(request);
-        return platform.printReport(renderJob(html, built.model.title, request.paper));
+        const { built, html, landscape } = makeReport(request);
+        return platform.printReport(renderJob(html, built.model.title, request.paper, landscape));
       },
     ),
 

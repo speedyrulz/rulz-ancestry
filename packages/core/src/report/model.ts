@@ -8,8 +8,17 @@
  * is a {@link PersonRef} that has no name, dates or id to print.
  */
 
+/** The four charts, each a kind of report of one person. */
+export const CHART_REPORT_KINDS = [
+  'chart-pedigree',
+  'chart-descendants',
+  'chart-hourglass',
+  'chart-fan',
+] as const;
+export type ChartReportKind = (typeof CHART_REPORT_KINDS)[number];
+
 /** The kinds of report the app makes. Each needs a row in the leak test of `@rulz/db`. */
-export const REPORT_KINDS = ['family-group'] as const;
+export const REPORT_KINDS = ['family-group', 'ahnentafel', ...CHART_REPORT_KINDS] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
 /**
@@ -22,6 +31,26 @@ export type PersonRef =
 
 /** A person left out of the report's facts. */
 export const LIVING_REF: PersonRef = { living: true };
+
+/** The reports that are of one person and go back or down a number of generations. */
+export type PersonReportKind = 'ahnentafel' | ChartReportKind;
+
+/**
+ * How many generations a report of one person may cover, counting the person
+ * as the first. A chart is drawn on one page, so its limit is the most that
+ * stays readable there (the text of a chart is never printed smaller than
+ * half its size on screen); the Ahnentafel is a list and goes as far as the
+ * charts and the tree do.
+ */
+export const REPORT_GENERATIONS: Readonly<
+  Record<PersonReportKind, { min: number; max: number; initial: number }>
+> = {
+  ahnentafel: { min: 2, max: 10, initial: 6 },
+  'chart-pedigree': { min: 2, max: 5, initial: 4 },
+  'chart-descendants': { min: 2, max: 6, initial: 4 },
+  'chart-hourglass': { min: 2, max: 4, initial: 3 },
+  'chart-fan': { min: 2, max: 7, initial: 5 },
+};
 
 /** A superscript number that points at an endnote. */
 export interface NoteMark {
@@ -58,7 +87,13 @@ export type Block =
    * A drawing made by the app, for charts. The markup is checked when it is
    * rendered: no script, no link and no address of any kind.
    */
-  | { readonly kind: 'svg'; readonly title: string; readonly svg: string };
+  | {
+      readonly kind: 'svg';
+      readonly title: string;
+      readonly svg: string;
+      /** True for a chart that is scaled to fit one page, whatever its size. */
+      readonly fitPage?: boolean;
+    };
 
 export interface ReportSection {
   /** The heading of the section; empty for none. */
@@ -75,6 +110,8 @@ export interface ReportDocument {
   /** Facts about the report itself, shown under the title: who it is for, what was left out. */
   readonly metadata: readonly KeyValueRow[];
   readonly sections: readonly ReportSection[];
+  /** The way the paper is turned when printed; portrait when not given. */
+  readonly orientation?: 'portrait' | 'landscape';
 }
 
 /** The person a report prints for a name and years. */

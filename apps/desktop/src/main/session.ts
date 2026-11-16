@@ -101,6 +101,7 @@ export class TreeSession {
   /** Folders the user picked in the system dialog during this run. */
   readonly #chosenParentDirs = new Set<string>();
   #tree: Tree | null = null;
+  #importing = false;
   #revision = 0;
   #lastBackupAt: number | null = null;
   #reopenError: string | null = null;
@@ -127,6 +128,10 @@ export class TreeSession {
 
   get isOpen(): boolean {
     return this.#tree !== null;
+  }
+
+  get importing(): boolean {
+    return this.#importing;
   }
 
   /** The open tree. Throws {@link NoOpenTreeError} when none is open. */
@@ -214,13 +219,17 @@ export class TreeSession {
     name: string,
     parentDir: string,
   ): { state: TreeState; report: GedcomImportReport } {
-    const parent = this.#allowedParent(parentDir);
-    const input = readGedcomFile(file);
+    this.#importing = true;
     try {
-      return this.#importInto(parent, name, input);
+      const parent = this.#allowedParent(parentDir);
+      const input = readGedcomFile(file);
+      try {
+        return this.#importInto(parent, name, input);
+      } finally {
+        input.close?.();
+      }
     } finally {
-      // A GEDZip file is an archive, which stays open while its pictures are taken out.
-      input.close?.();
+      this.#importing = false;
     }
   }
 

@@ -1,15 +1,27 @@
 export { ReportError, checkSvg, escapeHtml, renderHtml } from './html';
 export {
+  MIN_PRINT_SCALE,
+  boxChartSvg,
+  fanChartSvg,
+  planChartPage,
+  type PagePlan,
+  type PersonLabels,
+} from './chartsvg';
+export {
+  CHART_REPORT_KINDS,
   LIVING_REF,
+  REPORT_GENERATIONS,
   REPORT_KINDS,
   noteMark,
   personLabel,
   personSpan,
   shownPerson,
   type Block,
+  type ChartReportKind,
   type Inline,
   type KeyValueRow,
   type NoteMark,
+  type PersonReportKind,
   type PersonRef,
   type PersonSpan,
   type ReportDocument,

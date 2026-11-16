@@ -1,13 +1,15 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { REPORT_GENERATIONS, type PersonReportKind } from '@rulz/core';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import type {
   PersonPage,
   ReportFormat,
   ReportPaper,
   ReportPreview,
-  ReportRequest,
+  ReportSubject,
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { countOf, fullName } from '../format';
+import type { ChartKind } from './ChartView';
 import { Dialog, SelectField } from './ui';
 import './reports.css';
 
@@ -50,21 +52,41 @@ const PAPERS = [
 
 type Outcome = { kind: 'saved'; text: string } | { kind: 'printed' } | null;
 
-interface ReportDialogProps {
-  page: PersonPage;
+interface ReportWindowProps {
+  /** The title of the dialog. */
+  title: string;
+  /** What the preview frame is called to a screen reader. */
+  previewTitle: string;
+  /** What is asked for, or null when there is nothing to ask for. */
+  subject: ReportSubject | null;
+  /** Shown instead of the choices and the preview when there is no subject. */
+  empty?: ReactNode;
+  /** The report's own choices (the family, the generations), beside the choice of paper. */
+  leading?: ReactNode;
+  /** A short note under the choices. */
+  note?: ReactNode;
+  /** True for a chart, which can also be saved as a picture. */
+  picture?: boolean;
   onClose: () => void;
 }
 
 /**
- * Makes a family group sheet: choose the family, say whether living people
- * are in it, look at it, and save it as a PDF or a web page or print it. The
- * main process builds the report from the tree; this page sends only the
- * family and the choice about living people, and shows what comes back in a
- * frame in which nothing can run.
+ * The dialog every report is made in: the report's own choices, the choice of
+ * paper, whether living people are in it, a preview, and saving as a PDF or a
+ * web page or printing. The main process builds the report from the tree;
+ * this page sends only the subject and the choice about living people, and
+ * shows what comes back in a frame in which nothing can run.
  */
-export function ReportDialog({ page, onClose }: ReportDialogProps) {
-  const choices = useMemo(() => familyChoices(page), [page]);
-  const [familyId, setFamilyId] = useState(choices[0]?.familyId ?? '');
+export function ReportWindow({
+  title,
+  previewTitle,
+  subject,
+  empty,
+  leading,
+  note,
+  picture = false,
+  onClose,
+}: ReportWindowProps) {
   const [includeLiving, setIncludeLiving] = useState(false);
   const [paper, setPaper] = useState<ReportPaper>(usualPaper);
   const [shown, setShown] = useState<
@@ -74,12 +96,12 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome>(null);
   const livingId = useId();
-  const key = `${familyId}|${includeLiving}`;
+  const key = `${JSON.stringify(subject)}|${includeLiving}`;
 
   useEffect(() => {
-    if (familyId === '') return;
+    if (subject === null) return;
     let cancelled = false;
-    api.previewReport({ kind: 'family-group', familyId, includeLiving }).then(
+    api.previewReport({ ...subject, includeLiving }).then(
       (preview) => {
         if (!cancelled) setShown({ key, preview });
       },
@@ -90,12 +112,11 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
     return () => {
       cancelled = true;
     };
-  }, [familyId, includeLiving, key]);
+  }, [subject, includeLiving, key]);
 
   const current = shown !== null && shown.key === key ? shown : null;
   const preview = current !== null && 'preview' in current ? current.preview : null;
   const refusal = current !== null && 'error' in current ? current.error : null;
-  const request: ReportRequest = { kind: 'family-group', familyId, includeLiving };
 
   const run = async (action: () => Promise<Outcome>) => {
     setBusy(true);
@@ -111,11 +132,17 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
   };
   const save = (format: ReportFormat) =>
     run(async () => {
-      const saved = await api.saveReport({ ...request, format, paper });
+      if (subject === null) return null;
+      const saved = await api.saveReport({ ...subject, includeLiving, format, paper });
       return saved === null ? null : { kind: 'saved', text: `Saved to ${saved.file}.` };
     });
   const print = () =>
-    run(async () => ((await api.printReport({ ...request, paper })) ? { kind: 'printed' } : null));
+    run(async () => {
+      if (subject === null) return null;
+      return (await api.printReport({ ...subject, includeLiving, paper }))
+        ? { kind: 'printed' }
+        : null;
+    });
 
   const leftOut: string[] = [];
   if (preview !== null) {
@@ -130,22 +157,16 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
   const ready = preview !== null && !busy;
 
   return (
-    <Dialog title="Family group sheet" onClose={onClose} wide testId="report-dialog">
+    <Dialog title={title} onClose={onClose} wide testId="report-dialog">
       <div className="report-dialog">
-        {choices.length === 0 ? (
+        {subject === null ? (
           <p className="dialog-text" data-testid="report-no-family">
-            This person has no family recorded yet. Add a partner, a parent or a child first.
+            {empty}
           </p>
         ) : (
           <>
             <div className="report-controls">
-              <SelectField
-                label="Family"
-                value={familyId}
-                options={choices.map((choice) => [choice.familyId, choice.label] as const)}
-                onChange={setFamilyId}
-                testId="report-family"
-              />
+              {leading}
               <SelectField
                 label="Paper"
                 value={paper}
@@ -154,6 +175,7 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
                 testId="report-paper"
               />
             </div>
+            {note !== undefined && <p className="hint">{note}</p>}
 
             <div className="report-living">
               <label htmlFor={livingId}>
@@ -173,7 +195,11 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
                   ? 'Names, dates, places, notes and pictures of people who may be living are in the report. Leave this off for a report you will share.'
                   : preview === null
                     ? 'People who may be living are shown only as "Living".'
-                    : `${countOf(preview.livingOmitted, 'person', 'people')} shown only as "Living".${
+                    : `${
+                        subject?.kind === 'family-group'
+                          ? countOf(preview.livingOmitted, 'person', 'people')
+                          : countOf(preview.livingOmitted, 'entry', 'entries')
+                      } shown only as "Living".${
                         leftOut.length > 0
                           ? ` Left out because they may name someone living: ${leftOut.join(', ')}.`
                           : ''
@@ -189,7 +215,7 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
             {refusal === null && (
               <iframe
                 className="report-preview"
-                title="Preview of the family group sheet"
+                title={previewTitle}
                 sandbox=""
                 srcDoc={preview?.html ?? ''}
                 data-testid="report-preview"
@@ -220,6 +246,16 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
           >
             Print…
           </button>
+          {picture && (
+            <button
+              type="button"
+              disabled={!ready}
+              onClick={() => void save('svg')}
+              data-testid="report-save-svg"
+            >
+              Save as SVG picture…
+            </button>
+          )}
           <button
             type="button"
             disabled={!ready}
@@ -240,5 +276,150 @@ export function ReportDialog({ page, onClose }: ReportDialogProps) {
         </div>
       </div>
     </Dialog>
+  );
+}
+
+interface ReportDialogProps {
+  page: PersonPage;
+  onClose: () => void;
+}
+
+/** Makes a family group sheet: the family is chosen here, the rest in the report window. */
+export function ReportDialog({ page, onClose }: ReportDialogProps) {
+  const choices = useMemo(() => familyChoices(page), [page]);
+  const [familyId, setFamilyId] = useState(choices[0]?.familyId ?? '');
+  const subject = useMemo(
+    (): ReportSubject | null => (familyId === '' ? null : { kind: 'family-group', familyId }),
+    [familyId],
+  );
+  return (
+    <ReportWindow
+      title="Family group sheet"
+      previewTitle="Preview of the family group sheet"
+      subject={subject}
+      empty="This person has no family recorded yet. Add a partner, a parent or a child first."
+      leading={
+        <SelectField
+          label="Family"
+          value={familyId}
+          options={choices.map((choice) => [choice.familyId, choice.label] as const)}
+          onChange={setFamilyId}
+          testId="report-family"
+        />
+      }
+      onClose={onClose}
+    />
+  );
+}
+
+/** The choices of generations, from the least to the most a kind of report allows. */
+function generationOptions(kind: PersonReportKind): (readonly [string, string])[] {
+  const { min, max } = REPORT_GENERATIONS[kind];
+  return Array.from({ length: max - min + 1 }, (_, index): readonly [string, string] => {
+    const value = String(min + index);
+    return [value, value];
+  });
+}
+
+interface PersonReportProps {
+  personId: string;
+  kind: PersonReportKind;
+  /** The generations to start with; kept within what the kind allows. */
+  initial: number;
+  title: string;
+  previewTitle: string;
+  note: ReactNode;
+  picture?: boolean;
+  onClose: () => void;
+}
+
+/** A report of one person back or down some generations: the generations are chosen here. */
+function PersonReportDialog({
+  personId,
+  kind,
+  initial,
+  title,
+  previewTitle,
+  note,
+  picture = false,
+  onClose,
+}: PersonReportProps) {
+  const limit = REPORT_GENERATIONS[kind];
+  const [generations, setGenerations] = useState(Math.min(Math.max(initial, limit.min), limit.max));
+  const subject = useMemo(
+    (): ReportSubject => ({ kind, personId, generations }),
+    [kind, personId, generations],
+  );
+  return (
+    <ReportWindow
+      title={title}
+      previewTitle={previewTitle}
+      subject={subject}
+      leading={
+        <SelectField
+          label="Generations"
+          value={String(generations)}
+          options={generationOptions(kind)}
+          onChange={(value) => setGenerations(Number(value))}
+          testId="report-generations"
+        />
+      }
+      note={note}
+      picture={picture}
+      onClose={onClose}
+    />
+  );
+}
+
+/** Makes the Ahnentafel of a person: their ancestors as a numbered list. */
+export function AhnentafelDialog({ page, onClose }: ReportDialogProps) {
+  return (
+    <PersonReportDialog
+      personId={page.person.id}
+      kind="ahnentafel"
+      initial={REPORT_GENERATIONS.ahnentafel.initial}
+      title="Ahnentafel"
+      previewTitle="Preview of the Ahnentafel"
+      note="The person is number 1, the father is 2 and the mother 3, and so on back through the generations."
+      onClose={onClose}
+    />
+  );
+}
+
+const CHART_REPORT: Record<ChartKind, { kind: PersonReportKind; name: string }> = {
+  pedigree: { kind: 'chart-pedigree', name: 'ancestor chart' },
+  descendants: { kind: 'chart-descendants', name: 'descendant chart' },
+  hourglass: { kind: 'chart-hourglass', name: 'hourglass chart' },
+  fan: { kind: 'chart-fan', name: 'fan chart' },
+};
+
+interface ChartExportDialogProps {
+  personId: string;
+  chart: ChartKind;
+  /** The generations the chart on the screen shows. */
+  generations: number;
+  onClose: () => void;
+}
+
+/** Saves or prints the chart on the screen whole, on one page. */
+export function ChartExportDialog({
+  personId,
+  chart,
+  generations,
+  onClose,
+}: ChartExportDialogProps) {
+  const { kind, name } = CHART_REPORT[chart];
+  const { max } = REPORT_GENERATIONS[kind];
+  return (
+    <PersonReportDialog
+      personId={personId}
+      kind={kind}
+      initial={generations}
+      title="Save or print this chart"
+      previewTitle={`Preview of the ${name}`}
+      note={`The whole chart is put on one page, so it holds at most ${max} generations. More would make the names too small to read.`}
+      picture
+      onClose={onClose}
+    />
   );
 }

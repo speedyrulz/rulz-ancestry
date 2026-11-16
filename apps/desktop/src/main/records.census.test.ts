@@ -13,7 +13,6 @@ import type {
   RecordSearchSetup,
   TreeState,
 } from '../shared/ipc';
-import type { API_METHODS } from '../shared/ipc';
 import { AiSessionService } from './aisession';
 import { CENSUS_FIXTURES, TINY_JPEG, buildCensusPack } from './censusfixtures';
 import { CensusService } from './censuspages';
@@ -58,7 +57,7 @@ let openedInBrowser: string[];
 let imageRequests: string[];
 let imageAnswer: (init: Parameters<PackFetch>[1]) => Promise<Response>;
 
-async function call<T>(method: (typeof API_METHODS)[number], ...args: unknown[]): Promise<T> {
+async function call<T>(method: keyof ApiHandlers, ...args: unknown[]): Promise<T> {
   return (await handlers[method](...args)) as T;
 }
 

@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ReportError, checkSvg, type ReportDocument } from '@rulz/core';
 import { describe, expect, it } from 'vitest';
 import {
   REPORT_WINDOW,
@@ -16,6 +17,7 @@ import {
   isReportRequestAllowed,
   reportDataUrl,
   reportFileName,
+  standaloneSvg,
   writeReportFile,
 } from './report';
 
@@ -120,5 +122,45 @@ describe('writing the file', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('the SVG file of a chart', () => {
+  const DRAWING =
+    '<svg viewBox="0 0 120 60" width="120" height="60" font-family="Arial, Helvetica, sans-serif">' +
+    '<g><title>Ada Test</title><rect x="6" y="6" width="100" height="40" fill="#fff" stroke="#111"/>' +
+    '<text x="12" y="30" font-size="12">Ada Test</text></g></svg>';
+  const model = (svg: string): ReportDocument => ({
+    title: 'Chart',
+    metadata: [],
+    sections: [{ title: '', blocks: [{ kind: 'svg', title: 'A chart', svg }] }],
+  });
+
+  it('is the checked drawing on a white page, with the namespace a file needs and nothing else added', () => {
+    const file = standaloneSvg(model(DRAWING));
+    expect(
+      file.startsWith(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" ',
+      ),
+    ).toBe(true);
+    expect(file).toContain('<rect x="0" y="0" width="120" height="60" fill="#fff"/><g>');
+    expect(file.endsWith('</svg>\n')).toBe(true);
+    // Without the namespace and the prolog it is a drawing the report accepts.
+    const bare = file
+      .replace(/^<\?xml[^>]*>\n/, '')
+      .replace(' xmlns="http://www.w3.org/2000/svg"', '')
+      .trim();
+    expect(() => checkSvg(bare)).not.toThrow();
+    expect(file).not.toMatch(/<script|href=|style=/i);
+  });
+
+  it('refuses a drawing that is not plain shapes and text, and a report that has none', () => {
+    expect(() => standaloneSvg(model(DRAWING.replace('<g>', '<script>x</script><g>')))).toThrow(
+      ReportError,
+    );
+    expect(() => standaloneSvg(model('<svg width="1" height="1"></svg>'))).toThrow(ReportError);
+    expect(() => standaloneSvg({ title: 'No drawing', metadata: [], sections: [] })).toThrow(
+      ReportError,
+    );
   });
 });

@@ -23,7 +23,6 @@ import type {
   RecordSearchSetup,
   TreeState,
 } from '../shared/ipc';
-import type { API_METHODS } from '../shared/ipc';
 import { AiSessionService } from './aisession';
 import { GazetteerService } from './gazetteer';
 import { SAMPLE_COUNTRIES, sampleFetch } from './gazetteersample';
@@ -66,7 +65,7 @@ let asked: string[];
 /** What a live source is answered with: a promise a test settles itself, or at once. */
 let liveAnswer: (url: string) => Promise<Response>;
 
-async function call<T>(method: (typeof API_METHODS)[number], ...args: unknown[]): Promise<T> {
+async function call<T>(method: keyof ApiHandlers, ...args: unknown[]): Promise<T> {
   return (await handlers[method](...args)) as T;
 }
 
