@@ -49,6 +49,27 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+      # electron-builder uploads its files in parallel, and each upload that finds no
+      # release for the tag creates one: 0.9.0 got two, with the .blockmap on a draft of
+      # its own. Making the draft here first gives every upload the same release.
+      # A rerun finds the release already there and leaves it.
+      - name: Create the draft release
+        run: |
+          $v = $env:TAG.Substring(1)
+          # Assigned first: Windows PowerShell 5.1 passes a parsed JSON array on as one object.
+          $all = gh api "repos/$env:REPO/releases?per_page=100" | ConvertFrom-Json
+          $found = @($all | Where-Object { $_.tag_name -eq $env:TAG })
+          if ($found.Count -eq 0) {
+            gh release create "$env:TAG" --repo "$env:REPO" --draft --verify-tag --title "RulZ Kinspora $v" --notes-file "$env:RUNNER_TEMP\notes.md"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } else {
+            Write-Output "a release for $env:TAG exists already"
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+
       # Builds, packages, and uploads. electron-builder.yml publishes to GitHub
       # as a draft, and this step is the only one that passes --publish always.
       # The upload is the installer, its .blockmap and latest.yml.
@@ -59,6 +80,23 @@ jobs:
 
       # The draft is published only once the installer, its .blockmap and latest.yml are all
       # on it, so an installed copy never sees a release whose files are not there yet.
+      - name: Check one release holds every file
+        run: |
+          $v = $env:TAG.Substring(1)
+          # Assigned first: Windows PowerShell 5.1 passes a parsed JSON array on as one object.
+          $all = gh api "repos/$env:REPO/releases?per_page=100" | ConvertFrom-Json
+          $found = @($all | Where-Object { $_.tag_name -eq $env:TAG })
+          if ($found.Count -ne 1) { Write-Error "expected one release for $env:TAG, found $($found.Count)"; exit 1 }
+          $names = @($found[0].assets | ForEach-Object { $_.name })
+          foreach ($want in @("RulZ-Kinspora-Setup-$v.exe", "RulZ-Kinspora-Setup-$v.exe.blockmap", 'latest.yml')) {
+            if ($names -notcontains $want) { Write-Error "$want is not on the release"; exit 1 }
+          }
+          Write-Output "one release for $env:TAG with: $($names -join ', ')"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+
       - name: Publish the release with its notes
         run: gh release edit "$env:TAG" --repo "$env:REPO" --draft=false --latest --title "RulZ Kinspora $($env:TAG.Substring(1))" --notes-file "$env:RUNNER_TEMP\notes.md"
         env:

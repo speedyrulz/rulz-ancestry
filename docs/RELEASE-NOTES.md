@@ -1,5 +1,24 @@
 # Release notes
 
+## 0.9.1
+
+A fix to how releases are put together; the app itself is unchanged from 0.9.0.
+
+- **Every file of a release now lands on one release.** 0.9.0's `.blockmap` was uploaded to a
+  second, hidden draft and had to be moved by hand. The release workflow now creates the draft
+  before uploading, and refuses to publish unless exactly one release holds the installer, its
+  `.blockmap` and `latest.yml`.
+- **Unit tests get more time on GitHub's test machines,** which sometimes stall, so a slow
+  machine no longer fails a release.
+
+### Updating from 0.9.0
+
+If 0.9.0 is installed, it offers this version when it starts (or press **Check now** under
+App updates). Press **Update now**: the app downloads the installer, checks it, backs up the
+open tree, installs and reopens by itself. This is the first update between two released
+versions, so if anything goes wrong, download `RulZ-Kinspora-Setup-0.9.1.exe` from the release
+page and run it; your trees, settings and packs stay where they are.
+
 ## 0.9.0
 
 The first public release of RulZ Kinspora, a Windows desktop app for building a family tree and
