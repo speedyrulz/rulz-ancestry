@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, readdirSync, renameSync, rmdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -34,7 +35,12 @@ import { packsPath, profilePath, treesPath } from './rename';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type HandlerTable, type Platform } from './handlers';
 import { createThemeHandlers, ThemeService } from './theme';
-import { createUpdateHandlers, scheduleStartupUpdate, UpdateService } from './updates';
+import {
+  createUpdateHandlers,
+  isInstalledCopy,
+  scheduleStartupUpdate,
+  UpdateService,
+} from './updates';
 import { printReportPages, renderReportPdf } from './reportwindow';
 import { GazetteerService } from './gazetteer';
 import { CensusOffers } from './censusoffers';
@@ -389,6 +395,18 @@ async function serveMedia(request: Request): Promise<Response> {
 /** The network session of the search for records. Without "persist:" it is kept in memory only. */
 const RECORDS_PARTITION = 'records';
 
+/** Calls that start a long task; none may begin once an update's installer has been started. */
+const BLOCKED_WHILE_INSTALLING: ReadonlySet<string> = new Set([
+  'importGedcom',
+  'startAiSession',
+  'startAiRun',
+  'installPackArchive',
+  'installCensusState',
+  'downloadGazetteer',
+  'startRecordRun',
+  'restoreBackup',
+]);
+
 function registerIpc(
   session: TreeSession,
   places: GazetteerService,
@@ -424,6 +442,15 @@ function registerIpc(
       async (event, ...args: unknown[]): Promise<IpcResult<unknown>> => {
         try {
           assertTrustedSender(event);
+          if (BLOCKED_WHILE_INSTALLING.has(method) && updates.installing) {
+            return {
+              ok: false,
+              error: {
+                code: 'rule',
+                message: 'An update is being installed. Try again after the app has restarted.',
+              },
+            };
+          }
           return { ok: true, value: await handlers[method](...args) };
         } catch (error) {
           return { ok: false, error: toIpcError(error) };
@@ -632,10 +659,36 @@ if (!app.requestSingleInstanceLock()) {
       feed:
         app.commandLine.getSwitchValue('rulz-update-feed') || process.env['RULZ_UPDATE_FEED'] || '',
       busy: () =>
-        treeSession?.importing === true || manager.running || ai.status()?.status === 'running',
+        treeSession?.importing === true ||
+        manager.running ||
+        ai.status()?.status === 'running' ||
+        gazetteer?.busy === true ||
+        runs.running,
       // Electron net.fetch cancels manual redirects; Node fetch exposes the 302 and Location.
       fetch: (url, init) => fetch(url, init),
       open: (url) => shell.openExternal(url),
+      installable: () =>
+        app.isPackaged &&
+        isInstalledCopy(process.execPath, process.env['LOCALAPPDATA'] ?? '', existsSync),
+      tempDir: app.getPath('temp'),
+      // The tree is backed up before the installer starts, so a silent installer that closes the
+      // app early cannot cost a change. The normal quit then backs up again if anything changed.
+      prepare: () => {
+        try {
+          if (treeSession?.isOpen) treeSession.backupNow();
+        } catch (error) {
+          // A tree that could not be backed up stops the update; the app stays open.
+          console.error(`backup before the update failed: ${String(error)}`);
+          throw error;
+        }
+      },
+      spawn: (file, args) => {
+        const child = spawn(file, args, { detached: true, stdio: 'ignore', windowsHide: true });
+        child.on('error', () => undefined);
+        child.unref();
+        return { pid: child.pid };
+      },
+      quit: () => app.quit(),
     });
     const theme = new ThemeService({
       db: appDb,
@@ -656,6 +709,7 @@ if (!app.requestSingleInstanceLock()) {
       updates,
       theme,
     );
+    updates.start();
     stopStartupUpdate = scheduleStartupUpdate(updates);
     protocol.handle(MEDIA_SCHEME, serveMedia);
     // Dark unless the user chose light. The title bar and the page follow nativeTheme.themeSource.

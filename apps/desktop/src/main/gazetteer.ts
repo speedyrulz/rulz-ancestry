@@ -188,6 +188,11 @@ export class GazetteerService {
     return this.#gazetteer?.info ?? null;
   }
 
+  /** True while a download or a build is under way. */
+  get busy(): boolean {
+    return this.#job !== null;
+  }
+
   status(): GazetteerStatus {
     const job = this.#job;
     return {

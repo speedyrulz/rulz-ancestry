@@ -1,0 +1,102 @@
+/* The help dialog: a list of topics on the left, the text of the chosen one on the right. */
+
+.dialog.wide:has(.help) {
+  width: min(960px, calc(100vw - 48px));
+}
+
+.help {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.help-topics {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button.help-topic {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+button.help-topic:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* The topic that is shown: a red wash and a red edge, as the chosen row of a list. */
+button.help-topic[aria-current='true'] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.help-text {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.help-text h3 {
+  margin-bottom: var(--space-3);
+  font-size: 18px;
+  outline-offset: 4px;
+}
+
+.help-text ul,
+.help-text ol {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-6);
+}
+
+.help-text li {
+  margin-bottom: var(--space-1\.5);
+}
+
+.help-text code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* Large text, or a narrow window: the topics go above the text, as a wrapped row. */
+@media (max-width: 900px) {
+  .help {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .help-topics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+
+  button.help-topic {
+    width: auto;
+  }
+}
+
+@media (forced-colors: active) {
+  button.help-topic {
+    border-color: ButtonText;
+  }
+
+  button.help-topic[aria-current='true'] {
+    border-width: 3px;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}

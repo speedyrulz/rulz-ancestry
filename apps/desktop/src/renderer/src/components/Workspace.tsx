@@ -8,6 +8,7 @@ import { ChartView } from './ChartView';
 import { AddPersonDialog, BackupsDialog } from './dialogs';
 import { DuplicatesDialog, mergeSummary } from './duplicates';
 import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
+import { HelpButton } from './help';
 import { MediaLibraryDialog } from './media';
 import { LogoMark } from './Logo';
 import { PersonList } from './PersonList';
@@ -365,6 +366,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
             <Redo2 size={16} aria-hidden="true" />
           </IconButton>
           <UpdatesButton />
+          <HelpButton />
           <ThemeButton />
         </div>
       </header>

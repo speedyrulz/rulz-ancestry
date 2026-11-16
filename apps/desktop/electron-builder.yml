@@ -55,9 +55,9 @@ nsis:
   uninstallerIcon: build/icon.ico
   artifactName: RulZ-Kinspora-Setup-${version}.${ext}
 
-# A tag build uploads with --publish always. The release stays a draft until
-# someone publishes it. `pnpm package` passes --publish never, so a local
-# package and CI do not upload.
+# A tag build uploads with --publish always to a draft, which the release
+# workflow publishes once every file is on it. `pnpm package` passes
+# --publish never, so a local package and CI do not upload.
 publish:
   provider: github
   owner: speedyrulz

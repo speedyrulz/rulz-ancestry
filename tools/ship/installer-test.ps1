@@ -1,6 +1,10 @@
 # Installs RulZ Kinspora, upgrades it, and uninstalls it, on a CI runner.
 # A stand-in profile, tree and packs folder must still be there afterwards,
-# byte for byte. The app itself is not started.
+# byte for byte. The first install is silent with /S only. The upgrade uses the
+# arguments the app's own updater passes (--updated /S --force-run), so the
+# installer starts the new version itself; the test stops that process and
+# removes the files that start created in the profile folder (the folder did
+# not exist before this run).
 #
 # It refuses to start unless GITHUB_ACTIONS is true, or
 # -IUnderstandThisInstallsTheApp is passed. It also refuses when it finds the
@@ -151,10 +155,71 @@ function Get-SetupPath([string]$Root, [string]$Version) {
   return $path
 }
 
-function Install-Silent([string]$Installer) {
-  Say "installing $Installer"
-  $proc = Start-Process -FilePath $Installer -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden
+function Install-Silent([string]$Installer, [string[]]$InstallerArgs = @('/S')) {
+  Say "installing $Installer ($($InstallerArgs -join ' '))"
+  # Not -Wait: in Windows PowerShell 5.1 that waits for every descendant too, and with
+  # --force-run the installer starts the app, which would keep this call waiting forever.
+  $proc = Start-Process -FilePath $Installer -ArgumentList $InstallerArgs -PassThru -WindowStyle Hidden
+  $null = $proc.Handle
+  if (-not $proc.WaitForExit(300000)) {
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Fail "installer did not finish within 5 minutes: $Installer"
+  }
   if ($proc.ExitCode -ne 0) { Fail "installer exited $($proc.ExitCode): $Installer" }
+}
+
+function Get-InstalledAppProcesses([string]$InstallDir) {
+  return @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    $path = $null
+    try { $path = $_.Path } catch { $path = $null }
+    $path -and (Test-Under $path $InstallDir)
+  })
+}
+
+# --force-run starts the app after the install. Wait for it, so that the test
+# knows the option worked, then stop it and wait until its files are free.
+function Stop-ForceRunApp([string]$InstallDir) {
+  $deadline = (Get-Date).AddSeconds(60)
+  $running = @()
+  do {
+    $running = Get-InstalledAppProcesses $InstallDir
+    if ($running.Count -gt 0) { break }
+    Start-Sleep -Seconds 1
+  } while ((Get-Date) -lt $deadline)
+  if ($running.Count -eq 0) { Fail '--force-run did not start the app after the upgrade' }
+  Say 'the upgrade started the new version by itself; stopping it'
+  $deadline = (Get-Date).AddSeconds(60)
+  do {
+    foreach ($process in (Get-InstalledAppProcesses $InstallDir)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+  } while ((Get-InstalledAppProcesses $InstallDir).Count -gt 0 -and (Get-Date) -lt $deadline)
+  if ((Get-InstalledAppProcesses $InstallDir).Count -gt 0) { Fail 'the started app did not stop' }
+}
+
+# Removes everything below $Root except the stand-in file $Keep and the folders on the way to
+# it. The three roots did not exist before this run (Assert-OwnerDataAbsent checked), so
+# whatever else is in them was written by the app the upgrade started.
+function Remove-Extras([string]$Root, [string]$Keep) {
+  if (-not (Test-Path -LiteralPath $Root)) { return }
+  foreach ($item in @(Get-ChildItem -LiteralPath $Root -Force)) {
+    if (Same-Path $item.FullName $Keep) { continue }
+    if ($item.PSIsContainer -and (Test-Under $Keep $item.FullName)) {
+      Remove-Extras $item.FullName $Keep
+      continue
+    }
+    Remove-Item -LiteralPath $item.FullName -Recurse -Force
+  }
+}
+
+function Remove-RelaunchFiles([string]$ProfileFile, [string]$TreeFile, [string]$PackFile) {
+  $roots = @(
+    @{ Root = (Split-Path -Parent $ProfileFile); Keep = $ProfileFile },
+    @{ Root = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'RulZ Kinspora'); Keep = $TreeFile },
+    @{ Root = (Join-Path $env:LOCALAPPDATA 'RulZKinspora'); Keep = $PackFile }
+  )
+  foreach ($entry in $roots) { Remove-Extras $entry.Root $entry.Keep }
 }
 
 function Get-RegisteredUninstaller($Info) {
@@ -318,11 +383,18 @@ foreach ($path in $preserved) {
   if ((Get-Sha256 $path) -ne $before[$path]) { Fail "the second build changed $path" }
 }
 $second = Get-SetupPath $Root $next
-Install-Silent $second
+Install-Silent $second @('--updated', '/S', '--force-run')
 $upgraded = Wait-Installed $next $programs
 if (-not (Same-Path $upgraded.InstallDir $installed.InstallDir)) {
   Fail "the upgrade installed to $($upgraded.InstallDir) instead of $($installed.InstallDir)"
 }
+Stop-ForceRunApp $upgraded.InstallDir
+# The relaunched app used the real profile, so it wrote its database there. That is the
+# profile this test made, and it is removed next; the check below then proves it is gone.
+$relaunchDb = Join-Path $env:APPDATA 'RulZ Kinsporapp.db'
+if (Test-Path -LiteralPath $relaunchDb) { Say 'the relaunched app wrote its database; removing it' }
+Remove-RelaunchFiles $profileFile $treeFile $packFile
+Assert-RealDatabaseStaysAbsent
 Assert-SameBytes 'profile' $profileFile $profileBytes
 Assert-SameBytes 'tree' $treeFile $treeBytes
 Assert-SameBytes 'packs' $packFile $packBytes

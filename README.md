@@ -3,6 +3,29 @@
 A Windows desktop app for building a family tree and researching it with free
 data sources. Everything is stored on your own PC.
 
+## Install
+
+1. Download `RulZ-Kinspora-Setup-<version>.exe` from the
+   [GitHub Releases page](https://github.com/speedyrulz/rulz-kinspora/releases/latest), and from
+   nowhere else. It needs Windows 10 or 11, 64-bit.
+2. Run it. The installer is not signed, so Windows shows "Windows protected your PC". Choose
+   **More info**, then **Run anyway**. It appears because the file is new and unsigned, not because
+   it is harmful.
+3. The app checks GitHub for a newer release when it starts, and offers "Update now" or "Not now".
+   "Not now" hides that version at later launches until a newer one is out or you check by hand.
+   The updates button in the top bar opens the "App updates" window, where you can switch the
+   check off or press "Check now". "Update now" downloads the installer from GitHub
+   (github.com, then a githubusercontent.com download host).
+   Uninstalling (Windows Settings, Apps) keeps your trees, settings and packs.
+
+Help that works offline is in the app (the question-mark button). What the app stores, which internet
+addresses it can ask and what it sends is in [docs/PRIVACY.md](docs/PRIVACY.md). What each release
+changed, and its known limits, is in [docs/RELEASE-NOTES.md](docs/RELEASE-NOTES.md).
+
+![The start screen, with a made-up tree in the list](docs/screenshots/start-screen.png)
+
+![A made-up family drawn as an hourglass chart](docs/screenshots/chart.png)
+
 Status: **Phase 1 is built with one check open, and Phase 2 has started.** You
 can create a family tree, add and edit people with their names, events,
 parents, partners and children, search the tree by name, and undo or redo every
