@@ -1052,18 +1052,25 @@ describe('the charts', () => {
     }
   });
 
-  it('refuses a descendant chart that was cut off at the most people a chart holds', () => {
-    const { tree, dead } = lineage();
-    const root = dead('Pat', 'Marsh');
-    const own = createFamily(tree, { partner1Id: root.id, partner2Id: null });
-    for (let index = 0; index < 1001; index += 1) {
-      addChild(tree, own.id, dead(`Kid${index}`, 'Marsh').id);
-    }
-    expect(() => build(tree, 'chart-descendants', root.id, 2)).toThrow(
-      /too large to show whole.*fewer generations/,
-    );
-    expect(() => build(tree, 'chart-hourglass', root.id, 2)).toThrow(ReportRefusedError);
-  });
+  // 1,001 people take about 10 s to make on a CI machine, so it gets the time large tests get.
+  it(
+    'refuses a descendant chart that was cut off at the most people a chart holds',
+    { timeout: 60_000 },
+    () => {
+      const { tree, dead } = lineage();
+      const root = dead('Pat', 'Marsh');
+      const own = createFamily(tree, { partner1Id: root.id, partner2Id: null });
+      tree.db.transaction(() => {
+        for (let index = 0; index < 1001; index += 1) {
+          addChild(tree, own.id, dead(`Kid${index}`, 'Marsh').id);
+        }
+      })();
+      expect(() => build(tree, 'chart-descendants', root.id, 2)).toThrow(
+        /too large to show whole.*fewer generations/,
+      );
+      expect(() => build(tree, 'chart-hourglass', root.id, 2)).toThrow(ReportRefusedError);
+    },
+  );
 
   it('keeps to the generations each chart allows', () => {
     const { tree, pat } = family();
