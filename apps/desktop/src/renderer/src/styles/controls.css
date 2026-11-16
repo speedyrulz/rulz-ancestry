@@ -1,0 +1,784 @@
+/*
+ * Controls: buttons, icon buttons, fields, checkbox, switch, badge, chip, progress, menu, tables
+ * and the messages that sit among them. Heights come from padding, not from a fixed height, so
+ * a button that wraps its text or holds a picture can grow.
+ */
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* Button: secondary by default. Variants are classes: primary, danger, outline, ghost, link. */
+button,
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+/* :where keeps the hover rule weak, so a variant or an area's own rule can always win over it. */
+:where(button, .btn):hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+button svg,
+.btn svg {
+  flex: none;
+}
+
+/* Sizes: small is 32px, the default 36px, large 44px. */
+button.small,
+button.sm,
+.btn.small,
+.btn.sm {
+  gap: var(--space-1\.5);
+  padding: 5px var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+button.large,
+button.lg,
+.btn.large,
+.btn.lg {
+  padding: 11px var(--space-6);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* The one main action of a view. */
+button.primary,
+.btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: var(--shadow-accent-glow);
+}
+
+button.primary:hover:not(:disabled),
+.btn.primary:hover {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+/* On a red fill the ring is white and sits inside the button, where it shows on a white page as well. */
+button.primary:focus-visible,
+.btn.primary:focus-visible {
+  outline-color: var(--accent-fg);
+  outline-offset: -4px;
+}
+
+/* Something that removes something. Not for Cancel. */
+button.danger,
+.btn.danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+button.danger:hover:not(:disabled),
+.btn.danger:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-hover);
+}
+
+button.outline,
+.btn.outline {
+  border-color: var(--accent);
+  background: transparent;
+  color: var(--link);
+}
+
+button.outline:hover:not(:disabled),
+.btn.outline:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Low-weight actions, such as Cancel. */
+button.ghost,
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+button.ghost:hover:not(:disabled),
+.btn.ghost:hover {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* A button that reads as a link: the guide's link, a 35% red underline that is full on hover. */
+button.link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--link);
+  font-weight: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration-color: currentcolor;
+}
+
+/* A toggle that is on: the same red as the guide's active chip. */
+button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Icon button: a square with one 16px icon. It always has an aria-label. */
+button.icon-btn {
+  flex: none;
+  width: var(--control-md);
+  height: var(--control-md);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+button.icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+button.icon-btn:disabled {
+  opacity: 0.4;
+}
+
+/* Chip: a pill in a group of toggles (aria-pressed), 32px tall. */
+button.chip {
+  gap: var(--space-2);
+  padding: 5px var(--space-2\.5) 5px var(--space-3\.5);
+  border-radius: var(--radius-full);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+button.chip:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+}
+
+button.chip.highlight {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+button.chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.chip-count {
+  min-width: 20px;
+  padding: 0 var(--space-1\.5);
+  border-radius: var(--radius-full);
+  background: var(--subtle);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: center;
+}
+
+button.chip[aria-pressed='true'] .chip-count {
+  background: var(--on-accent-soft);
+}
+
+/*
+ * Segmented control: one of a few choices, side by side in one frame. A radiogroup of buttons with
+ * role="radio" and aria-checked; the chosen one is red and bold, so it is not shown by colour alone.
+ */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.segmented button {
+  padding: 3px var(--space-3);
+  border-color: transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  /* The choice changes at once; a fade would be read half way through by a contrast check. */
+  transition: none;
+}
+
+.segmented button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--text);
+}
+
+.segmented button[aria-checked='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+/* The chosen one stays as it is under the pointer (the hover red has only 3.8:1 with white text). */
+.segmented button[aria-checked='true']:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Fields: on panel, with the edge that WCAG asks of a control, and an accent edge when they have the focus. */
+input[type='text'],
+input[type='search'],
+input[type='date'],
+input[type='number'],
+input[type='password'],
+select,
+textarea {
+  width: 100%;
+  padding: 7px var(--space-2\.5);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  color: var(--text);
+  line-height: 20px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
+
+input[type='text']:focus,
+input[type='search']:focus,
+input[type='date']:focus,
+input[type='number']:focus,
+input[type='password']:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field > label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.field-grid.narrow {
+  max-width: 480px;
+}
+
+/* Caption: 12px faint would be the guide's; a hint here is a sentence, so it stays 13px muted. */
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The hint under a field is one block for a screen reader (aria-describedby) and takes no room of its own. */
+.field-hint {
+  display: contents;
+}
+
+.field-error {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* A search field: the icon and the hint are drawn over the input. */
+.search-field {
+  position: relative;
+  width: 320px;
+  max-width: 100%;
+}
+
+.search-field > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  color: var(--faint);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.search-field input[type='search'] {
+  height: var(--control-sm);
+  padding: 0 64px 0 36px;
+  font-size: 13px;
+}
+
+.search-field kbd {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+/* The hint goes while the field has the focus or holds a query. */
+.search-field:focus-within kbd,
+.search-field input:not(:placeholder-shown) ~ kbd {
+  display: none;
+}
+
+/* Checkbox: 18px, radius 4, red when checked. Radio buttons and sliders keep the system's, in red. */
+input[type='checkbox'] {
+  display: inline-grid;
+  flex: none;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  cursor: pointer;
+  vertical-align: middle;
+  appearance: none;
+}
+
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+input[type='checkbox']::after {
+  content: '';
+  width: 5px;
+  height: 10px;
+  margin-top: -2px;
+  border: solid var(--accent-fg);
+  border-width: 0 2px 2px 0;
+  opacity: 0;
+  transform: rotate(45deg);
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+input[type='checkbox']:checked::after {
+  opacity: 1;
+}
+
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--accent);
+}
+
+input[type='radio'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.check,
+.choice label,
+.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.choice {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 12px;
+}
+
+.inline select {
+  width: auto;
+}
+
+/* Switch: 36 by 20px, for a setting that applies at once. A button with role="switch" and aria-checked. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--control-border);
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--accent-fg);
+  box-shadow: 0 1px 3px var(--shadow);
+  transition: transform 0.15s;
+}
+
+.switch[aria-checked='true'] {
+  background: var(--accent);
+}
+
+.switch[aria-checked='true']::after {
+  transform: translateX(16px);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Badge: 24px, 11.5px, always a word. Neutral by default; tones: accent, ok, warn, danger. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  margin-left: 8px;
+  padding: 0 var(--space-2\.5);
+  border: 1px solid var(--subtle-border);
+  border-radius: var(--radius-full);
+  background: var(--subtle);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* A badge that starts a line or a cell sits flush; the margin is for one that follows text. */
+.badge:first-child {
+  margin-left: 0;
+}
+
+.badge svg {
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.badge.accent {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.badge.ok {
+  border-color: var(--ok-border);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.warn {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.badge.danger {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+/* Progress: 6px; a value is a fill, no value is moving stripes. Put the figure in words beside it. */
+.progress {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--track);
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.progress-fill.busy {
+  width: 100%;
+  background-color: var(--accent);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--on-accent-soft) 0 8px,
+    transparent 8px 16px
+  );
+  background-size: 22.6px 22.6px;
+  opacity: 0.8;
+  animation: progress-stripes 0.8s linear infinite;
+}
+
+@keyframes progress-stripes {
+  to {
+    background-position: 22.6px 0;
+  }
+}
+
+/* Menu: raised panel-2 with items of 13px. */
+.menu {
+  min-width: 220px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-menu);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2\.5);
+  width: 100%;
+  padding: var(--space-2) var(--space-2\.5);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.menu-item svg {
+  color: var(--muted);
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.menu-item.danger {
+  background: transparent;
+  color: var(--danger-text);
+}
+
+.menu-sep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+
+/* Messages among the controls. */
+.banner,
+.notice-bar p {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+}
+
+.banner.error,
+.notice-bar .error {
+  border: 1px solid var(--danger-border);
+  border-left: 3px solid var(--danger);
+  background: var(--danger-bg);
+}
+
+/* A notice is a quiet panel, so that a plain "Undone" or "Backup made" does not read as a warning. */
+.notice {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+/* The one that asks to be seen, such as a new version: the red wash. */
+.notice.accent {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.dialog .error {
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--danger-bg);
+}
+
+/* Tables: panel-2 headers, hairlines between rows, a faint stripe on every other row. */
+.table {
+  width: 100%;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-collapse: collapse;
+  background: var(--panel);
+}
+
+.table {
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.table thead th {
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.table tbody tr:nth-child(even) {
+  background: var(--subtle);
+}
+
+/* Labels keep their words whole; only the text a user typed may break anywhere. */
+.table th {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+
+.table tbody th {
+  width: 130px;
+  font-weight: 600;
+}
+
+.table tbody tr:last-child > * {
+  border-bottom: none;
+}
+
+.table .row-actions {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Buttons in the row of a table: small, and tight so that a row stays one line high. */
+.row-actions button {
+  margin-left: var(--space-1\.5);
+  padding: 3px var(--space-2\.5);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+@media (forced-colors: active) {
+  button,
+  input,
+  select,
+  textarea,
+  .segmented,
+  .table {
+    border-color: ButtonText;
+  }
+
+  button:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  button.primary {
+    border-width: 2px;
+  }
+
+  button.danger {
+    border-width: 2px;
+    border-style: dashed;
+  }
+
+  button.link {
+    color: LinkText;
+  }
+
+  /* The system draws the checkbox, with its own tick. */
+  input[type='checkbox'] {
+    appearance: auto;
+  }
+
+  button[aria-pressed='true'],
+  button[aria-checked='true'],
+  .segmented button[aria-checked='true']:hover:not(:disabled) {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .badge,
+  .notice,
+  .banner {
+    border: 1px solid CanvasText;
+  }
+
+  p.error,
+  div.error {
+    border-left-color: CanvasText;
+  }
+}

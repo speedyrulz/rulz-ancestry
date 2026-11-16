@@ -1,0 +1,259 @@
+/*
+ * Dialogs. A dialog is a header (the title), a body that scrolls on its own, an optional footer
+ * with the buttons, and a Close icon button at the top right. The footer is for the buttons
+ * of a form (FormDialog, ConfirmDialog); a dialog with its own screens keeps its buttons in
+ * the body, in a .dialog-actions row.
+ */
+
+.dialog {
+  width: min(520px, calc(100vw - 48px));
+  max-height: min(86vh, calc(100vh - 48px));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-dialog);
+  overflow: hidden;
+}
+
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog.wide {
+  width: min(680px, calc(100vw - 48px));
+}
+
+.dialog.wide:has(.compare),
+.dialog.wide:has(.scroll-box) {
+  width: min(960px, calc(100vw - 48px));
+}
+
+/* The viewer takes nearly the whole window; the picture gets what the side panel leaves. */
+.dialog.full {
+  width: calc(100vw - 48px);
+  max-width: none;
+  height: calc(100vh - 48px);
+  max-height: none;
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+.dialog-head {
+  flex: none;
+  padding: var(--space-4) 52px var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-head h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 28px;
+}
+
+.dialog.full .dialog-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto;
+}
+
+.dialog.full .dialog-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dialog-foot {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+/* After the body in the page, so that the focus starts in the body; drawn at the top right. */
+.dialog-close {
+  position: absolute;
+  top: 10px;
+  right: var(--space-3);
+}
+
+.dialog .field {
+  margin-bottom: 4px;
+}
+
+.dialog-text {
+  margin-bottom: 12px;
+}
+
+/* The buttons of a dialog with screens of its own, below what they act on. */
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.dialog-foot .dialog-actions {
+  margin-top: 0;
+}
+
+.confirm-box {
+  padding: 12px 16px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-lg);
+  background: var(--danger-bg);
+}
+
+.dialog ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.dialog h3 {
+  margin: 20px 0 8px;
+}
+
+.dialog .choice {
+  margin-bottom: 12px;
+}
+
+.dialog .actions {
+  margin-top: 12px;
+}
+
+.dialog details {
+  margin-top: 16px;
+}
+
+/* Lists in a dialog: one to pick from, and a framed box that scrolls. */
+.pick-list {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  list-style: none;
+}
+
+/* Beats ".dialog ul", which would indent the list inside its own frame. */
+.dialog ul.pick-list {
+  padding: 0;
+}
+
+.pick-list li {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pick-list li:last-child {
+  border-bottom: none;
+}
+
+.pick-list li:hover {
+  background: var(--hover);
+}
+
+/* The chosen row has a wash as well as its filled radio button. */
+.pick-list li:has(input:checked) {
+  background: var(--accent-soft);
+}
+
+.pick-list label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.pick-list label .muted {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.scroll-box {
+  max-height: 50vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.scroll-box .table {
+  margin: 0;
+}
+
+.scroll-box thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+}
+
+/* The side by side table of a merge: its row labels may be long, so they wrap. */
+.table.compare tbody th {
+  width: 170px;
+  white-space: normal;
+}
+
+.scroll-box .pad {
+  margin: 0;
+  padding: 12px;
+}
+
+.dialog ul.plain,
+ul.plain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Large text: a narrow window. */
+@media (max-width: 900px) {
+  .dialog-body {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .dialog-head {
+    padding-left: var(--space-4);
+  }
+
+  .dialog-foot {
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .dialog-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (forced-colors: active) {
+  .pick-list,
+  .scroll-box {
+    border-color: ButtonText;
+  }
+
+  .dialog {
+    border: 2px solid CanvasText;
+  }
+
+  .dialog::backdrop {
+    background: Canvas;
+    opacity: 0.6;
+  }
+}

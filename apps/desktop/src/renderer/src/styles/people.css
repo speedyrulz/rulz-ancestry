@@ -1,0 +1,359 @@
+/* People: the person page, family, life timeline and map, relationships, notes. */
+
+.person-page {
+  max-width: 900px;
+  padding: var(--space-6) var(--space-8) 48px;
+}
+
+.person-page > section {
+  margin-top: var(--space-7);
+}
+
+/* The name on top; the commands in one tidy row under it. */
+.person-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.person-head h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.person-head p {
+  margin: 0;
+}
+
+/*
+ * The commands, in four groups with a wider gap between them: see, report, look for records, change
+ * the tree. Small buttons, as in the action bar; Delete person is the last, and the only red one.
+ * A group is a role="group" with a name, so a screen reader hears where one ends.
+ */
+.person-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+}
+
+.person-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The buttons that add or remove things in a section are small as well. */
+.person-page .actions button,
+.person-page .actions .btn {
+  gap: var(--space-1\.5);
+  padding: 5px var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+}
+
+.person-page .actions select {
+  padding: 4px var(--space-2\.5);
+  font-size: 13px;
+}
+
+.family {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+.people {
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.people li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1\.5) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.people li:last-child {
+  border-bottom: none;
+}
+
+.people li .muted {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.people li button.small {
+  margin-left: auto;
+}
+
+.role {
+  width: 80px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.relationship {
+  min-height: 72px;
+  margin-top: 16px;
+}
+
+.relationship-answer {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.relationship-path {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.relationship-path li {
+  padding: 2px 0;
+}
+
+.relationship-path .muted {
+  margin-left: 8px;
+}
+
+/* A note, with its lines as typed. */
+.note-text {
+  margin: 0 0 8px;
+  max-width: 80ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.event-note {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The timeline and the map of a person's life. */
+
+.life {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border-left: 2px solid var(--border);
+}
+
+.life-row {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+  position: relative;
+  padding: 6px 0 6px 16px;
+}
+
+.life-row::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 12px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.life-row.relative::before {
+  background: var(--panel);
+  border: 2px solid var(--muted);
+}
+
+.life-row.relative .life-title {
+  color: var(--muted);
+}
+
+.life-title {
+  font-weight: 600;
+}
+
+.life-head {
+  margin: 16px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.map-number {
+  min-width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 11px;
+  background: var(--panel);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.map-number[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.life-map {
+  margin-top: 20px;
+}
+
+.life-map svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.map-space {
+  fill: var(--panel-2);
+}
+
+.map-sea {
+  fill: var(--map-sea);
+}
+
+.map-land path {
+  fill: var(--panel);
+  stroke: var(--muted);
+  stroke-width: 0.6;
+  stroke-linejoin: round;
+}
+
+.map-names text {
+  fill: var(--muted);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.map-marker {
+  cursor: pointer;
+}
+
+.map-marker circle {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 1.5;
+}
+
+.map-marker text {
+  fill: var(--accent-fg);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.map-marker.selected circle {
+  fill: var(--text);
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.map-marker.selected text {
+  fill: var(--bg);
+}
+
+.map-legend {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-legend li {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.map-legend li.selected {
+  background: var(--accent-soft);
+}
+
+/* Large text: one column. */
+@media (max-width: 900px) {
+  .person-page {
+    padding: 16px;
+  }
+
+  .person-actions {
+    gap: var(--space-2) var(--space-4);
+  }
+
+  .life-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+}
+
+/* Windows high contrast: what a colour alone showed gets a border or a system colour. */
+@media (forced-colors: active) {
+  .family {
+    border-color: ButtonText;
+  }
+
+  /* The dot on the timeline and the numbered marks on the map are drawn with a background. */
+  .life-row::before {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .life-row.relative::before {
+    background: Canvas;
+    border-color: CanvasText;
+  }
+
+  .map-number {
+    border-color: ButtonText;
+    color: ButtonText;
+  }
+
+  /* The chosen place on the map, and its row in the list below it. */
+  .map-marker circle {
+    fill: ButtonFace;
+    stroke: ButtonText;
+    stroke-width: 2;
+  }
+
+  .map-marker text {
+    fill: ButtonText;
+  }
+
+  .map-marker.selected circle {
+    fill: Highlight;
+    stroke: HighlightText;
+    stroke-width: 3;
+  }
+
+  .map-marker.selected text {
+    fill: HighlightText;
+  }
+
+  .map-legend li.selected {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  .map-legend li.selected .hint,
+  .map-legend li.selected .muted {
+    color: HighlightText;
+  }
+}

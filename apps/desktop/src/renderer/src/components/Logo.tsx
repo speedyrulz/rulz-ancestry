@@ -7,7 +7,7 @@ import markLight from '../assets/mark-light.png';
 const LOGO_NAME = 'RulZ Kinspora';
 
 // The brand art has black lettering. The dark theme uses a copy with that lettering in white.
-// styles.css shows one of the two images by the system's light or dark setting.
+// styles/layout.css shows one of the two images by the theme: dark by default, light when chosen.
 
 /** The "R" mark alone. */
 export function LogoMark({ className }: { className?: string }) {

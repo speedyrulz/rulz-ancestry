@@ -1,3 +1,4 @@
+import { Check, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AppInfo } from '../../../shared/ipc';
 import { api } from '../api';
@@ -44,14 +45,34 @@ function StatusPanel({ info }: { info: AppInfo }) {
       </div>
       <div>
         <dt>Full-text search</dt>
-        <dd data-testid="fts5">{info.database.fts5 ? 'Available' : 'Missing'}</dd>
+        <dd data-testid="fts5">
+          {info.database.fts5 ? (
+            <span className="badge ok">
+              <Check aria-hidden="true" />
+              Available
+            </span>
+          ) : (
+            <span className="badge danger">
+              <X aria-hidden="true" />
+              Missing
+            </span>
+          )}
+        </dd>
       </div>
       <div>
         <dt>Family tree engine</dt>
         <dd data-testid="tree-engine" className={info.treeEngine.ok ? undefined : 'error'}>
-          {info.treeEngine.ok
-            ? `Ready (schema version ${info.treeEngine.schemaVersion})`
-            : `Failed: ${info.treeEngine.error}`}
+          {info.treeEngine.ok ? (
+            <>
+              <span className="badge ok">
+                <Check aria-hidden="true" />
+                Ready
+              </span>{' '}
+              <span className="muted">(schema version {info.treeEngine.schemaVersion})</span>
+            </>
+          ) : (
+            `Failed: ${info.treeEngine.error}`
+          )}
         </dd>
       </div>
       <div>

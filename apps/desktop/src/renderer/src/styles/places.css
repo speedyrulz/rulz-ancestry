@@ -1,0 +1,98 @@
+/* Places: the offers while one is typed, and the gazetteer. */
+
+/* The places offered while one is typed, laid over the window at the field: the guide's menu. */
+.place-offers {
+  position: fixed;
+  z-index: 5;
+  overflow-y: auto;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-menu);
+  font-size: 13px;
+}
+
+.place-offers ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.place-offers li {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-2\.5);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.place-offers li:hover {
+  background: var(--hover);
+}
+
+.place-offers li .muted {
+  font-size: 12px;
+}
+
+/* The offer the arrow keys are on: a wash and a red bar at its left, so it is not told by colour alone. */
+.place-offers li.active {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.place-offers .hint {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-2\.5) var(--space-1);
+  border-top: 1px solid var(--border);
+}
+
+.place-offers ul:empty + .hint {
+  margin-top: 0;
+  border-top: none;
+}
+
+/* The place list: a card. */
+.gazetteer-panel {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+}
+
+.gazetteer-panel .progress {
+  margin-bottom: var(--space-3);
+}
+
+.gazetteer-panel .dialog-text {
+  margin-bottom: var(--space-3);
+}
+
+.gazetteer-panel .actions + .dialog-text,
+.gazetteer-panel .actions:last-child {
+  margin-bottom: 0;
+}
+
+.places-box {
+  min-height: 120px;
+}
+
+/* The state of a place in the table: a badge over the entry it is linked to. */
+.table .place-state {
+  margin: 0 0 var(--space-1);
+}
+
+@media (forced-colors: active) {
+  .place-offers,
+  .gazetteer-panel {
+    border-color: ButtonText;
+  }
+
+  .place-offers li.active {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+}

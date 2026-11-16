@@ -1,3 +1,4 @@
+import { AlertTriangle, Check } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type {
   PackArchiveInfo,
@@ -55,6 +56,17 @@ function packStateLabel(state: PackInfo['state']): string {
     case 'unreadable':
       return 'Cannot be read';
   }
+}
+
+/** The badge of a pack's state: a tone, and always the words of `packStateLabel`. */
+function packStateBadge(state: PackInfo['state']): string {
+  return state === 'ready' ? 'badge ok' : state === 'rebuild' ? 'badge warn' : 'badge danger';
+}
+
+/** How far a job has got, in per cent; null when its length is not known. */
+function jobPercent(job: PackJob): number | null {
+  if (job.phase !== 'downloading' || job.totalBytes === null || job.totalBytes <= 0) return null;
+  return Math.min(100, Math.round((job.doneBytes / job.totalBytes) * 100));
 }
 
 function isActivePhase(phase: PackJob['phase']): boolean {
@@ -341,7 +353,17 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
   );
 
   return (
-    <Dialog title="Packs" onClose={onClose} testId="packs-dialog" wide>
+    <Dialog
+      title="Packs"
+      onClose={onClose}
+      testId="packs-dialog"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="packs-close">
+          Close
+        </button>
+      }
+    >
       {state === null ? (
         <p className="muted pad" role="status" data-testid="packs-loading">
           Looking…
@@ -370,6 +392,14 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                   </>
                 )}
               </p>
+              {isActivePhase(job.phase) && (
+                <div className="progress pack-job-bar" aria-hidden="true">
+                  <div
+                    className={jobPercent(job) === null ? 'progress-fill busy' : 'progress-fill'}
+                    style={jobPercent(job) === null ? undefined : { width: `${jobPercent(job)}%` }}
+                  />
+                </div>
+              )}
               {job.message !== null && job.message.trim() !== '' && (
                 <p className="dialog-text muted" data-testid="pack-job-message">
                   {job.message}
@@ -379,6 +409,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                 <div className="actions">
                   <button
                     type="button"
+                    className="small"
                     onClick={() => void handleCancelJob()}
                     data-testid="pack-job-cancel"
                   >
@@ -394,50 +425,49 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
               No packs are installed.
             </p>
           ) : (
-            <div className="scroll-box">
-              <table className="table" data-testid="packs-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Title</th>
-                    <th scope="col">Source name</th>
-                    <th scope="col">Rows</th>
-                    <th scope="col">Size</th>
-                    <th scope="col">Downloaded day</th>
-                    <th scope="col">Licence and credit line</th>
-                    <th scope="col">State</th>
-                    <th scope="col">
-                      <span className="visually-hidden">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {state.packs.map((pack) => (
-                    <tr key={pack.id} data-testid="pack-row">
-                      <td data-testid="pack-title">{pack.title}</td>
-                      <td data-testid="pack-source">{pack.sourceName}</td>
-                      <td data-testid="pack-rows">{pack.rows.toLocaleString()}</td>
-                      <td data-testid="pack-size">{formatBytes(pack.bytes)}</td>
-                      <td data-testid="pack-downloaded">{pack.downloadedAt}</td>
-                      <td data-testid="pack-licence">
-                        <div>{pack.licence}</div>
-                        {pack.credit !== '' && <div className="hint">{pack.credit}</div>}
-                      </td>
-                      <td data-testid="pack-state">{packStateLabel(pack.state)}</td>
-                      <td className="row-actions">
-                        <button
-                          type="button"
-                          aria-label={`Remove ${pack.title}`}
-                          onClick={() => setRemoving(pack)}
-                          data-testid="pack-remove"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ul className="pack-cards" data-testid="packs-table">
+              {state.packs.map((pack) => (
+                <li key={pack.id} className="pack-card" data-testid="pack-row">
+                  <div className="pack-card-head">
+                    <strong className="pack-card-title" data-testid="pack-title">
+                      {pack.title}
+                    </strong>
+                    <span className={packStateBadge(pack.state)} data-testid="pack-state">
+                      {pack.state === 'ready' ? (
+                        <Check aria-hidden="true" />
+                      ) : (
+                        <AlertTriangle aria-hidden="true" />
+                      )}
+                      {packStateLabel(pack.state)}
+                    </span>
+                    <button
+                      type="button"
+                      className="small danger"
+                      aria-label={`Remove ${pack.title}`}
+                      onClick={() => setRemoving(pack)}
+                      data-testid="pack-remove"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                  <dl className="pack-facts">
+                    <dt>Source</dt>
+                    <dd data-testid="pack-source">{pack.sourceName}</dd>
+                    <dt>Rows</dt>
+                    <dd data-testid="pack-rows">{pack.rows.toLocaleString()}</dd>
+                    <dt>Size</dt>
+                    <dd data-testid="pack-size">{formatBytes(pack.bytes)}</dd>
+                    <dt>Downloaded</dt>
+                    <dd data-testid="pack-downloaded">{pack.downloadedAt}</dd>
+                    <dt>Licence</dt>
+                    <dd data-testid="pack-licence">
+                      <div>{pack.licence}</div>
+                      {pack.credit !== '' && <div className="hint">{pack.credit}</div>}
+                    </dd>
+                  </dl>
+                </li>
+              ))}
+            </ul>
           )}
 
           <section className="packs-add" data-testid="packs-add">
@@ -446,6 +476,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
               <h4>1950 US census</h4>
               <button
                 type="button"
+                className="small"
                 disabled={censusBusy || installing}
                 onClick={() => void lookupCensus()}
                 data-testid="census-lookup"
@@ -482,6 +513,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                         </span>
                         <button
                           type="button"
+                          className={item.installed === 'update' ? 'small outline' : 'small'}
                           data-testid={`census-install-${item.code}`}
                           aria-label={`${
                             item.installed === 'current'
@@ -536,6 +568,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
               <div className="actions">
                 <button
                   type="button"
+                  className="small"
                   disabled={lookingUp}
                   onClick={() => void handleLookup()}
                   data-testid="packs-lookup"
@@ -593,10 +626,13 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                           <span className="packs-archive-header">
                             <strong className="packs-archive-name">{archive.name}</strong>
                             {archive.installed === 'yes' && (
-                              <span className="badge">Installed</span>
+                              <span className="badge ok">
+                                <Check aria-hidden="true" />
+                                Installed
+                              </span>
                             )}
                             {archive.installed === 'maybe-update' && (
-                              <span className="badge">Installed, may have an update</span>
+                              <span className="badge warn">Installed, may have an update</span>
                             )}
                           </span>
                           <span className="packs-archive-meta">
@@ -682,6 +718,7 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
                         </p>
                         <button
                           type="button"
+                          className="small"
                           onClick={() => void handleSelectArchive(offer.code)}
                           data-testid="packs-offer-refresh"
                         >
@@ -707,12 +744,6 @@ export function PacksDialog({ onClose }: PacksDialogProps) {
           {error}
         </p>
       )}
-
-      <div className="dialog-actions">
-        <button type="button" className="primary" onClick={onClose} data-testid="packs-close">
-          Close
-        </button>
-      </div>
 
       {removing !== null && (
         <ConfirmDialog

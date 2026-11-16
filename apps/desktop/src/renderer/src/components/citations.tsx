@@ -630,7 +630,13 @@ function AddCitationForm({
         </p>
       )}
       <div className="dialog-actions">
-        <button type="button" onClick={onDone} disabled={busy} data-testid="citation-cancel">
+        <button
+          type="button"
+          className="ghost"
+          onClick={onDone}
+          disabled={busy}
+          data-testid="citation-cancel"
+        >
           Cancel
         </button>
         <button
@@ -748,7 +754,35 @@ export function FactSourcesDialog({
   };
 
   return (
-    <Dialog title={title} onClose={onClose} testId="fact-sources-dialog" wide>
+    <Dialog
+      title={title}
+      onClose={onClose}
+      testId="fact-sources-dialog"
+      wide
+      footer={
+        adding ? undefined : (
+          <>
+            <button
+              type="button"
+              className="ghost"
+              onClick={onClose}
+              data-testid="fact-sources-close"
+            >
+              Done
+            </button>
+            <button
+              ref={addRef}
+              type="button"
+              className="primary"
+              onClick={() => setAdding(true)}
+              data-testid="add-citation"
+            >
+              Add a source
+            </button>
+          </>
+        )
+      }
+    >
       {adding ? (
         <AddCitationForm
           target={target}
@@ -789,6 +823,7 @@ export function FactSourcesDialog({
                   <div className="row-actions">
                     <button
                       type="button"
+                      className="small"
                       onClick={() => setEditingId(citation.id)}
                       aria-label={`Edit ${sourceTitle(citation.sourceTitle)}`}
                       data-testid="edit-citation"
@@ -797,6 +832,7 @@ export function FactSourcesDialog({
                     </button>
                     <button
                       type="button"
+                      className="small"
                       onClick={() => remove(citation)}
                       aria-label={`Remove ${sourceTitle(citation.sourceTitle)}`}
                       data-testid="remove-citation"
@@ -813,24 +849,6 @@ export function FactSourcesDialog({
               {problem}
             </p>
           )}
-          <div className="dialog-actions">
-            <button
-              ref={addRef}
-              type="button"
-              onClick={() => setAdding(true)}
-              data-testid="add-citation"
-            >
-              Add a source
-            </button>
-            <button
-              type="button"
-              className="primary"
-              onClick={onClose}
-              data-testid="fact-sources-close"
-            >
-              Done
-            </button>
-          </div>
         </>
       )}
       {editing !== null && (

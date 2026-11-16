@@ -1,16 +1,87 @@
 import { describeDate, parseDate } from '@rulz/core';
+import { Moon, Sun, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type FormEvent,
   type ReactNode,
 } from 'react';
-import { errorMessage } from '../api';
+import { api, errorMessage } from '../api';
 
 /** Small pieces shared by the screens: the modal dialog, form rows and the submit helper. */
+
+interface IconButtonProps {
+  /** The name of the button, for a screen reader and as its tooltip. */
+  label: string;
+  onClick: () => void;
+  /** The tooltip, when it says more than the name (the name must stay part of it). */
+  title?: string;
+  disabled?: boolean;
+  className?: string;
+  testId?: string;
+  /** One icon from lucide-react, 16px. */
+  children: ReactNode;
+}
+
+/** A square button with one icon. It is named by `label`, since it has no text. */
+export function IconButton({
+  label,
+  onClick,
+  title,
+  disabled = false,
+  className,
+  testId,
+  children,
+}: IconButtonProps) {
+  return (
+    <button
+      type="button"
+      className={className === undefined ? 'icon-btn' : `icon-btn ${className}`}
+      aria-label={label}
+      title={title ?? label}
+      disabled={disabled}
+      data-testid={testId}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+const DARK_QUERY = '(prefers-color-scheme: dark)';
+
+/** Whether the page is drawn in the dark theme. The main process sets the theme; the page follows it. */
+export function useDarkTheme(): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const query = window.matchMedia(DARK_QUERY);
+      query.addEventListener('change', notify);
+      return () => query.removeEventListener('change', notify);
+    },
+    () => window.matchMedia(DARK_QUERY).matches,
+  );
+}
+
+/** Switches between the dark and the light theme; the main process keeps the choice. */
+export function ThemeButton() {
+  const dark = useDarkTheme();
+  return (
+    <IconButton
+      label={dark ? 'Use the light theme' : 'Use the dark theme'}
+      testId="theme-toggle"
+      onClick={() => {
+        // The page follows the window's colour scheme, so it changes when the main process has set it.
+        api.setTheme(dark ? 'light' : 'dark').catch(() => undefined);
+      }}
+    >
+      {dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}
+    </IconButton>
+  );
+}
 
 interface DialogProps {
   title: string;
@@ -21,6 +92,10 @@ interface DialogProps {
   wide?: boolean;
   /** Takes nearly the whole window, for something to look at, such as a picture. */
   full?: boolean;
+  /** The buttons of the dialog, in a footer of its own that stays in sight while the body scrolls. */
+  footer?: ReactNode;
+  /** While true (a save is under way), neither the close button nor Escape closes the dialog. */
+  busy?: boolean;
 }
 
 /** What can take the focus by keyboard. */
@@ -35,6 +110,8 @@ export function Dialog({
   testId,
   wide = false,
   full = false,
+  footer,
+  busy = false,
 }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -95,13 +172,29 @@ export function Dialog({
       onCancel={(event) => {
         // Escape: let the owner unmount the dialog instead of leaving it closed but mounted.
         event.preventDefault();
-        onClose();
+        // A dialog opened over another one is its child in React, and React passes the
+        // event on to the parent's handler: without this, Escape would close both.
+        event.stopPropagation();
+        if (!busy) onClose();
       }}
     >
-      <h2 id={titleId} tabIndex={-1}>
-        {title}
-      </h2>
-      {children}
+      <div className="dialog-head">
+        <h2 id={titleId} tabIndex={-1}>
+          {title}
+        </h2>
+      </div>
+      <div className="dialog-body">{children}</div>
+      {footer !== undefined && <div className="dialog-foot">{footer}</div>}
+      {/* After the body, so that the focus starts in the body; the style puts it at the top right. */}
+      <IconButton
+        label="Close this window"
+        className="dialog-close"
+        testId="dialog-close"
+        disabled={busy}
+        onClick={onClose}
+      >
+        <X size={16} aria-hidden="true" />
+      </IconButton>
     </dialog>
   );
 }
@@ -172,6 +265,7 @@ export function FormDialog({
   before,
 }: FormDialogProps) {
   const { busy, error, submit } = useSubmit(onSubmit);
+  const formId = useId();
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -182,28 +276,38 @@ export function FormDialog({
   };
 
   return (
-    <Dialog title={title} onClose={onClose} wide={wide} {...(testId ? { testId } : {})}>
-      {before}
-      <form onSubmit={handleSubmit} noValidate>
-        {children}
-        {error !== null && (
-          <p className="error" role="alert" data-testid="dialog-error">
-            {error}
-          </p>
-        )}
-        <div className="dialog-actions">
-          <button type="button" onClick={onClose} disabled={busy}>
+    <Dialog
+      title={title}
+      onClose={onClose}
+      busy={busy}
+      wide={wide}
+      {...(testId ? { testId } : {})}
+      // The buttons sit in the dialog's footer, outside the form, and belong to it by its id.
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </button>
           <button
             type="submit"
+            form={formId}
             className={danger ? 'danger' : 'primary'}
             disabled={busy || disabled}
             data-testid="dialog-submit"
           >
             {submitLabel}
           </button>
-        </div>
+        </>
+      }
+    >
+      {before}
+      <form id={formId} onSubmit={handleSubmit} noValidate>
+        {children}
+        {error !== null && (
+          <p className="error" role="alert" data-testid="dialog-error">
+            {error}
+          </p>
+        )}
       </form>
     </Dialog>
   );

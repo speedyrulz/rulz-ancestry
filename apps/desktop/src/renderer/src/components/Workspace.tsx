@@ -1,3 +1,4 @@
+import { Redo2, Search, Undo2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiSessionState, GedcomImportInfo, MergeInfo, TreeState } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
@@ -8,12 +9,15 @@ import { AddPersonDialog, BackupsDialog } from './dialogs';
 import { DuplicatesDialog, mergeSummary } from './duplicates';
 import { ExportDialog, ImportReportDialog, importSummary } from './gedcom';
 import { MediaLibraryDialog } from './media';
+import { LogoMark } from './Logo';
 import { PersonList } from './PersonList';
 import { PersonPageView } from './PersonPage';
 import { PacksDialog } from './packs';
 import { PlacesDialog } from './places';
 import { RecordInboxDialog } from './recordinbox';
 import { SourcesDialog } from './sources';
+import { IconButton, ThemeButton } from './ui';
+import { UpdateNotice, UpdatesButton } from './updates';
 
 interface Notice {
   text: string;
@@ -308,51 +312,68 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
         Skip to the main part of the screen
       </a>
       <header className="topbar">
+        <div className="brand-mark">
+          <LogoMark className="topbar-mark" />
+          <span className="brand-label" aria-hidden="true">
+            KINSPORA
+          </span>
+        </div>
         <div className="tree-title">
           <h1 ref={treeTitle} tabIndex={-1} data-testid="tree-name">
             {tree.name}
           </h1>
-          <span className="muted" data-testid="tree-backup">
+          <span data-testid="tree-backup">
             {tree.lastBackupAt === null
               ? 'No backup yet'
               : `Last backup ${formatWhen(tree.lastBackupAt)}`}
           </span>
         </div>
-        <input
-          ref={searchBox}
-          type="search"
-          className="search"
-          value={searchText}
-          placeholder="Search this tree by name (Ctrl+F)"
-          aria-label="Search this tree by name"
-          spellCheck={false}
-          autoComplete="off"
-          maxLength={200}
-          data-testid="search-box"
-          onChange={(event) => setSearchText(event.target.value)}
-        />
+        <div className="topbar-end">
+          <div className="search-field">
+            <Search size={16} aria-hidden="true" />
+            <input
+              ref={searchBox}
+              type="search"
+              value={searchText}
+              placeholder="Search this tree by name"
+              aria-label="Search this tree by name"
+              title="Search this tree by name (Ctrl+F)"
+              spellCheck={false}
+              autoComplete="off"
+              maxLength={200}
+              data-testid="search-box"
+              onChange={(event) => setSearchText(event.target.value)}
+            />
+            <kbd aria-hidden="true">Ctrl F</kbd>
+          </div>
+          <IconButton
+            label="Undo"
+            title={tree.undo === null ? 'Nothing to undo' : `Undo ${tree.undo} (Ctrl+Z)`}
+            disabled={busy || tree.undo === null}
+            onClick={() => void undo()}
+            testId="undo"
+          >
+            <Undo2 size={16} aria-hidden="true" />
+          </IconButton>
+          <IconButton
+            label="Redo"
+            title={tree.redo === null ? 'Nothing to redo' : `Redo ${tree.redo} (Ctrl+Y)`}
+            disabled={busy || tree.redo === null}
+            onClick={() => void redo()}
+            testId="redo"
+          >
+            <Redo2 size={16} aria-hidden="true" />
+          </IconButton>
+          <UpdatesButton />
+          <ThemeButton />
+        </div>
+      </header>
+
+      <div className="actionbar">
         <div className="actions">
           <button
             type="button"
-            disabled={busy || tree.undo === null}
-            title={tree.undo === null ? 'Nothing to undo' : `Undo ${tree.undo} (Ctrl+Z)`}
-            onClick={() => void undo()}
-            data-testid="undo"
-          >
-            Undo
-          </button>
-          <button
-            type="button"
-            disabled={busy || tree.redo === null}
-            title={tree.redo === null ? 'Nothing to redo' : `Redo ${tree.redo} (Ctrl+Y)`}
-            onClick={() => void redo()}
-            data-testid="redo"
-          >
-            Redo
-          </button>
-          <button
-            type="button"
-            className="primary"
+            className="primary small"
             onClick={() => setDialog('add-person')}
             data-testid="add-person"
           >
@@ -360,6 +381,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="The censuses, registers, books and other sources this tree rests on"
             onClick={() => setDialog('sources')}
             data-testid="open-sources"
@@ -368,6 +390,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="Results of searches for records that you kept to look at later"
             onClick={() => {
               setInboxAtProposals(false);
@@ -383,6 +406,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="The places in this tree, and the list of the world's places"
             onClick={() => setDialog('places')}
             data-testid="open-places"
@@ -391,6 +415,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="Offline data packs on this PC"
             onClick={() => setDialog('packs')}
             data-testid="open-packs"
@@ -399,17 +424,24 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="The pictures and documents in this tree"
             onClick={() => setDialog('media')}
             data-testid="open-media"
           >
             Media
           </button>
-          <button type="button" onClick={() => setDialog('backups')} data-testid="open-backups">
+          <button
+            type="button"
+            className="small"
+            onClick={() => setDialog('backups')}
+            data-testid="open-backups"
+          >
             Backups
           </button>
           <button
             type="button"
+            className="small"
             title="Look for people who are in the tree twice"
             onClick={() => setDialog('duplicates')}
             data-testid="open-duplicates"
@@ -418,6 +450,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             title="Save this tree as a GEDCOM file for another program"
             onClick={() => setDialog('export')}
             data-testid="open-export"
@@ -426,6 +459,7 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
           </button>
           <button
             type="button"
+            className="small"
             disabled={busy}
             onClick={() => void closeTree()}
             data-testid="close-tree"
@@ -433,9 +467,10 @@ export function Workspace({ tree, imported, onTree, onClosed }: WorkspaceProps) 
             Close tree
           </button>
         </div>
-      </header>
+      </div>
 
       <div className="notice-bar" aria-live="polite">
+        <UpdateNotice />
         {ai?.session?.status === 'running' && (
           <p className="notice ai-line" role="status" data-testid="ai-session-line">
             <span>

@@ -44,7 +44,7 @@ test('checks the local feed, opens and dismisses a release, and respects the sta
     requests = 0;
     app = await launchApp(appTarget, userDataDir, args);
     window = await app.firstWindow();
-    await window.getByText('App updates', { exact: true }).click();
+    await window.getByRole('button', { name: 'App updates' }).click();
     await expect(window.getByLabel('Check for a new version at startup')).not.toBeChecked();
     await window.waitForTimeout(6500);
     expect(requests).toBe(0);

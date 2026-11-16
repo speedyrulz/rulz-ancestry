@@ -3,7 +3,7 @@ import type { GedcomImportInfo, StartInfo, TreeState } from '../../shared/ipc';
 import { api, errorMessage } from './api';
 import { StartScreen } from './components/StartScreen';
 import { Workspace } from './components/Workspace';
-import { Updates } from './components/updates';
+import { UpdatesProvider } from './components/updates';
 
 type Loaded =
   | { state: 'loading' }
@@ -73,8 +73,7 @@ export function App() {
 
   if (tree !== null) {
     return (
-      <>
-        <Updates />
+      <UpdatesProvider>
         <Workspace
           // A different tree starts with a fresh screen: nobody selected, empty search.
           key={tree.id + tree.dir}
@@ -89,13 +88,12 @@ export function App() {
             api.getStartInfo().then((info) => show(info, notice), fail);
           }}
         />
-      </>
+      </UpdatesProvider>
     );
   }
 
   return (
-    <>
-      <Updates />
+    <UpdatesProvider>
       <StartScreen
         info={loaded.info}
         notice={loaded.notice}
@@ -105,6 +103,6 @@ export function App() {
           setTree(result.tree);
         }}
       />
-    </>
+    </UpdatesProvider>
   );
 }

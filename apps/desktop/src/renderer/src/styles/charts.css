@@ -1,0 +1,361 @@
+/* Charts: pedigree, descendants, hourglass and fan. */
+
+.chart-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The kind switch is the shared .segmented control (controls.css). */
+.chart-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) var(--space-6) var(--space-2);
+}
+
+.chart-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.chart-title h2 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inline-field select {
+  width: auto;
+  padding: 4px var(--space-2\.5);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.zoom span {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.chart-hint {
+  margin: 0;
+  padding: 0 var(--space-6) var(--space-2);
+}
+
+.chart-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  cursor: grab;
+  touch-action: none;
+}
+
+.chart-scroll:active {
+  cursor: grabbing;
+}
+
+.chart-message {
+  padding: 24px;
+}
+
+.chart-sizer {
+  position: relative;
+  margin: 0 auto;
+}
+
+.chart-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.chart-lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.chart-lines path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.chart-box {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2px 8px 2px 10px;
+  overflow: hidden;
+  border: 1px solid var(--control-border);
+  border-left: 4px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  font-weight: 400;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.chart-box:hover:not(:disabled) {
+  border-color: var(--muted);
+  border-left-color: var(--line);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.chart-box.sex-M:hover:not(:disabled) {
+  border-left-color: var(--male);
+}
+
+.chart-box.sex-F:hover:not(:disabled) {
+  border-left-color: var(--female);
+}
+
+.chart-box.sex-M {
+  border-left-color: var(--male);
+}
+
+.chart-box.sex-F {
+  border-left-color: var(--female);
+}
+
+.chart-box.root,
+.chart-box.root:hover:not(:disabled) {
+  border-color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.chart-box.partner {
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.chart-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-years {
+  overflow: hidden;
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-more {
+  font-style: italic;
+}
+
+.fan {
+  display: block;
+}
+
+.fan-empty {
+  fill: none;
+  stroke: var(--border);
+  stroke-dasharray: 3 4;
+}
+
+.fan-segment {
+  cursor: pointer;
+}
+
+.fan-segment path,
+.fan-segment circle {
+  fill: var(--panel);
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.fan-segment.sex-M path {
+  fill: color-mix(in srgb, var(--male) 14%, var(--panel));
+}
+
+.fan-segment.sex-F path {
+  fill: color-mix(in srgb, var(--female) 14%, var(--panel));
+}
+
+.fan-segment:hover path,
+.fan-segment:hover circle {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.fan-segment:focus-visible {
+  outline: none;
+}
+
+.fan-segment:focus-visible path,
+.fan-segment:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.fan-root circle {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.fan text {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.fan .fan-years {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.fan .fan-gap {
+  font-size: 0;
+}
+
+/* Large text: the chart gets a tall box of its own inside the scrolling page. */
+@media (max-width: 900px) {
+  .chart-view {
+    height: 90vh;
+    min-height: 360px;
+  }
+
+  .chart-bar {
+    padding: var(--space-3) var(--space-4) var(--space-2);
+  }
+
+  .chart-hint {
+    padding: 0 var(--space-4) var(--space-2);
+  }
+}
+
+/* Windows high contrast. */
+@media (forced-colors: active) {
+  .chart-scroll {
+    border-color: ButtonText;
+  }
+
+  /* A box of a chart keeps its edge; the person at the centre gets a thick one. */
+  .chart-box {
+    border: 1px solid ButtonText;
+    border-left-width: 4px;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .chart-box.root {
+    border-width: 3px;
+    box-shadow: none;
+  }
+
+  .chart-box.partner {
+    border-style: dashed;
+  }
+
+  .chart-name,
+  .chart-years {
+    color: CanvasText;
+  }
+
+  .chart-lines path {
+    stroke: CanvasText;
+  }
+
+  .fan-segment path,
+  .fan-segment circle {
+    fill: Canvas;
+    stroke: CanvasText;
+  }
+
+  .fan-empty {
+    stroke: GrayText;
+  }
+
+  .fan-root circle {
+    stroke-width: 3;
+  }
+
+  .fan-segment:hover path,
+  .fan-segment:hover circle,
+  .fan-segment:focus-visible path,
+  .fan-segment:focus-visible circle {
+    stroke: Highlight;
+    stroke-width: 4;
+  }
+
+  .fan text,
+  .fan .fan-years {
+    fill: CanvasText;
+  }
+
+  /*
+   * Sex is told by the colour of the edge of a box and the fill of a place in the fan, and
+   * the box says it nowhere in words. High contrast flattens colour, so the sexes also differ in
+   * the style of the edge: solid for male, double for female, dotted for the others. In the fan
+   * the outline is solid, dashed or dotted in the same way.
+   */
+  .chart-box.sex-M {
+    border-left-style: solid;
+  }
+
+  .chart-box.sex-F {
+    border-left-style: double;
+  }
+
+  .chart-box.sex-U,
+  .chart-box.sex-X {
+    border-left-style: dotted;
+  }
+
+  .fan-segment.sex-F path {
+    stroke-dasharray: 8 3;
+  }
+
+  .fan-segment.sex-U path,
+  .fan-segment.sex-X path {
+    stroke-dasharray: 2 3;
+  }
+}

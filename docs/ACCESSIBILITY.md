@@ -14,7 +14,8 @@ known to be missing, and gives the check a person makes with Narrator.
   heading from its first moment, so the focus has a place while it is read) or to the title of the new
   screen, never to the page. A chart that is drawn again for another person leaves the focus alone if the
   user has moved on to something else.
-  Every focused control has an outline (`:focus-visible`).
+  Every focused control has a 2 px red outline, offset 2 px (`:focus-visible`); on a red button it is white and
+  inside the button.
 - **Names and structure.** Fields have labels, repeated buttons say what they are for ("Edit Birth, 1880"),
   dialogs have a name and `aria-modal`, tables have header cells and a name, one `h1` per screen
   (the tree's name, or the app's), `main`, `nav` and `header` landmarks. Messages are in `role="status"`
@@ -31,8 +32,9 @@ known to be missing, and gives the check a person makes with Narrator.
 - **Large text.** At 200% in a window of 1280 by 800 the two columns become one and the page scrolls as a
   whole. Only wide content (tables, charts, pictures) scrolls sideways inside its own box.
 - **Reduced motion.** With "reduce motion" on, there is no animation and no smooth scrolling.
-- **Contrast.** Text is at least 4.5:1 and the edges of controls at least 3:1, in the dark and the light
-  theme (the theme follows Windows).
+- **Contrast.** Text is at least 4.5:1 and the edges of fields, select boxes, unchecked checkboxes and chart boxes
+  at least 3:1 (`--control-border`), in the dark and the light theme. The theme is dark unless the user chose light
+  with the button in the top bar; it is kept, and it does not follow Windows (see DESIGN.md).
 
 ## How it is tested
 
@@ -43,6 +45,9 @@ known to be missing, and gives the check a person makes with Narrator.
   records search, AI assistant, media, places, packs and census, inbox, backups, duplicates, export, chart
   export), in both themes. The dialogs are opened with nothing in them beyond what a new tree holds; a
   dialog with a long result list is not audited with that list.
+  The tests start the app with `colorScheme: null` (`e2e/fixtures.ts`): Playwright otherwise makes every page
+  report a light scheme, and the dark theme would never be audited. The spec sets the theme with
+  `nativeTheme.themeSource`, as the theme button does.
 - The same spec runs axe on the tree screen and on the ancestor and fan charts with `forced-colors`, and on
   the tree screen with reduced motion; it checks that the rule for reduced motion is in force (animation and
   transition shortened to nothing, no smooth scrolling). The app has no animation of its own. It walks

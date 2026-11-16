@@ -108,7 +108,22 @@ function SourceListDialog({ tree, onOpen, onAdd, onClose }: SourceListDialogProp
   const shown = found !== null && found.key === key ? found : null;
 
   return (
-    <Dialog title="Sources" onClose={onClose} testId="sources-dialog" wide>
+    <Dialog
+      title="Sources"
+      onClose={onClose}
+      testId="sources-dialog"
+      wide
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} data-testid="sources-close">
+            Close
+          </button>
+          <button type="button" className="primary" onClick={onAdd} data-testid="add-source">
+            Add a source
+          </button>
+        </>
+      }
+    >
       <p className="dialog-text">
         A source is where information comes from: a census, a register, a certificate, a book, a web
         page. Facts about people point at the sources they rest on.
@@ -166,7 +181,9 @@ function SourceListDialog({ tree, onOpen, onAdd, onClose }: SourceListDialogProp
                     </button>
                   </td>
                   <td>{source.author}</td>
-                  <td data-testid="source-cited">{countOf(source.citations, 'time', 'times')}</td>
+                  <td className="cited" data-testid="source-cited">
+                    {countOf(source.citations, 'time', 'times')}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -180,14 +197,6 @@ function SourceListDialog({ tree, onOpen, onAdd, onClose }: SourceListDialogProp
           another.
         </p>
       )}
-      <div className="dialog-actions">
-        <button type="button" onClick={onAdd} data-testid="add-source">
-          Add a source
-        </button>
-        <button type="button" className="primary" onClick={onClose} data-testid="sources-close">
-          Close
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -329,15 +338,20 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
   }
   if ('error' in loaded || details === null) {
     return (
-      <Dialog title="Source" onClose={onClose} testId="source-dialog" wide>
+      <Dialog
+        title="Source"
+        onClose={onClose}
+        testId="source-dialog"
+        wide
+        footer={
+          <button type="button" onClick={onBack} data-testid="source-back">
+            All sources
+          </button>
+        }
+      >
         <p className={'error' in loaded ? 'error' : 'muted'} data-testid="source-gone">
           {'error' in loaded ? loaded.error : 'This source is not in the tree any more.'}
         </p>
-        <div className="dialog-actions">
-          <button type="button" className="primary" onClick={onBack} data-testid="source-back">
-            All sources
-          </button>
-        </div>
       </Dialog>
     );
   }
@@ -350,7 +364,22 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
   const deleting = open?.kind === 'delete-citation' ? citation(open.id) : null;
 
   return (
-    <Dialog title={title} onClose={onClose} testId="source-dialog" wide>
+    <Dialog
+      title={title}
+      onClose={onClose}
+      testId="source-dialog"
+      wide
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onBack} data-testid="source-back">
+            All sources
+          </button>
+          <button type="button" onClick={onClose} data-testid="source-close">
+            Close
+          </button>
+        </>
+      }
+    >
       <form
         noValidate
         onSubmit={(event) => {
@@ -471,6 +500,7 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
           </span>
           <button
             type="button"
+            className="small"
             onClick={() => setLimit(Math.min(limit + CITATION_PAGE, 200))}
             disabled={limit >= 200}
             data-testid="more-citations"
@@ -497,15 +527,6 @@ function SourceDialog({ sourceId, tree, onTree, onSelect, onBack, onClose }: Sou
           ))}
         </details>
       )}
-
-      <div className="dialog-actions">
-        <button type="button" onClick={onBack} data-testid="source-back">
-          All sources
-        </button>
-        <button type="button" className="primary" onClick={onClose} data-testid="source-close">
-          Close
-        </button>
-      </div>
 
       {editing !== null && (
         <CitationEditDialog

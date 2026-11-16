@@ -1,0 +1,377 @@
+/* Offline data packs and the census. */
+
+/* The packs on this PC: one card each, with its state as a badge and its facts under it. */
+ul.pack-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.pack-card {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+.pack-card:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-2);
+}
+
+.pack-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pack-card-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pack-card-head .badge {
+  margin-left: 0;
+}
+
+.pack-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-0\.5) var(--space-4);
+  margin: var(--space-2) 0 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pack-facts dt {
+  color: var(--muted);
+}
+
+.pack-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The census states on offer: rows with the name, the sizes and the button. */
+.census-pack-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.census-panel > label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  white-space: nowrap;
+}
+
+.census-panel > label > :is(select, input) {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The districts of a county: a list to choose from, the chosen one with a wash and a bar at its left. */
+ul.census-districts {
+  max-height: 220px;
+  margin: var(--space-2) 0;
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  list-style: none;
+}
+
+.census-districts li {
+  border-bottom: 1px solid var(--border);
+}
+
+.census-districts li:last-child {
+  border-bottom: none;
+}
+
+.census-districts button {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.census-districts button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.census-districts button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.census-detail {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+}
+
+.census-detail h4 {
+  margin: 0 0 var(--space-1);
+}
+
+.census-detail .actions {
+  margin-bottom: var(--space-2);
+}
+
+.census-detail input[type='number'] {
+  width: 5rem;
+}
+
+.census-detail label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.census-image-frame {
+  max-height: 60vh;
+  overflow: auto;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--media-bg);
+}
+
+.census-image-frame img {
+  display: block;
+  max-width: none;
+}
+
+/* A job that is under way: the title and step, a bar, and Cancel. */
+.pack-job {
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+}
+
+.pack-job .dialog-text {
+  margin-bottom: var(--space-2);
+}
+
+.pack-job .pack-job-bar {
+  margin-bottom: var(--space-3);
+}
+
+.pack-job .actions:last-child {
+  margin-bottom: 0;
+}
+
+.packs-add {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.packs-add h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: 13px;
+}
+
+.packs-lookup-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.packs-lookup-bar .actions {
+  align-items: center;
+}
+
+.packs-filter-field {
+  margin-bottom: var(--space-3);
+}
+
+/* The archives of Open Archives: rows to choose from. */
+ul.packs-archives-list {
+  align-self: stretch;
+  max-height: 220px;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  list-style: none;
+}
+
+.packs-archives-list li {
+  border-bottom: 1px solid var(--border);
+}
+
+.packs-archives-list li:last-child {
+  border-bottom: none;
+}
+
+.packs-archive-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+}
+
+.packs-archive-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+/* The chosen row: a wash, a bar at its left and a bolder name. */
+.packs-archive-row.selected,
+.packs-archive-row[aria-pressed='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--text);
+}
+
+.packs-archive-row.selected .packs-archive-name {
+  font-weight: 700;
+}
+
+.packs-archive-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.packs-archive-header .badge {
+  margin-left: 0;
+}
+
+.packs-archive-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.packs-archive-meta .hint {
+  font-size: 12px;
+}
+
+/* What an archive would add: a card with the files, the sizes and the Install button. */
+.packs-offer {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+}
+
+.packs-offer-title {
+  margin-bottom: var(--space-2);
+  font-family: var(--font-display);
+  font-size: 15px;
+}
+
+ul.packs-offer-files {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.packs-offer-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.packs-offer-files li:last-child {
+  border-bottom: none;
+}
+
+.packs-expired {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .census-image-frame {
+    max-height: 50vh;
+  }
+
+  .census-pack-row {
+    flex-wrap: wrap;
+  }
+}
+
+@media (forced-colors: active) {
+  .pack-card,
+  .pack-job,
+  .packs-offer,
+  .census-detail,
+  ul.census-districts,
+  ul.packs-archives-list {
+    border-color: ButtonText;
+  }
+
+  .packs-archive-row {
+    border: 1px solid ButtonText;
+  }
+
+  .census-districts button[aria-pressed='true'],
+  .packs-archive-row[aria-pressed='true'],
+  .packs-archive-row.selected {
+    background: Highlight;
+    color: HighlightText;
+    border-color: Highlight;
+    outline: 2px solid Highlight;
+    forced-color-adjust: none;
+  }
+}

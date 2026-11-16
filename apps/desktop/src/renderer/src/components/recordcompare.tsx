@@ -6,6 +6,7 @@ import {
   type Sex,
   type TakeType,
 } from '@rulz/core';
+import { Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type {
   AiProposalRef,
@@ -44,6 +45,14 @@ export function fitWords(fit: RecordFitInfo): string {
   if (fit.band === 'possible') return 'May fit';
   if (fit.band === 'unlikely') return 'Does not fit';
   return fit.doubts.length === 0 ? 'Little to go by' : 'Some details conflict';
+}
+
+/** The badge classes for a fit: a tone and always the words of `fitWords`. */
+export function fitBadge(fit: RecordFitInfo): string {
+  if (fit.band === 'strong') return 'badge ok';
+  if (fit.band === 'possible') return 'badge accent';
+  if (fit.band === 'unlikely') return 'badge danger';
+  return fit.doubts.length === 0 ? 'badge' : 'badge warn';
 }
 
 /** What agrees and what speaks against a fit, as one line; empty when there is neither. */
@@ -390,7 +399,35 @@ export function RecordCompareDialog({
   };
 
   return (
-    <Dialog title={`Compare a record with ${name}`} onClose={onClose} testId="record-compare" wide>
+    <Dialog
+      title={`Compare a record with ${name}`}
+      onClose={onClose}
+      testId="record-compare"
+      wide
+      footer={
+        <>
+          <button
+            type="button"
+            className={comparison !== null && onOffer ? 'ghost' : undefined}
+            onClick={onClose}
+            data-testid="compare-close"
+          >
+            Close
+          </button>
+          {comparison !== null && onOffer && (
+            <button
+              type="button"
+              className="primary"
+              disabled={busy || takes.length === 0}
+              onClick={take}
+              data-testid="compare-go"
+            >
+              Take over what is ticked
+            </button>
+          )}
+        </>
+      }
+    >
       {error !== null && (
         <p className="error" role="alert" data-testid="compare-error">
           {error}
@@ -409,12 +446,13 @@ export function RecordCompareDialog({
             </a>
             <span className="muted"> at {comparison.sourceName}</span>
             {comparison.fit !== null && (
-              <span className={`badge fit fit-${comparison.fit.band}`} data-testid="compare-fit">
+              <span className={fitBadge(comparison.fit)} data-testid="compare-fit">
                 {fitWords(comparison.fit)}
               </span>
             )}
             {comparison.attached && (
-              <span className="badge" data-testid="compare-attached">
+              <span className="badge ok" data-testid="compare-attached">
+                <Check aria-hidden="true" />
                 Attached as a source
               </span>
             )}
@@ -523,22 +561,6 @@ export function RecordCompareDialog({
           )}
         </>
       )}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose} data-testid="compare-close">
-          Close
-        </button>
-        {comparison !== null && onOffer && (
-          <button
-            type="button"
-            className="primary"
-            disabled={busy || takes.length === 0}
-            onClick={take}
-            data-testid="compare-go"
-          >
-            Take over what is ticked
-          </button>
-        )}
-      </div>
     </Dialog>
   );
 }

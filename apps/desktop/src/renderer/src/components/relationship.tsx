@@ -64,6 +64,11 @@ export function RelationshipDialog({ person, onClose, onSelect }: RelationshipDi
       onClose={onClose}
       testId="relationship-dialog"
       wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="relationship-close">
+          Close
+        </button>
+      }
     >
       <PersonPicker
         label="Find the other person by name"
@@ -146,17 +151,6 @@ export function RelationshipDialog({ person, onClose, onSelect }: RelationshipDi
             )}
           </>
         )}
-      </div>
-
-      <div className="dialog-actions">
-        <button
-          type="button"
-          className="primary"
-          onClick={onClose}
-          data-testid="relationship-close"
-        >
-          Close
-        </button>
       </div>
     </Dialog>
   );

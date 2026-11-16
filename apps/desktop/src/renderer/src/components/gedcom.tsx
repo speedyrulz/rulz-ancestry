@@ -29,7 +29,17 @@ export function ImportReportDialog({ report, onClose }: ImportReportDialogProps)
   const kept = report.keptRecords + report.keptLines;
   const unlisted = report.issueCount - report.issues.length;
   return (
-    <Dialog title="What the import did" onClose={onClose} testId="import-report-dialog" wide>
+    <Dialog
+      title="What the import did"
+      onClose={onClose}
+      testId="import-report-dialog"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="import-report-close">
+          Done
+        </button>
+      }
+    >
       <p className="dialog-text" data-testid="import-report-summary">
         {importSummary(report)} The file is GEDCOM {report.version}, in the {report.encoding}{' '}
         character set.
@@ -97,16 +107,6 @@ export function ImportReportDialog({ report, onClose }: ImportReportDialogProps)
           )}
         </>
       )}
-      <div className="dialog-actions">
-        <button
-          type="button"
-          className="primary"
-          onClick={onClose}
-          data-testid="import-report-close"
-        >
-          Done
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -162,7 +162,16 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
 
   if (done !== null) {
     return (
-      <Dialog title="Export finished" onClose={onClose} testId="export-dialog">
+      <Dialog
+        title="Export finished"
+        onClose={onClose}
+        testId="export-dialog"
+        footer={
+          <button type="button" onClick={onClose} data-testid="export-close">
+            Done
+          </button>
+        }
+      >
         <p className="dialog-text" role="status" data-testid="export-done">
           {countOf(done.persons, 'person', 'people')} and{' '}
           {countOf(done.families, 'family', 'families')} were written as GEDCOM {done.version} to{' '}
@@ -208,17 +217,32 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
             </ul>
           </div>
         )}
-        <div className="dialog-actions">
-          <button type="button" className="primary" onClick={onClose} data-testid="export-close">
-            Done
-          </button>
-        </div>
       </Dialog>
     );
   }
 
   return (
-    <Dialog title="Export as a GEDCOM file" onClose={onClose} testId="export-dialog">
+    <Dialog
+      title="Export as a GEDCOM file"
+      onClose={onClose}
+      testId="export-dialog"
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={() => void exportNow()}
+            data-testid="export-submit"
+          >
+            Choose where to save…
+          </button>
+        </>
+      }
+    >
       <p className="dialog-text">
         A GEDCOM file is what family tree programs use to pass a tree to one another. The file is a
         copy; this tree is not changed.
@@ -329,20 +353,6 @@ export function ExportDialog({ tree, onClose }: ExportDialogProps) {
           {error}
         </p>
       )}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose} disabled={busy}>
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="primary"
-          disabled={busy}
-          onClick={() => void exportNow()}
-          data-testid="export-submit"
-        >
-          Choose where to save…
-        </button>
-      </div>
     </Dialog>
   );
 }

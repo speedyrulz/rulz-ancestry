@@ -168,7 +168,28 @@ export function MergeDialog({
 
   if (!comparing || otherId === null) {
     return (
-      <Dialog title="Merge with another record" onClose={onClose} testId="merge-pick-dialog" wide>
+      <Dialog
+        title="Merge with another record"
+        onClose={onClose}
+        testId="merge-pick-dialog"
+        wide
+        footer={
+          <>
+            <button type="button" className="ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={pickedId === null}
+              onClick={() => setComparing(true)}
+              data-testid="merge-compare"
+            >
+              Compare
+            </button>
+          </>
+        }
+      >
         <p className="dialog-text">
           Use this when one person is in the tree twice. Choose the other record of the same person;
           you will see the two side by side before anything is merged.
@@ -179,20 +200,6 @@ export function MergeDialog({
           chosenId={pickedId}
           onChoose={(person) => setPickedId(person?.id ?? null)}
         />
-        <div className="dialog-actions">
-          <button type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="primary"
-            disabled={pickedId === null}
-            onClick={() => setComparing(true)}
-            data-testid="merge-compare"
-          >
-            Compare
-          </button>
-        </div>
       </Dialog>
     );
   }
@@ -204,7 +211,51 @@ export function MergeDialog({
   const merged = keep === 'first' ? second : first;
 
   return (
-    <Dialog title="Are these the same person?" onClose={onClose} testId="merge-dialog" wide>
+    <Dialog
+      title="Are these the same person?"
+      onClose={onClose}
+      testId="merge-dialog"
+      wide
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          {suggested && onDismissed && (
+            <button
+              type="button"
+              disabled={busy || pair === null}
+              title="They will not be offered as possible duplicates again"
+              onClick={() =>
+                run(async () => {
+                  onDismissed(await api.markNotDuplicate(personId, otherId));
+                  onClose();
+                })
+              }
+              data-testid="merge-different"
+            >
+              They are different people
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary"
+            disabled={busy || kept === null || merged === null}
+            onClick={() =>
+              run(async () => {
+                if (!kept || !merged) return;
+                const info = await api.mergePersons(kept.person.id, merged.person.id);
+                onMerged(info, fullName(kept.summary));
+                onClose();
+              })
+            }
+            data-testid="merge-submit"
+          >
+            Merge the two records
+          </button>
+        </>
+      }
+    >
       {pages === null && error === null && <p className="muted">Reading both records…</p>}
       {pages !== null && pair === null && (
         <p className="muted">One of these records is not in the tree any more.</p>
@@ -263,43 +314,6 @@ export function MergeDialog({
           {error}
         </p>
       )}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose} disabled={busy}>
-          Cancel
-        </button>
-        {suggested && onDismissed && (
-          <button
-            type="button"
-            disabled={busy || pair === null}
-            title="They will not be offered as possible duplicates again"
-            onClick={() =>
-              run(async () => {
-                onDismissed(await api.markNotDuplicate(personId, otherId));
-                onClose();
-              })
-            }
-            data-testid="merge-different"
-          >
-            They are different people
-          </button>
-        )}
-        <button
-          type="button"
-          className="primary"
-          disabled={busy || kept === null || merged === null}
-          onClick={() =>
-            run(async () => {
-              if (!kept || !merged) return;
-              const info = await api.mergePersons(kept.person.id, merged.person.id);
-              onMerged(info, fullName(kept.summary));
-              onClose();
-            })
-          }
-          data-testid="merge-submit"
-        >
-          Merge the two records
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -335,7 +349,17 @@ export function DuplicatesDialog({ tree, onTree, onMerged, onClose }: Duplicates
 
   const list = found?.list ?? null;
   return (
-    <Dialog title="Possible duplicates" onClose={onClose} testId="duplicates-dialog" wide>
+    <Dialog
+      title="Possible duplicates"
+      onClose={onClose}
+      testId="duplicates-dialog"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="duplicates-close">
+          Close
+        </button>
+      }
+    >
       <p className="dialog-text">
         These are people who may be in the tree twice, judged by their names, dates, places and
         relatives. Nothing is merged until you compare two records and say so.
@@ -382,18 +406,22 @@ export function DuplicatesDialog({ tree, onTree, onMerged, onClose }: Duplicates
                   {list.pairs.map((pair) => (
                     <tr key={`${pair.a.id}|${pair.b.id}`} data-testid="duplicate-row">
                       <td>
-                        {fullName(pair.a)} <span className="muted">{lifespan(pair.a)}</span>
+                        {fullName(pair.a)} <span className="muted nowrap">{lifespan(pair.a)}</span>
                       </td>
                       <td>
-                        {fullName(pair.b)} <span className="muted">{lifespan(pair.b)}</span>
+                        {fullName(pair.b)} <span className="muted nowrap">{lifespan(pair.b)}</span>
                       </td>
                       <td data-testid="duplicate-score">
-                        {likelihood(pair.score)} <span className="muted">({pair.score})</span>
+                        <span className={`badge ${pair.score >= 80 ? 'accent' : ''}`}>
+                          {likelihood(pair.score)}
+                        </span>{' '}
+                        <span className="muted">({pair.score})</span>
                       </td>
                       <td>{pair.reasons.join('. ')}.</td>
                       <td className="row-actions">
                         <button
                           type="button"
+                          className="small"
                           aria-label={`Compare ${fullName(pair.a)} and ${fullName(pair.b)}`}
                           onClick={() => setOpen({ aId: pair.a.id, bId: pair.b.id })}
                           data-testid="duplicate-compare"
@@ -409,12 +437,6 @@ export function DuplicatesDialog({ tree, onTree, onMerged, onClose }: Duplicates
           )}
         </>
       )}
-      <div className="dialog-actions">
-        <button type="button" className="primary" onClick={onClose} data-testid="duplicates-close">
-          Close
-        </button>
-      </div>
-
       {open !== null && (
         <MergeDialog
           personId={open.aId}

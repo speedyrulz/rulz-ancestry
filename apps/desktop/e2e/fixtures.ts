@@ -59,9 +59,11 @@ export function launchApp(
   appArgs: string[] = [],
 ): Promise<ElectronApplication> {
   const args = [`--user-data-dir=${userDataDir}`, ...windowArgs, ...appArgs];
+  // colorScheme null: Playwright otherwise makes every page report a light scheme, whatever the
+  // window's theme is. The app sets its own theme (dark unless the user chose light).
   return appTarget === 'packaged'
-    ? electron.launch({ executablePath: packagedExe, args })
-    : electron.launch({ args: [desktopDir, ...args], cwd: desktopDir });
+    ? electron.launch({ executablePath: packagedExe, args, colorScheme: null })
+    : electron.launch({ args: [desktopDir, ...args], cwd: desktopDir, colorScheme: null });
 }
 
 export const test = base.extend<AppOptions & AppFixtures>({

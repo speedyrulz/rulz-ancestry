@@ -1,0 +1,323 @@
+/* Records search, a search run, the inbox and the comparison of a record. */
+
+/* The comparison of a record with a person: a table that keeps its columns, ticks in the box of the guide. */
+.compare {
+  table-layout: fixed;
+  font-size: 13px;
+}
+
+.compare thead td,
+.compare tbody th {
+  width: 22%;
+}
+
+.compare td,
+.compare th {
+  vertical-align: top;
+}
+
+/* A heading for the rows of one event, in a comparison of a record. */
+.compare .compare-group {
+  width: auto;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: normal;
+}
+
+.compare .compare-group .muted {
+  font-weight: 400;
+}
+
+.compare-note {
+  margin: var(--space-2) 0;
+}
+
+.compare-tick {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  cursor: pointer;
+}
+
+.compare-tick input {
+  margin-top: 2px;
+}
+
+.compare thead th label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.compare thead th .muted {
+  display: block;
+  margin-left: var(--space-6);
+  font-weight: 400;
+}
+
+/* The search for records outside the tree. */
+.record-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 var(--space-4);
+  align-items: start;
+}
+
+.record-form .hint,
+.record-form button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.record-check {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.record-form select {
+  width: 100%;
+}
+
+.record-form .record-asks {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-5);
+}
+
+.record-form .hint ul {
+  margin: var(--space-1) 0;
+}
+
+/* The key of a service: a quiet panel. */
+.record-key {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.record-key p {
+  margin: var(--space-1) 0 0;
+}
+
+.record-key-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.record-key-form input {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* The results of one service, under its name, with a hairline above. */
+.record-source {
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.record-source h3 {
+  margin: 0 0 var(--space-2);
+}
+
+.record-source h3 .muted {
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-source h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* A result of a search, a result in the inbox, a proposal: each a card, one under the other. */
+.record-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.record-list > li {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+  font-size: 13px;
+  transition:
+    background-color 0.15s,
+    border-color 0.15s;
+}
+
+/* A card only draws its edge on hover: red links and outline buttons on it keep 4.5:1 in the light theme, which a fill would take away. */
+.record-list > li:hover {
+  border-color: var(--border-strong);
+}
+
+/* The title of a result, the label of its fit and what else is said in one line. */
+.record-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  font-size: 14px;
+}
+
+.record-head > a,
+.record-head > span:first-child {
+  font-weight: 600;
+}
+
+.record-head .badge {
+  margin-left: 0;
+}
+
+.record-fact {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* The lists of a search for several people: who is asked for, and the services. */
+.run-list {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  font-size: 13px;
+}
+
+.run-list li {
+  margin-bottom: var(--space-1);
+}
+
+ul.run-list {
+  margin: 0 0 var(--space-3);
+  padding-left: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  list-style: none;
+}
+
+ul.run-list > li {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+ul.run-list > li:last-child {
+  border-bottom: none;
+}
+
+.run-list .hint {
+  margin: 2px 0 0;
+}
+
+.run-list label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* One service of a running search: its name and count, its state as a badge, its bar under. */
+.run-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-1\.5);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-row .badge {
+  margin-left: 0;
+}
+
+.run-list .progress {
+  margin-bottom: var(--space-1\.5);
+}
+
+/* What can be done with a result, in a row under what it says. */
+.record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1\.5);
+  margin-top: var(--space-2\.5);
+}
+
+.record-actions .badge {
+  margin-left: 0;
+}
+
+.inbox-tabs {
+  margin-bottom: var(--space-3);
+}
+
+.inbox-list {
+  margin-top: var(--space-3);
+}
+
+/* Links to other sites: one row each, a hairline between. */
+ul.record-links {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  list-style: none;
+}
+
+ul.record-links li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+ul.record-links li:last-child {
+  border-bottom: none;
+}
+
+.citation-address {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .record-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (forced-colors: active) {
+  .compare-tick,
+  .record-list > li {
+    border: 1px solid ButtonText;
+  }
+
+  .record-key,
+  ul.run-list,
+  .record-links {
+    border-color: ButtonText;
+  }
+}

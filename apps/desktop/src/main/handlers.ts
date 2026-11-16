@@ -144,6 +144,7 @@ import {
   RECORD_INBOX_MAX,
   RECORD_RUN_MAX_GENERATIONS,
 } from '../shared/ipc';
+import type { ThemeMethod } from '../shared/theme';
 import type { UpdateMethod } from '../shared/updates';
 import type { AiSessionService } from './aisession';
 import type { CensusOffers } from './censusoffers';
@@ -229,11 +230,11 @@ type Args<K extends ApiMethod> = Parameters<RulzApi[K]>;
 type Result<K extends ApiMethod> = Awaited<ReturnType<RulzApi[K]>>;
 type Handler<K extends ApiMethod> = (...raw: unknown[]) => Result<K> | Promise<Result<K>>;
 
-/** Every handler the main process registers, those of the update check included. */
+/** Every handler the main process registers, those of the update check and the theme included. */
 export type HandlerTable = { [K in ApiMethod]: Handler<K> };
 
-/** Every handler but those of the update check, which `main/updates.ts` makes. */
-export type ApiHandlers = Omit<HandlerTable, UpdateMethod>;
+/** Every handler but those of the update check and the theme, which `main/updates.ts` and `main/theme.ts` make. */
+export type ApiHandlers = Omit<HandlerTable, UpdateMethod | ThemeMethod>;
 
 /**
  * Removes object keys whose value is `undefined`. A form that leaves a field

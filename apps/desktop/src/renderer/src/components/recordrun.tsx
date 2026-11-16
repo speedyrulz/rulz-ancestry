@@ -1,4 +1,5 @@
 import type { ExternalRecord, PersonQuery } from '@rulz/core';
+import { Check, Clock } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   RECORD_RUN_GENERATIONS,
@@ -425,7 +426,34 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
   const hidden = all.reduce((sum, answer) => sum + answer.hidden, 0);
 
   return (
-    <Dialog title={`Search for ancestors of ${name}`} onClose={onClose} testId="record-run" wide>
+    <Dialog
+      title={`Search for ancestors of ${name}`}
+      onClose={onClose}
+      testId="record-run"
+      wide
+      footer={
+        plan !== null && plan.agreed && run === null ? (
+          <>
+            <button type="button" className="ghost" onClick={onClose} data-testid="run-close">
+              Close
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={starting || chosen.length === 0 || eligible.length === 0}
+              onClick={start}
+              data-testid="run-start"
+            >
+              Start
+            </button>
+          </>
+        ) : run !== null && asked !== null ? (
+          <button type="button" onClick={onClose} data-testid="run-close">
+            Close
+          </button>
+        ) : undefined
+      }
+    >
       {error !== null && (
         <p className="error" role="alert">
           {error}
@@ -563,20 +591,6 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
               {problem}
             </p>
           )}
-          <div className="dialog-actions">
-            <button type="button" onClick={onClose} data-testid="run-close">
-              Close
-            </button>
-            <button
-              type="button"
-              className="primary"
-              disabled={starting || chosen.length === 0 || eligible.length === 0}
-              onClick={start}
-              data-testid="run-start"
-            >
-              Start
-            </button>
-          </div>
         </div>
       )}
 
@@ -597,7 +611,7 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
                   ? 'The search was stopped. '
                   : `${run.ended} `}
             {run.status === 'running' && (
-              <button type="button" onClick={stop} data-testid="run-stop">
+              <button type="button" className="small" onClick={stop} data-testid="run-stop">
                 Stop
               </button>
             )}
@@ -614,7 +628,34 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
               const left = run.left[source.id];
               return (
                 <li key={source.id} data-testid={`run-progress-${source.id}`}>
-                  <strong>{source.name}:</strong> {answered} of {asked.people.length}
+                  <div className="run-row">
+                    <span>
+                      <strong>{source.name}:</strong> {answered} of {asked.people.length}
+                    </span>
+                    {answered >= asked.people.length ? (
+                      <span className="badge ok">
+                        <Check aria-hidden="true" />
+                        Done
+                      </span>
+                    ) : left !== undefined ? (
+                      <span className="badge warn">
+                        <Clock aria-hidden="true" />
+                        Waiting
+                      </span>
+                    ) : run.status === 'running' ? (
+                      <span className="badge accent">Searching</span>
+                    ) : (
+                      <span className="badge">Stopped</span>
+                    )}
+                  </div>
+                  <div className="progress" aria-hidden="true">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${asked.people.length === 0 ? 0 : Math.round((answered / asked.people.length) * 100)}%`,
+                      }}
+                    />
+                  </div>
                   {left !== undefined && (
                     <span className="error">
                       {' '}
@@ -756,12 +797,6 @@ export function RecordRunDialog({ personId, name, onTree, onClose }: RecordRunDi
               </section>
             );
           })}
-
-          <div className="dialog-actions">
-            <button type="button" onClick={onClose} data-testid="run-close">
-              Close
-            </button>
-          </div>
         </div>
       )}
 

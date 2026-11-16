@@ -1,0 +1,197 @@
+/*
+ * Accessibility, part 6.3 (docs/ACCESSIBILITY.md): the bypass link, the outline of a chart,
+ * large text, reduced motion and Windows high contrast. This file is imported last. Rules that
+ * belong to one area (a chart, a map, a pack list) sit in that area's file, in its own @media block.
+ */
+
+/* The first stop of the keyboard: it jumps past the toolbar to the person. Shown only while it has the focus. */
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 6px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+/* The text outline of a chart: the same people as the drawing, as nested lists. */
+.chart-outline {
+  max-height: 30vh;
+  margin: 4px 0 0;
+  padding: 4px 0 8px;
+  overflow: auto;
+}
+
+.chart-outline ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.chart-outline > ul {
+  padding-left: 0;
+  list-style: none;
+}
+
+.chart-outline li {
+  padding: 2px 0;
+}
+
+.chart-outline .outline-role {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chart-outline-toggle {
+  margin: 0 24px 8px;
+  font-size: 13px;
+}
+
+.chart-outline h3 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+}
+
+/* Things the code gives the focus to (tabindex -1) show it like any other control. */
+.record-list > li:focus-visible,
+.record-source > h3:focus-visible,
+.record-key:focus-visible,
+[data-testid='run-results']:focus-visible,
+.ai-session:focus-visible,
+.viewer-side h3:focus-visible,
+h1:focus-visible,
+h2:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Large text: at 200% a window of 1280 pixels is 640 pixels wide, so the two columns become one and the page scrolls as a whole. */
+@media (max-width: 900px) {
+  .shell {
+    padding: 24px 16px;
+  }
+
+  .hero-row {
+    flex-wrap: wrap;
+    padding: var(--space-4);
+  }
+
+  .hero-brand {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+
+  .status > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .recent li {
+    flex-wrap: wrap;
+  }
+
+  .workspace {
+    flex: 1 0 auto;
+    min-height: 0;
+  }
+
+  .topbar {
+    position: static;
+    flex-wrap: wrap;
+    height: auto;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .actionbar {
+    position: static;
+  }
+
+  .tree-title {
+    max-width: none;
+  }
+
+  .topbar-end {
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+
+  .panes {
+    display: block;
+    overflow: visible;
+  }
+
+  .panes > nav {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .person-list {
+    height: auto;
+    max-height: 40vh;
+  }
+
+  .panes > main {
+    overflow: visible;
+  }
+
+  .table th,
+  .table .row-actions {
+    white-space: normal;
+  }
+
+  .table tbody th {
+    width: auto;
+  }
+
+  .row-actions button {
+    margin: 2px 6px 2px 0;
+  }
+
+  .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * Windows high contrast. The system takes over the colours, so what a colour
+ * alone showed gets a border, an outline or an underline here, and nothing is
+ * left to a background that the system removes.
+ */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .skip-link {
+    border-color: ButtonText;
+  }
+
+  .record-list > li:focus-visible,
+  .record-key:focus-visible,
+  .ai-session:focus-visible {
+    outline: 3px solid Highlight;
+  }
+}

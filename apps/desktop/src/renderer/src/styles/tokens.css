@@ -1,0 +1,167 @@
+/*
+ * The RulZ design tokens, under the names of the design guide (docs/DESIGN.md).
+ * Dark is the default. The light values apply when the window's colour scheme is light:
+ * the main process sets it from the saved theme choice (nativeTheme.themeSource), and the
+ * page follows it with prefers-color-scheme. Always use a token, never a raw colour.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest to lightest: bg (window), panel (cards, dialogs, fields), panel-2 (raised), hover. */
+  --bg: #050505;
+  --panel: #0c0c0e;
+  --panel-2: #141417;
+  --hover: #1c1c21;
+  --border: #232328;
+  --border-strong: #34343b;
+
+  /* Text. All four reach 4.5:1 on bg, panel and panel-2. */
+  --text: #f2f2f3;
+  --body: #d4d4d8;
+  --muted: #a3a3ab;
+  --faint: #82828c;
+
+  /* Red has one job: to act and to show state. accent fills; accent-text and link are red as text. */
+  --accent: #ed000d;
+  /* The guide has #ff2633 here; white on it is 3.8:1, so the darker red of the light theme (6.1:1). */
+  --accent-hover: #c8000b;
+  --accent-soft: rgb(237 0 13 / 13%);
+  --accent-fg: #ffffff;
+  --accent-text: #ff6b72;
+  --link: #ff5961;
+
+  /* Errors and destructive actions. */
+  --danger: #ff5a5f;
+  --danger-text: #ff8a8e;
+  --danger-bg: #3a0c0f;
+  --danger-border: #6b1418;
+  --danger-hover: #4a1014;
+
+  /* Status. A status always carries a word as well. */
+  --warn: #fbbf24;
+  --warn-text: #fcd679;
+  --ok: #4ade80;
+
+  --banner-bg: rgb(42 7 9 / 80%);
+  --banner-text: #ffb3b6;
+  --code-bg: #0a0a0c;
+  --sunken: rgb(0 0 0 / 40%);
+  --subtle: rgb(255 255 255 / 6%);
+  --subtle-border: rgb(255 255 255 / 8%);
+  --track: rgb(255 255 255 / 8%);
+  --media-bg: #000000;
+  --scrim: rgb(0 0 0 / 70%);
+  --shadow: rgb(0 0 0 / 90%);
+
+  /* The edge of a text field, a select box, an unchecked checkbox or a chart box. The guide's
+     --border is too faint for WCAG 1.4.11; this is at least 3:1 against bg, panel and panel-2. */
+  --control-border: #8a8a93;
+
+  /* Made from the tokens above: the washes and edges of the badge tones and the chip count. */
+  --accent-border: color-mix(in srgb, var(--accent) 40%, transparent);
+  --ok-soft: color-mix(in srgb, var(--ok) 10%, transparent);
+  --ok-border: color-mix(in srgb, var(--ok) 25%, transparent);
+  --warn-soft: color-mix(in srgb, var(--warn) 10%, transparent);
+  --warn-border: color-mix(in srgb, var(--warn) 25%, transparent);
+  --on-accent-soft: color-mix(in srgb, var(--accent-fg) 20%, transparent);
+
+  /* The app's own: charts and the map of a life. */
+  --male: #7fb0e6;
+  --female: #e69bb8;
+  --line: #6f6a62;
+  --map-sea: #1d2a31;
+
+  /* Space: the 4px grid. */
+  --space-0\.5: 2px;
+  --space-1: 4px;
+  --space-1\.5: 6px;
+  --space-2: 8px;
+  --space-2\.5: 10px;
+  --space-3: 12px;
+  --space-3\.5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  /* Radii grow with the object. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* Fixed heights and icon sizes. */
+  --control-sm: 32px;
+  --control-md: 36px;
+  --control-lg: 44px;
+  --topbar: 48px;
+  --icon-md: 16px;
+  --icon-sm: 12px;
+
+  /* Depth: flat by default; only what floats or glows has a shadow. */
+  --shadow-accent-glow: 0 6px 20px -8px rgb(237 0 13 / 80%);
+  --shadow-card-hover: 0 0 0 1px rgb(237 0 13 / 55%), 0 12px 40px -12px rgb(237 0 13 / 35%);
+  --shadow-dialog: 0 30px 80px -20px var(--shadow);
+  --shadow-menu: 0 16px 40px -10px var(--shadow);
+  --shadow-tile: 0 8px 20px -6px var(--shadow);
+
+  /* Type families. Windows system fonts; other platforms fall back to the system's. */
+  --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg: #ffffff;
+    --panel: #f5f5f7;
+    --panel-2: #ebebef;
+    --hover: #e2e2e7;
+    --border: #d9d9de;
+    --border-strong: #c4c4cb;
+
+    --text: #111114;
+    --body: #2a2a30;
+    --muted: #5f6068;
+    --faint: #68696f;
+
+    --accent-hover: #c8000b;
+    --accent-soft: rgb(237 0 13 / 8%);
+    --accent-text: #c8000b;
+    --link: #d0000b;
+
+    --danger: #d4161c;
+    --danger-text: #b4000a;
+    --danger-bg: #fdecec;
+    --danger-border: #f5b8bb;
+    --danger-hover: #fbd8da;
+
+    --warn: #a16207;
+    --warn-text: #8a5300;
+    --ok: #12662b;
+
+    --banner-bg: #fdecec;
+    --banner-text: #9f000a;
+    --code-bg: #f5f5f7;
+    --sunken: rgb(0 0 0 / 3%);
+    --subtle: rgb(0 0 0 / 4%);
+    --subtle-border: rgb(0 0 0 / 8%);
+    --track: rgb(0 0 0 / 8%);
+    --media-bg: #ececef;
+    --scrim: rgb(0 0 0 / 35%);
+    --shadow: rgb(0 0 0 / 18%);
+
+    --control-border: #767680;
+
+    --male: #3b6ea5;
+    --female: #b0567a;
+    --line: #9a9388;
+    --map-sea: #dbe6ec;
+  }
+}

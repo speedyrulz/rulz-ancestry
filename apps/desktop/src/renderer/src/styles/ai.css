@@ -1,0 +1,180 @@
+/* The optional AI assistant. */
+
+/* The line in the notice bar while a session is under way: set apart from the other notices. */
+.notice-bar .ai-line {
+  border-left: 4px solid var(--accent);
+}
+
+/* What an AI said of a record: told apart from the app's own label by a dashed edge, besides its words. */
+.badge.ai {
+  border-style: dashed;
+}
+
+.record-head.ai-head > span:first-child {
+  font-weight: 500;
+}
+
+.ai-reasons {
+  margin: var(--space-1) 0 var(--space-1\.5);
+  padding-left: var(--space-5);
+  font-size: 13px;
+  list-style: disc;
+}
+
+/* The marks of the list are red, as in the guide's lists. */
+.ai-reasons li::marker,
+.ai-notice > ul > li::marker,
+.ai-questions li::marker {
+  color: var(--accent-text);
+}
+
+.ai-reasons li {
+  margin-bottom: var(--space-0\.5);
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.ai-notice > ul > li {
+  margin-bottom: var(--space-2);
+}
+
+.ai-connect {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.ai-connect summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.ai-connect li {
+  margin: var(--space-1\.5) 0;
+}
+
+/* A command to copy: code on panel-2. */
+.ai-command {
+  display: block;
+  margin: var(--space-1\.5) 0;
+  padding: var(--space-1\.5) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* The session, and the run inside it: cards, with the state of each as a badge. */
+.ai-session {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+}
+
+.ai-state {
+  margin-bottom: var(--space-2);
+}
+
+.ai-state .badge {
+  margin-left: 0;
+}
+
+.ai-questions {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-6);
+  font-size: 13px;
+}
+
+.ai-questions li {
+  margin-bottom: var(--space-1);
+}
+
+.ai-api-section {
+  margin-bottom: var(--space-4);
+}
+
+.ai-run-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ai-run-controls input[type='number'] {
+  width: 100%;
+  padding: var(--space-1\.5) var(--space-2);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+
+.ai-run {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-2);
+}
+
+.ai-run-bar {
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+/* What the AI wrote: set in a quiet panel with a red bar at its left, as a quotation. */
+.ai-run-text {
+  margin: var(--space-1) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The activity log: the entries of one session close together, a little room between sessions. */
+.ai-log-list {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  font-size: 13px;
+}
+
+.ai-log-list li {
+  margin-top: var(--space-0\.5);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-log-list li.ai-log-first {
+  margin-top: var(--space-3);
+}
+
+.ai-log-list li:first-child {
+  margin-top: 0;
+}
+
+.ai-log-list time {
+  margin-right: var(--space-2);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (forced-colors: active) {
+  .ai-session,
+  .ai-run,
+  .ai-connect,
+  .ai-run-text {
+    border-color: ButtonText;
+  }
+}

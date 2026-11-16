@@ -6,6 +6,7 @@ import {
   type PersonQuery,
   type TextQuery,
 } from '@rulz/core';
+import { Bookmark, Check } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { CENSUS_PACK_KIND, type PackInfo } from '../../../shared/ipc';
 import type {
@@ -22,7 +23,7 @@ import { api, errorMessage } from '../api';
 import { countOf } from '../format';
 import { ClipDialog } from './citations';
 import { CensusPanel } from './census';
-import { RecordCompareDialog, dateWords, fitWhy, fitWords } from './recordcompare';
+import { RecordCompareDialog, dateWords, fitBadge, fitWhy, fitWords } from './recordcompare';
 import { Dialog, TextField } from './ui';
 
 /**
@@ -280,7 +281,7 @@ export function RecordNotice({ sources, links, onAgree, onClose }: RecordNoticeP
         </li>
       </ul>
       <div className="dialog-actions">
-        <button type="button" onClick={onClose}>
+        <button type="button" className="ghost" onClick={onClose}>
           Cancel
         </button>
         <button type="button" className="primary" onClick={onAgree} data-testid="record-agree">
@@ -336,17 +337,25 @@ export function Result({
   }, [attached, mark]);
   return (
     <li ref={itemRef} tabIndex={-1} className="record-result" data-testid="record-result">
-      <a id={titleId} href={record.url} target="_blank" rel="noreferrer" data-testid="record-link">
-        {record.title}
-      </a>
-      {fit !== undefined && (
-        <span className={`badge fit fit-${fit.band}`} data-testid="record-fit">
-          {fitWords(fit)}
-        </span>
-      )}
-      {record.kind === 'person' && record.sex !== null && (
-        <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
-      )}
+      <div className="record-head">
+        <a
+          id={titleId}
+          href={record.url}
+          target="_blank"
+          rel="noreferrer"
+          data-testid="record-link"
+        >
+          {record.title}
+        </a>
+        {fit !== undefined && (
+          <span className={fitBadge(fit)} data-testid="record-fit">
+            {fitWords(fit)}
+          </span>
+        )}
+        {record.kind === 'person' && record.sex !== null && (
+          <span className="muted"> {record.sex === 'M' ? 'male' : 'female'}</span>
+        )}
+      </div>
       {record.kind === 'text' && record.excerpt !== undefined && record.excerpt.trim() !== '' && (
         <div className="record-fact" data-testid="record-excerpt">
           {record.excerpt}
@@ -366,6 +375,7 @@ export function Result({
             </span>{' '}
             <button
               type="button"
+              className="small"
               onClick={onAllow}
               disabled={busy}
               aria-describedby={titleId}
@@ -379,6 +389,7 @@ export function Result({
             {record.kind !== 'text' && (
               <button
                 type="button"
+                className="small"
                 onClick={onCompare}
                 aria-describedby={titleId}
                 data-testid="record-compare-open"
@@ -387,12 +398,14 @@ export function Result({
               </button>
             )}{' '}
             {mark === 'kept' ? (
-              <span className="badge" data-testid="record-kept">
+              <span className="badge accent" data-testid="record-kept">
+                <Bookmark aria-hidden="true" />
                 Kept for later
               </span>
             ) : (
               <button
                 type="button"
+                className="small"
                 onClick={onKeep}
                 disabled={busy}
                 aria-describedby={titleId}
@@ -403,6 +416,7 @@ export function Result({
             )}{' '}
             <button
               type="button"
+              className="small ghost"
               onClick={onDecline}
               disabled={busy}
               aria-describedby={titleId}
@@ -411,12 +425,14 @@ export function Result({
               {declineWords(record)}
             </button>{' '}
             {attached ? (
-              <span className="badge" data-testid="record-attached">
+              <span className="badge ok" data-testid="record-attached">
+                <Check aria-hidden="true" />
                 Attached as a source
               </span>
             ) : (
               <button
                 type="button"
+                className="small outline"
                 onClick={onAttach}
                 disabled={busy}
                 aria-describedby={titleId}
@@ -592,7 +608,7 @@ function SourceResults({
         </p>
       )}
       {found.nextOffset !== null && !found.busy && (
-        <button type="button" onClick={onMore} data-testid="record-more">
+        <button type="button" className="small" onClick={onMore} data-testid="record-more">
           More results
         </button>
       )}
@@ -734,6 +750,7 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
           A key is saved, encrypted by Windows for your account. The app does not show it again.{' '}
           <button
             type="button"
+            className="small"
             disabled={busy}
             onClick={testKey}
             aria-label={`Test the key for ${source.name}`}
@@ -743,6 +760,7 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
           </button>{' '}
           <button
             type="button"
+            className="small danger"
             disabled={busy}
             onClick={() => done(api.removeRecordSourceKey(source.id))}
             aria-label={`Remove the key for ${source.name}`}
@@ -783,6 +801,7 @@ function SourceKey({ source, onSources }: SourceKeyProps) {
           />
           <button
             type="submit"
+            className="small"
             disabled={!fits || busy}
             aria-label={`Save the key for ${source.name}`}
             data-testid="record-key-save"
@@ -1188,7 +1207,19 @@ export function RecordSearchDialog({
     setTextForm((now) => ({ ...now, [field]: value }));
 
   return (
-    <Dialog title={`Search records for ${name}`} onClose={onClose} testId="record-search" wide>
+    <Dialog
+      title={`Search records for ${name}`}
+      onClose={onClose}
+      testId="record-search"
+      wide
+      footer={
+        !(setup !== null && setup.allowed && !setup.agreed) ? (
+          <button type="button" onClick={onClose} data-testid="record-search-close">
+            Close
+          </button>
+        ) : undefined
+      }
+    >
       {error !== null && (
         <p className="error" role="alert">
           {error}
@@ -1388,12 +1419,7 @@ export function RecordSearchDialog({
               The years start as the year of birth and the year after the death, which is when a
               newspaper may still write about a death.
             </div>
-            <button
-              type="submit"
-              className="primary"
-              disabled={!textReady}
-              data-testid="record-text-go"
-            >
+            <button type="submit" disabled={!textReady} data-testid="record-text-go">
               Search
             </button>
           </form>
@@ -1436,6 +1462,7 @@ export function RecordSearchDialog({
                 <li key={link.id}>
                   <button
                     type="button"
+                    className="small"
                     disabled={!ready}
                     onClick={() => openLink(link)}
                     data-testid={`record-open-${link.id}`}
@@ -1444,6 +1471,7 @@ export function RecordSearchDialog({
                   </button>
                   <button
                     type="button"
+                    className="small"
                     onClick={() => setClip({ site: link })}
                     aria-label={`Cite a page you found there, at ${link.name}`}
                     data-testid={`record-clip-${link.id}`}
@@ -1461,7 +1489,12 @@ export function RecordSearchDialog({
                 </li>
               ))}
             </ul>
-            <button type="button" onClick={() => setClip({ site: null })} data-testid="record-clip">
+            <button
+              type="button"
+              className="small"
+              onClick={() => setClip({ site: null })}
+              data-testid="record-clip"
+            >
               Cite a page of another site
             </button>
           </section>
@@ -1513,14 +1546,6 @@ export function RecordSearchDialog({
           }}
           onClose={() => setComparing(null)}
         />
-      )}
-
-      {!(setup !== null && setup.allowed && !setup.agreed) && (
-        <div className="dialog-actions">
-          <button type="button" onClick={onClose} data-testid="record-search-close">
-            Close
-          </button>
-        </div>
       )}
     </Dialog>
   );

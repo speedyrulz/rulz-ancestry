@@ -10,6 +10,7 @@ import {
   type FanChart,
   type FanSegment,
 } from '@rulz/core';
+import { Maximize, Minus, Plus, Printer } from 'lucide-react';
 import {
   Fragment,
   useEffect,
@@ -24,6 +25,7 @@ import type { ChartInfo, PersonSummary } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { NO_NAME, fullName, lifespan } from '../format';
 import { ChartExportDialog } from './reports';
+import { IconButton } from './ui';
 
 export type ChartKind = 'pedigree' | 'descendants' | 'hourglass' | 'fan';
 
@@ -620,7 +622,7 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
       <header className="chart-bar">
         <div className="chart-title">
           <h2 data-testid="chart-root-name">{root ? fullName(root) : 'Chart'}</h2>
-          <button type="button" onClick={onDetails} data-testid="chart-details">
+          <button type="button" className="small" onClick={onDetails} data-testid="chart-details">
             Show details
           </button>
         </div>
@@ -639,7 +641,6 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
                 role="radio"
                 aria-checked={kind === value}
                 tabIndex={kind === value ? 0 : -1}
-                className={kind === value ? 'selected' : undefined}
                 title={hint}
                 onClick={() => setKind(value)}
                 data-testid={`chart-kind-${value}`}
@@ -649,7 +650,7 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
             ))}
           </div>
           <label className="inline-field">
-            Generations
+            <span>Generations</span>
             <select
               value={shown}
               onChange={(event) => setGenerations(Number(event.target.value))}
@@ -663,35 +664,36 @@ export function ChartView({ personId, revision, onSelect, onDetails, onProblem }
             </select>
           </label>
           <div className="zoom" role="group" aria-label="Zoom">
-            <button
-              type="button"
+            <IconButton
+              label="Zoom out"
               onClick={() => stepZoom(-1)}
               disabled={zoom <= ZOOMS[0]}
-              aria-label="Zoom out"
-              data-testid="chart-zoom-out"
+              testId="chart-zoom-out"
             >
-              −
-            </button>
+              <Minus size={16} aria-hidden="true" />
+            </IconButton>
             <span data-testid="chart-zoom">{Math.round(zoom * 100)}%</span>
-            <button
-              type="button"
+            <IconButton
+              label="Zoom in"
               onClick={() => stepZoom(1)}
               disabled={zoom >= (ZOOMS.at(-1) ?? 1)}
-              aria-label="Zoom in"
-              data-testid="chart-zoom-in"
+              testId="chart-zoom-in"
             >
-              +
-            </button>
-            <button type="button" onClick={fit} data-testid="chart-fit">
+              <Plus size={16} aria-hidden="true" />
+            </IconButton>
+            <button type="button" className="small" onClick={fit} data-testid="chart-fit">
+              <Maximize size={14} aria-hidden="true" />
               Fit
             </button>
           </div>
           <button
             type="button"
+            className="small"
             title="Save this chart as a PDF or an SVG picture, or print it"
             onClick={() => setExporting(true)}
             data-testid="chart-export"
           >
+            <Printer size={14} aria-hidden="true" />
             Save or print…
           </button>
         </div>

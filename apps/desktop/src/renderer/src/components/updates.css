@@ -1,10 +1,52 @@
-.updates {
-  padding: 0.75rem 1rem;
+/* The update controls: a notice that appears only while a newer version is out, and the panel. */
+.update-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
 }
-.updates button {
-  margin: 0.25rem;
+
+.update-notice > span {
+  flex: 1;
 }
-.updates label {
-  display: block;
-  margin-top: 0.5rem;
+
+/* A newer version is out: the icon button gets a red dot at its corner (the notice says it in words). */
+button.icon-btn.has-update {
+  position: relative;
+  color: var(--accent-text);
+}
+
+button.icon-btn.has-update::after {
+  content: '';
+  position: absolute;
+  top: var(--space-1\.5);
+  right: var(--space-1\.5);
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  box-sizing: content-box;
+  transform: translate(25%, -25%);
+}
+
+.update-badge {
+  margin-left: 0;
+}
+
+.update-message {
+  min-height: 1.5em;
+  margin: var(--space-3) 0;
+  color: var(--muted);
+}
+
+.update-privacy {
+  margin-top: var(--space-3);
+}
+
+@media (forced-colors: active) {
+  button.icon-btn.has-update::after {
+    background: Highlight;
+    border-color: Canvas;
+  }
 }

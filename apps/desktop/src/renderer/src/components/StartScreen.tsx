@@ -4,7 +4,8 @@ import { api, errorMessage } from '../api';
 import { formatWhen } from '../format';
 import { LogoWordmark } from './Logo';
 import { SystemCheck } from './SystemCheck';
-import { TextField } from './ui';
+import { TextField, ThemeButton } from './ui';
+import { UpdateNotice, UpdatesButton } from './updates';
 
 interface StartScreenProps {
   info: StartInfo;
@@ -79,29 +80,72 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
 
   const forget = (dir: string) => run(async () => setRecent(await api.forgetRecentTree(dir)));
 
-  return (
-    <main className="shell" data-testid="start-screen">
-      <header>
-        <h1 className="brand" ref={title} tabIndex={-1}>
-          <LogoWordmark className="brand-logo" />
-          <span className="brand-name" aria-hidden="true">
-            KINSPORA
-          </span>
-        </h1>
-        <p className="tagline">Family history from free sources, stored on your own PC.</p>
-      </header>
+  // The one red button of the screen: Open on the tree used last, or Create tree when there is none.
+  const mainOpen = recent.find((tree) => tree.available)?.dir;
 
-      {notice !== null && (
-        <p className="error banner" role="alert" data-testid="start-notice">
-          {notice}
+  const openCard = (
+    <section className="card">
+      <h2>Open a family tree</h2>
+      {recent.length === 0 ? (
+        <p className="muted" data-testid="no-recent">
+          No trees have been opened on this PC yet.
         </p>
+      ) : (
+        <ul className="recent" data-testid="recent-trees">
+          {recent.map((tree) => (
+            <li key={tree.dir} data-testid="recent-tree">
+              <div className="recent-text">
+                <strong>{tree.name}</strong>
+                <span className="path">{tree.dir}</span>
+                <span className="muted">
+                  {tree.available
+                    ? `Last opened ${formatWhen(tree.lastOpenedAt)}`
+                    : 'Not found here any more. The folder may have been moved, renamed or deleted.'}
+                </span>
+              </div>
+              <div className="actions">
+                {tree.available && (
+                  <button
+                    type="button"
+                    className={tree.dir === mainOpen ? 'primary' : undefined}
+                    disabled={busy}
+                    aria-label={`Open ${tree.name}`}
+                    onClick={() => void openRecent(tree.dir)}
+                    data-testid="open-recent"
+                  >
+                    Open
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={busy}
+                  aria-label={`Remove from list: ${tree.name}`}
+                  onClick={() => void forget(tree.dir)}
+                  data-testid="forget-recent"
+                >
+                  Remove from list
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
-      {error !== null && (
-        <p className="error banner" role="alert" data-testid="start-error">
-          {error}
-        </p>
-      )}
+      <div className="actions">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void openFromDialog()}
+          data-testid="open-tree-folder"
+        >
+          Open a tree folder…
+        </button>
+      </div>
+    </section>
+  );
 
+  const newAndImport = (
+    <div className="start-grid">
       <section className="card">
         <h2>Start a new family tree</h2>
         <form onSubmit={create} noValidate>
@@ -120,7 +164,12 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
             </span>
           </p>
           <div className="actions">
-            <button type="submit" className="primary" disabled={busy} data-testid="create-tree">
+            <button
+              type="submit"
+              className={mainOpen === undefined ? 'primary' : undefined}
+              disabled={busy}
+              data-testid="create-tree"
+            >
               Create tree
             </button>
             <button
@@ -175,64 +224,56 @@ export function StartScreen({ info, notice, onOpened, onImported }: StartScreenP
           </div>
         </form>
       </section>
+    </div>
+  );
 
-      <section className="card">
-        <h2>Open a family tree</h2>
-        {recent.length === 0 ? (
-          <p className="muted" data-testid="no-recent">
-            No trees have been opened on this PC yet.
-          </p>
-        ) : (
-          <ul className="recent" data-testid="recent-trees">
-            {recent.map((tree) => (
-              <li key={tree.dir} data-testid="recent-tree">
-                <div className="recent-text">
-                  <strong>{tree.name}</strong>
-                  <span className="path">{tree.dir}</span>
-                  <span className="muted">
-                    {tree.available
-                      ? `Last opened ${formatWhen(tree.lastOpenedAt)}`
-                      : 'Not found here any more. The folder may have been moved, renamed or deleted.'}
-                  </span>
-                </div>
-                <div className="actions">
-                  {tree.available && (
-                    <button
-                      type="button"
-                      className="primary"
-                      disabled={busy}
-                      aria-label={`Open ${tree.name}`}
-                      onClick={() => void openRecent(tree.dir)}
-                      data-testid="open-recent"
-                    >
-                      Open
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={busy}
-                    aria-label={`Remove from list: ${tree.name}`}
-                    onClick={() => void forget(tree.dir)}
-                    data-testid="forget-recent"
-                  >
-                    Remove from list
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="actions">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void openFromDialog()}
-            data-testid="open-tree-folder"
-          >
-            Open a tree folder…
-          </button>
+  return (
+    <main className="shell" data-testid="start-screen">
+      <header className="hero">
+        <div className="hero-glow" aria-hidden="true" />
+        <div className="hero-slashes" aria-hidden="true" />
+        <div className="hero-row">
+          <div className="hero-brand">
+            <h1 ref={title} tabIndex={-1}>
+              <LogoWordmark className="hero-logo" />
+            </h1>
+            <div>
+              <span className="eyebrow" aria-hidden="true">
+                KINSPORA
+              </span>
+              <p className="tagline">Family history from free sources, stored on your own PC.</p>
+            </div>
+          </div>
+          <div className="hero-tools">
+            <UpdatesButton />
+            <ThemeButton />
+          </div>
         </div>
-      </section>
+      </header>
+
+      <UpdateNotice />
+      {notice !== null && (
+        <p className="error banner" role="alert" data-testid="start-notice">
+          {notice}
+        </p>
+      )}
+      {error !== null && (
+        <p className="error banner" role="alert" data-testid="start-error">
+          {error}
+        </p>
+      )}
+
+      {recent.length > 0 ? (
+        <>
+          {openCard}
+          {newAndImport}
+        </>
+      ) : (
+        <>
+          {newAndImport}
+          {openCard}
+        </>
+      )}
 
       <SystemCheck />
     </main>

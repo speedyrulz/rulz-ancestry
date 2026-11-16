@@ -157,7 +157,54 @@ export function ReportWindow({
   const ready = preview !== null && !busy;
 
   return (
-    <Dialog title={title} onClose={onClose} wide testId="report-dialog">
+    <Dialog
+      title={title}
+      onClose={onClose}
+      wide
+      testId="report-dialog"
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} data-testid="report-close">
+            Close
+          </button>
+          <button
+            type="button"
+            disabled={!ready}
+            onClick={() => void print()}
+            data-testid="report-print"
+          >
+            Print…
+          </button>
+          {picture && (
+            <button
+              type="button"
+              disabled={!ready}
+              onClick={() => void save('svg')}
+              data-testid="report-save-svg"
+            >
+              Save as SVG picture…
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={!ready}
+            onClick={() => void save('html')}
+            data-testid="report-save-html"
+          >
+            Save as web page…
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={!ready}
+            onClick={() => void save('pdf')}
+            data-testid="report-save-pdf"
+          >
+            Save as PDF…
+          </button>
+        </>
+      }
+    >
       <div className="report-dialog">
         {subject === null ? (
           <p className="dialog-text" data-testid="report-no-family">
@@ -233,47 +280,6 @@ export function ReportWindow({
           {outcome?.kind === 'saved' ? outcome.text : ''}
           {outcome?.kind === 'printed' ? 'Sent to the printer.' : ''}
         </p>
-
-        <div className="dialog-actions">
-          <button type="button" onClick={onClose} data-testid="report-close">
-            Close
-          </button>
-          <button
-            type="button"
-            disabled={!ready}
-            onClick={() => void print()}
-            data-testid="report-print"
-          >
-            Print…
-          </button>
-          {picture && (
-            <button
-              type="button"
-              disabled={!ready}
-              onClick={() => void save('svg')}
-              data-testid="report-save-svg"
-            >
-              Save as SVG picture…
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={!ready}
-            onClick={() => void save('html')}
-            data-testid="report-save-html"
-          >
-            Save as web page…
-          </button>
-          <button
-            type="button"
-            className="primary"
-            disabled={!ready}
-            onClick={() => void save('pdf')}
-            data-testid="report-save-pdf"
-          >
-            Save as PDF…
-          </button>
-        </div>
       </div>
     </Dialog>
   );

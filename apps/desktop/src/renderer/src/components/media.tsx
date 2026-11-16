@@ -1,4 +1,5 @@
 import { MEDIA_LIMITS } from '@rulz/core';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import {
   useEffect,
   useRef,
@@ -20,7 +21,7 @@ import {
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { countOf, formatSize, fullName, labelOf } from '../format';
-import { ConfirmDialog, Dialog, TextAreaField, TextField, useSubmit } from './ui';
+import { ConfirmDialog, Dialog, IconButton, TextAreaField, TextField, useSubmit } from './ui';
 
 /**
  * Pictures and documents: the grid of small pictures, the button that adds
@@ -287,7 +288,17 @@ export function TargetMediaDialog({
   onClose,
 }: TargetMediaDialogProps) {
   return (
-    <Dialog title={title} onClose={onClose} testId="target-media-dialog" wide>
+    <Dialog
+      title={title}
+      onClose={onClose}
+      testId="target-media-dialog"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="target-media-close">
+          Done
+        </button>
+      }
+    >
       <MediaStrip
         target={target}
         revision={revision}
@@ -295,16 +306,6 @@ export function TargetMediaDialog({
         emptyText="Nothing is attached to this yet."
         {...(onSelect ? { onSelect } : {})}
       />
-      <div className="dialog-actions">
-        <button
-          type="button"
-          className="primary"
-          onClick={onClose}
-          data-testid="target-media-close"
-        >
-          Done
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -483,29 +484,28 @@ function ImageStage({ src, alt, onSize }: ImageStageProps) {
   return (
     <div className="viewer-main">
       <div className="viewer-tools" role="group" aria-label="Zoom">
-        <button
-          type="button"
+        <IconButton
+          label="Zoom out"
           onClick={() => step(1 / ZOOM_STEP)}
           disabled={current === null || current.scale <= minScale}
-          aria-label="Zoom out"
-          data-testid="media-zoom-out"
+          testId="media-zoom-out"
         >
-          −
-        </button>
+          <ZoomOut size={16} aria-hidden="true" />
+        </IconButton>
         <span className="viewer-zoom" data-testid="media-zoom">
           {percent}
         </span>
-        <button
-          type="button"
+        <IconButton
+          label="Zoom in"
           onClick={() => step(ZOOM_STEP)}
           disabled={current === null || current.scale >= MAX_SCALE}
-          aria-label="Zoom in"
-          data-testid="media-zoom-in"
+          testId="media-zoom-in"
         >
-          +
-        </button>
+          <ZoomIn size={16} aria-hidden="true" />
+        </IconButton>
         <button
           type="button"
+          className="small"
           onClick={() => setView(null)}
           disabled={current === null || view === null}
           title="Show the whole picture (0)"
@@ -515,6 +515,7 @@ function ImageStage({ src, alt, onSize }: ImageStageProps) {
         </button>
         <button
           type="button"
+          className="small"
           onClick={actualSize}
           disabled={current === null || (view !== null && current.scale === 1)}
           title="One dot of the screen for each dot of the picture (1)"
@@ -688,15 +689,19 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
   }
   if ('error' in loaded || details === null) {
     return (
-      <Dialog title="Picture or document" onClose={onClose} testId="media-viewer">
+      <Dialog
+        title="Picture or document"
+        onClose={onClose}
+        testId="media-viewer"
+        footer={
+          <button type="button" onClick={onClose} data-testid="media-close">
+            Close
+          </button>
+        }
+      >
         <p className={'error' in loaded ? 'error' : 'muted'} data-testid="media-gone">
           {'error' in loaded ? loaded.error : 'This file is not in the tree any more.'}
         </p>
-        <div className="dialog-actions">
-          <button type="button" className="primary" onClick={onClose} data-testid="media-close">
-            Close
-          </button>
-        </div>
       </Dialog>
     );
   }
@@ -722,7 +727,17 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
     );
 
   return (
-    <Dialog title={mediaTitle(media)} onClose={onClose} testId="media-viewer" full>
+    <Dialog
+      title={mediaTitle(media)}
+      onClose={onClose}
+      testId="media-viewer"
+      full
+      footer={
+        <button type="button" onClick={onClose} data-testid="media-close">
+          Close
+        </button>
+      }
+    >
       <div className="viewer">
         {!media.held ? (
           <div className="viewer-main">
@@ -747,7 +762,7 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
               <div className="actions">
                 <button
                   type="button"
-                  className="primary"
+                  className="outline"
                   onClick={chooseFile}
                   data-testid="media-choose"
                 >
@@ -916,6 +931,7 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
             {media.present && media.canOpen && (
               <button
                 type="button"
+                className="small"
                 onClick={() => attempt(api.openMedia(media.id))}
                 data-testid="media-open"
               >
@@ -925,6 +941,7 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
             {media.present && (
               <button
                 type="button"
+                className="small"
                 onClick={() => attempt(api.showMediaInFolder(media.id))}
                 data-testid="media-show"
               >
@@ -933,14 +950,11 @@ export function MediaViewer({ mediaId, revision, onTree, onClose, onSelect }: Me
             )}
             <button
               type="button"
-              className="danger"
+              className="small danger"
               onClick={() => setConfirming(true)}
               data-testid="media-delete"
             >
               Delete from tree
-            </button>
-            <button type="button" className="primary" onClick={onClose} data-testid="media-close">
-              Close
             </button>
           </div>
         </aside>
@@ -1125,7 +1139,39 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
   const page = loaded !== null && loaded.filter === filter ? loaded.page : null;
 
   return (
-    <Dialog title="Pictures and documents" onClose={onClose} testId="media-library" wide>
+    <Dialog
+      title="Pictures and documents"
+      onClose={onClose}
+      testId="media-library"
+      wide
+      footer={
+        <>
+          <button type="button" className="ghost" onClick={onClose} data-testid="library-close">
+            Close
+          </button>
+          {named > 0 && (
+            <button
+              type="button"
+              disabled={finding}
+              onClick={() => void find()}
+              data-testid="library-find"
+            >
+              Find the files in a folder…
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary"
+            disabled={adding.busy}
+            onClick={() => void adding.add(null)}
+            title="Add files without attaching them to anyone yet"
+            data-testid="library-add"
+          >
+            Add pictures or documents
+          </button>
+        </>
+      }
+    >
       {tree.media === 0 ? (
         <p className="muted" data-testid="library-empty">
           This tree has no pictures or documents yet.
@@ -1199,6 +1245,7 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
               {page.total > page.media.length && (
                 <button
                   type="button"
+                  className="small"
                   onClick={() => setLimit(Math.min(limit + LIBRARY_PAGE, 500))}
                   disabled={limit >= 500}
                   data-testid="library-more"
@@ -1220,30 +1267,6 @@ export function MediaLibraryDialog({ tree, onTree, onSelect, onClose }: MediaLib
           {found.text}
         </p>
       )}
-      <div className="dialog-actions">
-        {named > 0 && (
-          <button
-            type="button"
-            disabled={finding}
-            onClick={() => void find()}
-            data-testid="library-find"
-          >
-            Find the files in a folder…
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={adding.busy}
-          onClick={() => void adding.add(null)}
-          title="Add files without attaching them to anyone yet"
-          data-testid="library-add"
-        >
-          Add pictures or documents
-        </button>
-        <button type="button" className="primary" onClick={onClose} data-testid="library-close">
-          Close
-        </button>
-      </div>
       {viewing !== null && (
         <MediaViewer
           mediaId={viewing}

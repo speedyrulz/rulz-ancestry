@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type {
   CensusCountyInfo,
@@ -7,6 +8,7 @@ import type {
   TreeState,
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
+import { IconButton } from './ui';
 
 interface CensusPanelProps {
   packs: PackInfo[];
@@ -219,6 +221,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
           <label>
             Filter descriptions{' '}
             <input
+              type="text"
               value={filter}
               onChange={(event) => {
                 resetDistrict();
@@ -247,6 +250,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
           <div className="actions">
             <button
               type="button"
+              className="small"
               disabled={offsets.length <= 1}
               onClick={() => {
                 setError(null);
@@ -259,6 +263,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
             <span role="status">{total} districts</span>
             <button
               type="button"
+              className="small"
               disabled={districts.length === 0 || offset + districts.length >= total}
               onClick={() => {
                 setError(null);
@@ -291,28 +296,30 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
             </label>
             <button
               type="button"
+              className="small"
               data-testid="census-view"
               disabled={page < 1 || page > district.pages || !Number.isInteger(page)}
               onClick={() => view(page)}
             >
               View page
             </button>
-            <button
-              type="button"
+            <IconButton
+              label="Previous page"
               disabled={(shown?.page ?? requestedPage) <= 1}
               onClick={() => view((shown?.page ?? requestedPage) - 1)}
             >
-              Previous page
-            </button>
-            <button
-              type="button"
+              <ChevronLeft size={16} aria-hidden="true" />
+            </IconButton>
+            <IconButton
+              label="Next page"
               disabled={(shown?.page ?? requestedPage) >= district.pages}
               onClick={() => view((shown?.page ?? requestedPage) + 1)}
             >
-              Next page
-            </button>
+              <ChevronRight size={16} aria-hidden="true" />
+            </IconButton>
             <button
               type="button"
+              className="small ghost"
               data-testid="census-nara"
               onClick={() => {
                 void api
@@ -363,6 +370,7 @@ export function CensusPanel({ packs, personId, name, onTree, onNotice }: CensusP
           )}
           <button
             type="button"
+            className="outline"
             data-testid="census-cite"
             disabled={shown === null || busy || citing}
             onClick={() => {

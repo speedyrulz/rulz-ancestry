@@ -1,3 +1,4 @@
+import { Bookmark, Check } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import {
   RECORD_INBOX_MAX,
@@ -12,7 +13,7 @@ import {
 } from '../../../shared/ipc';
 import { api, errorMessage } from '../api';
 import { NO_NAME, countOf, formatWhen } from '../format';
-import { RecordCompareDialog, fitWhy, fitWords } from './recordcompare';
+import { RecordCompareDialog, fitBadge, fitWhy, fitWords } from './recordcompare';
 import { RecordLines, declineWords } from './records';
 import { Dialog } from './ui';
 
@@ -58,10 +59,15 @@ const CONFIDENCE_WORDS: Record<AiConfidence, string> = {
 function AiOpinion({ opinion }: { opinion: AiOpinionInfo }) {
   return (
     <>
-      <span className="badge ai" data-testid="ai-verdict">
-        {VERDICT_WORDS[opinion.verdict]}
-      </span>
-      <span className="muted"> {CONFIDENCE_WORDS[opinion.confidence]}</span>
+      <div className="record-head ai-head">
+        <span
+          className={`badge ai ${opinion.verdict === 'fits' ? 'ok' : opinion.verdict === 'does-not-fit' ? 'danger' : 'accent'}`}
+          data-testid="ai-verdict"
+        >
+          {VERDICT_WORDS[opinion.verdict]}
+        </span>
+        <span className="muted">{CONFIDENCE_WORDS[opinion.confidence]}</span>
+      </div>
       {opinion.reasons.length > 0 && (
         <ul className="ai-reasons" data-testid="ai-reasons">
           {opinion.reasons.map((reason, index) => (
@@ -120,20 +126,28 @@ function Entry({
   const titleId = useId();
   return (
     <li data-testid="inbox-item">
-      {item.url === '' ? (
-        <span id={titleId} data-testid="inbox-title">
-          {item.title}
-        </span>
-      ) : (
-        <a id={titleId} href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
-          {item.title}
-        </a>
-      )}
-      {fit !== null && (
-        <span className={`badge fit fit-${fit.band}`} data-testid="inbox-fit">
-          {fitWords(fit)}
-        </span>
-      )}
+      <div className="record-head">
+        {item.url === '' ? (
+          <span id={titleId} data-testid="inbox-title">
+            {item.title}
+          </span>
+        ) : (
+          <a
+            id={titleId}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="inbox-title"
+          >
+            {item.title}
+          </a>
+        )}
+        {fit !== null && (
+          <span className={fitBadge(fit)} data-testid="inbox-fit">
+            {fitWords(fit)}
+          </span>
+        )}
+      </div>
       {tab === 'kept' && item.ai !== null && <AiOpinion opinion={item.ai} />}
       <div className="record-fact">
         For{' '}
@@ -175,6 +189,7 @@ function Entry({
             {record !== null && record.kind !== 'text' && (
               <button
                 type="button"
+                className="small"
                 onClick={onCompare}
                 aria-describedby={titleId}
                 data-testid="inbox-compare"
@@ -183,13 +198,15 @@ function Entry({
               </button>
             )}{' '}
             {item.attached ? (
-              <span className="badge" data-testid="inbox-attached">
+              <span className="badge ok" data-testid="inbox-attached">
+                <Check aria-hidden="true" />
                 Attached as a source
               </span>
             ) : (
               item.canAttach && (
                 <button
                   type="button"
+                  className="small outline"
                   onClick={onAttach}
                   disabled={busy}
                   aria-describedby={titleId}
@@ -202,6 +219,7 @@ function Entry({
             {item.canAttach && (
               <button
                 type="button"
+                className="small ghost"
                 onClick={onDecline}
                 disabled={busy}
                 aria-describedby={titleId}
@@ -212,6 +230,7 @@ function Entry({
             )}{' '}
             <button
               type="button"
+              className="small"
               onClick={onRemove}
               disabled={busy}
               aria-describedby={titleId}
@@ -223,6 +242,7 @@ function Entry({
         ) : (
           <button
             type="button"
+            className="small"
             onClick={onRemove}
             disabled={busy}
             aria-describedby={titleId}
@@ -274,20 +294,28 @@ function ProposalEntry({
   const titleId = useId();
   return (
     <li data-testid="inbox-proposal">
-      {item.url === '' ? (
-        <span id={titleId} data-testid="inbox-title">
-          {item.title}
-        </span>
-      ) : (
-        <a id={titleId} href={item.url} target="_blank" rel="noreferrer" data-testid="inbox-title">
-          {item.title}
-        </a>
-      )}
-      {fit !== null && (
-        <span className={`badge fit fit-${fit.band}`} data-testid="inbox-fit">
-          {fitWords(fit)}
-        </span>
-      )}
+      <div className="record-head">
+        {item.url === '' ? (
+          <span id={titleId} data-testid="inbox-title">
+            {item.title}
+          </span>
+        ) : (
+          <a
+            id={titleId}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="inbox-title"
+          >
+            {item.title}
+          </a>
+        )}
+        {fit !== null && (
+          <span className={fitBadge(fit)} data-testid="inbox-fit">
+            {fitWords(fit)}
+          </span>
+        )}
+      </div>
       <AiOpinion opinion={item.ai} />
       <div className="record-fact">
         For{' '}
@@ -321,6 +349,7 @@ function ProposalEntry({
         {record.kind !== 'text' && (
           <button
             type="button"
+            className="small"
             onClick={onCompare}
             aria-describedby={titleId}
             data-testid="proposal-compare"
@@ -329,18 +358,21 @@ function ProposalEntry({
           </button>
         )}{' '}
         {item.mark === 'kept' && item.keptAsProposed ? (
-          <span className="badge" data-testid="proposal-kept">
+          <span className="badge accent" data-testid="proposal-kept">
+            <Bookmark aria-hidden="true" />
             Kept for later
           </span>
         ) : item.mark === 'kept' ? (
           // The tree keeps this record already, as a search read it or as
           // another proposal had it: without what the AI says here.
           <>
-            <span className="badge" data-testid="proposal-kept-otherwise">
+            <span className="badge accent" data-testid="proposal-kept-otherwise">
+              <Bookmark aria-hidden="true" />
               Kept for later, without these reasons
             </span>{' '}
             <button
               type="button"
+              className="small"
               onClick={onKeep}
               disabled={busy}
               title="Keeps the record as it is shown here, with what the AI says of it, in the place of what is kept"
@@ -353,6 +385,7 @@ function ProposalEntry({
         ) : (
           <button
             type="button"
+            className="small"
             onClick={onKeep}
             disabled={busy}
             aria-describedby={titleId}
@@ -362,12 +395,14 @@ function ProposalEntry({
           </button>
         )}{' '}
         {item.attached ? (
-          <span className="badge" data-testid="proposal-attached">
+          <span className="badge ok" data-testid="proposal-attached">
+            <Check aria-hidden="true" />
             Attached as a source
           </span>
         ) : (
           <button
             type="button"
+            className="small outline"
             onClick={onAttach}
             disabled={busy}
             aria-describedby={titleId}
@@ -383,6 +418,7 @@ function ProposalEntry({
         ) : (
           <button
             type="button"
+            className="small ghost"
             onClick={onDecline}
             disabled={busy}
             aria-describedby={titleId}
@@ -393,6 +429,7 @@ function ProposalEntry({
         )}{' '}
         <button
           type="button"
+          className="small"
           onClick={onForget}
           disabled={busy}
           aria-describedby={titleId}
@@ -599,11 +636,21 @@ export function RecordInboxDialog({
   }, [listed]);
 
   return (
-    <Dialog title="Inbox: records kept for later" onClose={onClose} testId="record-inbox" wide>
+    <Dialog
+      title="Inbox: records kept for later"
+      onClose={onClose}
+      testId="record-inbox"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="record-inbox-close">
+          Close
+        </button>
+      }
+    >
       <div ref={tabsRef} className="actions inbox-tabs" role="group" aria-label="Show">
         <button
           type="button"
-          className="small"
+          className="chip"
           aria-pressed={tab === 'kept'}
           onClick={() => show('kept')}
           data-testid="inbox-tab-kept"
@@ -612,7 +659,7 @@ export function RecordInboxDialog({
         </button>
         <button
           type="button"
-          className="small"
+          className="chip"
           aria-pressed={tab === 'declined'}
           onClick={() => show('declined')}
           data-testid="inbox-tab-declined"
@@ -622,7 +669,7 @@ export function RecordInboxDialog({
         {((ai?.proposals ?? 0) > 0 || tab === 'proposals') && (
           <button
             type="button"
-            className="small"
+            className="chip"
             aria-pressed={tab === 'proposals'}
             onClick={() => show('proposals')}
             data-testid="inbox-tab-proposals"
@@ -734,7 +781,13 @@ export function RecordInboxDialog({
             ))}
           </ol>
           {page.items.length < page.total && (
-            <button type="button" onClick={more} disabled={busy} data-testid="inbox-more">
+            <button
+              type="button"
+              className="small"
+              onClick={more}
+              disabled={busy}
+              data-testid="inbox-more"
+            >
               More results
             </button>
           )}
@@ -769,12 +822,6 @@ export function RecordInboxDialog({
           onClose={() => setComparingProposal(null)}
         />
       )}
-
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose} data-testid="record-inbox-close">
-          Close
-        </button>
-      </div>
     </Dialog>
   );
 }

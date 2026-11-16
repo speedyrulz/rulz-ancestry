@@ -1,3 +1,4 @@
+import { Link2 } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -318,9 +319,13 @@ function GazetteerPanel({ status, onStatus }: GazetteerPanelProps) {
               ? `Downloading the place list: file ${job.step} of ${job.steps}, ${formatSize(job.bytes)} so far.`
               : `Putting the place list together: ${countOf(job.places, 'place', 'places')} so far.`}
           </p>
+          <div className="progress" aria-hidden="true">
+            <div className="progress-fill busy" />
+          </div>
           <div className="actions">
             <button
               type="button"
+              className="small"
               onClick={() => run(() => api.cancelGazetteerDownload())}
               data-testid="gazetteer-cancel"
             >
@@ -357,12 +362,18 @@ function GazetteerPanel({ status, onStatus }: GazetteerPanelProps) {
           <div className="actions">
             <button
               type="button"
+              className="small"
               onClick={() => run(() => api.downloadGazetteer())}
               data-testid="gazetteer-refresh"
             >
               Download again
             </button>
-            <button type="button" onClick={() => setRemoving(true)} data-testid="gazetteer-remove">
+            <button
+              type="button"
+              className="small danger"
+              onClick={() => setRemoving(true)}
+              data-testid="gazetteer-remove"
+            >
               Remove
             </button>
           </div>
@@ -440,6 +451,11 @@ function LinkPlaceDialog({ place, onLinked, onClose }: LinkPlaceDialogProps) {
       onClose={onClose}
       testId="link-place-dialog"
       wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="link-place-close">
+          Cancel
+        </button>
+      }
     >
       <p className="dialog-text">
         Every event at <strong>{place}</strong> will know where it lies. The place stays written as
@@ -486,6 +502,7 @@ function LinkPlaceDialog({ place, onLinked, onClose }: LinkPlaceDialogProps) {
                   <td className="row-actions">
                     <button
                       type="button"
+                      className="small outline"
                       onClick={() => link(entry)}
                       aria-label={`Link ${entry.text}`}
                       data-testid="link-place-pick"
@@ -504,11 +521,6 @@ function LinkPlaceDialog({ place, onLinked, onClose }: LinkPlaceDialogProps) {
           {error}
         </p>
       )}
-      <div className="dialog-actions">
-        <button type="button" onClick={onClose} data-testid="link-place-close">
-          Cancel
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -610,22 +622,30 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
       <td data-testid="place-link">
         {place.link !== null ? (
           <>
-            {place.link.name}
+            <span className="badge ok place-state">
+              <Link2 aria-hidden="true" />
+              Linked
+            </span>
+            <div>{place.link.name}</div>
             <div className="hint">{formatCoordinates(place.link.lat, place.link.lon)}</div>
           </>
         ) : offer !== null ? (
           <>
-            <span className="muted">Perhaps: </span>
-            {offer.text}
+            <span className="badge accent place-state">Suggested</span>
+            <div>
+              <span className="muted">Perhaps: </span>
+              {offer.text}
+            </div>
           </>
-        ) : (
-          <span className="muted">{installed ? 'Not linked' : ''}</span>
-        )}
+        ) : installed ? (
+          <span className="badge place-state">Not linked</span>
+        ) : null}
       </td>
       <td className="row-actions">
         {place.link !== null ? (
           <button
             type="button"
+            className="small"
             onClick={() => change(api.unlinkPlace(place.text))}
             aria-label={`Unlink ${place.text}`}
             data-testid="unlink-place"
@@ -638,6 +658,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
               {offer !== null && (
                 <button
                   type="button"
+                  className="small outline"
                   onClick={() => change(api.linkPlace(place.text, offer.geonameId))}
                   aria-label={`Link ${place.text} to ${offer.text}`}
                   data-testid="link-place-offer"
@@ -647,6 +668,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
               )}
               <button
                 type="button"
+                className="small"
                 onClick={() => setLinking(place.text)}
                 aria-label={
                   offer !== null
@@ -665,7 +687,17 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
   );
 
   return (
-    <Dialog title="Places" onClose={onClose} testId="places-dialog" wide>
+    <Dialog
+      title="Places"
+      onClose={onClose}
+      testId="places-dialog"
+      wide
+      footer={
+        <button type="button" onClick={onClose} data-testid="places-close">
+          Close
+        </button>
+      }
+    >
       <GazetteerPanel status={status} onStatus={setStatus} />
       <h3>Places in this tree</h3>
       {page !== null && (
@@ -732,6 +764,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
         <div className="actions">
           <button
             type="button"
+            className="small"
             disabled={offset === 0}
             onClick={() => setOffset((now) => Math.max(0, now - PAGE))}
             data-testid="places-previous"
@@ -740,6 +773,7 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
           </button>
           <button
             type="button"
+            className="small"
             disabled={offset + PAGE >= page.total}
             onClick={() => setOffset((now) => now + PAGE)}
             data-testid="places-next"
@@ -758,11 +792,6 @@ export function PlacesDialog({ tree, onTree, onClose }: PlacesDialogProps) {
           {error}
         </p>
       )}
-      <div className="dialog-actions">
-        <button type="button" className="primary" onClick={onClose} data-testid="places-close">
-          Close
-        </button>
-      </div>
       {linking !== null && (
         <LinkPlaceDialog place={linking} onLinked={onTree} onClose={() => setLinking(null)} />
       )}

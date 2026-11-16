@@ -457,88 +457,104 @@ export function PersonPageView({
           </p>
         </div>
         <div className="person-actions">
-          <button
-            type="button"
-            title="Draw this person's ancestors and descendants"
-            onClick={onChart}
-            data-testid="open-chart"
-          >
-            Chart
-          </button>
-          <button
-            type="button"
-            title="See how someone else in the tree is related to this person"
-            onClick={() => setOpen({ kind: 'relationship' })}
-            data-testid="open-relationship"
-          >
-            Relationship
-          </button>
-          <button
-            type="button"
-            title={
-              familyChoices(page).length === 0
-                ? 'Add a partner, a parent or a child first'
-                : 'Make a family group sheet to save as a PDF or print'
-            }
-            disabled={familyChoices(page).length === 0}
-            onClick={() => setOpen({ kind: 'report' })}
-            data-testid="open-report"
-          >
-            Family group sheet
-          </button>
-          <button
-            type="button"
-            title={
-              page.parentFamilies.length === 0
-                ? 'Add a parent first'
-                : 'Make a numbered list of the ancestors to save as a PDF or print'
-            }
-            disabled={page.parentFamilies.length === 0}
-            onClick={() => setOpen({ kind: 'ahnentafel' })}
-            data-testid="open-ahnentafel"
-          >
-            Ahnentafel
-          </button>
-          <button
-            type="button"
-            title="Look for this person in records outside your tree"
-            onClick={() => setOpen({ kind: 'records' })}
-            data-testid="open-records"
-          >
-            Search records
-          </button>
-          <button
-            type="button"
-            title="Look for this person and their direct ancestors in records outside your tree, in one go"
-            onClick={() => setOpen({ kind: 'record-run' })}
-            data-testid="open-record-run"
-          >
-            Search for ancestors
-          </button>
-          <button
-            type="button"
-            title="Let an AI app that you connect look for records of this person and their ancestors, and propose matches for you to decide on"
-            onClick={onAiAssistant}
-            data-testid="open-ai-assistant"
-          >
-            AI assistant
-          </button>
-          <button
-            type="button"
-            title="Use this when the same person is in the tree twice"
-            onClick={() => setOpen({ kind: 'merge' })}
-            data-testid="open-merge"
-          >
-            Merge
-          </button>
-          <button
-            type="button"
-            className="danger"
-            onClick={() => setOpen({ kind: 'delete' })}
-            data-testid="delete-person"
-          >
-            Delete person
-          </button>
+          <div className="person-group" role="group" aria-label="See this person">
+            <button
+              type="button"
+              className="small"
+              title="Draw this person's ancestors and descendants"
+              onClick={onChart}
+              data-testid="open-chart"
+            >
+              Chart
+            </button>
+            <button
+              type="button"
+              className="small"
+              title="See how someone else in the tree is related to this person"
+              onClick={() => setOpen({ kind: 'relationship' })}
+              data-testid="open-relationship"
+            >
+              Relationship
+            </button>
+          </div>
+          <div className="person-group" role="group" aria-label="Reports">
+            <button
+              type="button"
+              className="small"
+              title={
+                familyChoices(page).length === 0
+                  ? 'Add a partner, a parent or a child first'
+                  : 'Make a family group sheet to save as a PDF or print'
+              }
+              disabled={familyChoices(page).length === 0}
+              onClick={() => setOpen({ kind: 'report' })}
+              data-testid="open-report"
+            >
+              Family group sheet
+            </button>
+            <button
+              type="button"
+              className="small"
+              title={
+                page.parentFamilies.length === 0
+                  ? 'Add a parent first'
+                  : 'Make a numbered list of the ancestors to save as a PDF or print'
+              }
+              disabled={page.parentFamilies.length === 0}
+              onClick={() => setOpen({ kind: 'ahnentafel' })}
+              data-testid="open-ahnentafel"
+            >
+              Ahnentafel
+            </button>
+          </div>
+          <div className="person-group" role="group" aria-label="Look for records">
+            <button
+              type="button"
+              className="small"
+              title="Look for this person in records outside your tree"
+              onClick={() => setOpen({ kind: 'records' })}
+              data-testid="open-records"
+            >
+              Search records
+            </button>
+            <button
+              type="button"
+              className="small"
+              title="Look for this person and their direct ancestors in records outside your tree, in one go"
+              onClick={() => setOpen({ kind: 'record-run' })}
+              data-testid="open-record-run"
+            >
+              Search for ancestors
+            </button>
+            <button
+              type="button"
+              className="small"
+              title="Let an AI app that you connect look for records of this person and their ancestors, and propose matches for you to decide on"
+              onClick={onAiAssistant}
+              data-testid="open-ai-assistant"
+            >
+              AI assistant
+            </button>
+          </div>
+          <div className="person-group" role="group" aria-label="Change the tree">
+            <button
+              type="button"
+              className="small"
+              title="Use this when the same person is in the tree twice"
+              onClick={() => setOpen({ kind: 'merge' })}
+              data-testid="open-merge"
+            >
+              Merge
+            </button>
+            <button
+              type="button"
+              className="danger small"
+              onClick={() => setOpen({ kind: 'delete' })}
+              data-testid="delete-person"
+            >
+              Delete person
+            </button>
+          </div>
         </div>
       </header>
 

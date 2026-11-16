@@ -232,10 +232,10 @@ function AiNotice({ info, onAgree, onLog, onClose }: NoticeProps) {
         </li>
       </ul>
       <div className="dialog-actions">
-        <button type="button" onClick={onLog} data-testid="ai-log-open">
+        <button type="button" className="ghost" onClick={onLog} data-testid="ai-log-open">
           Activity log
         </button>
-        <button type="button" onClick={onClose}>
+        <button type="button" className="ghost" onClick={onClose}>
           Cancel
         </button>
         <button type="button" className="primary" onClick={onAgree} data-testid="ai-agree">
@@ -502,6 +502,7 @@ function ApiControls({
           {(keyState === 'saved' || keyState === 'unreadable') && (
             <button
               type="button"
+              className="small danger"
               disabled={keyBusy}
               onClick={removeKey}
               data-testid="ai-key-remove"
@@ -533,7 +534,12 @@ function ApiControls({
               aria-describedby={keyProblem !== null ? 'ai-key-problem' : undefined}
               data-testid="ai-key-input"
             />
-            <button type="submit" disabled={!hasKeyText || keyBusy} data-testid="ai-key-save">
+            <button
+              type="submit"
+              className="small"
+              disabled={!hasKeyText || keyBusy}
+              data-testid="ai-key-save"
+            >
               {keyState === 'saved' ? 'Replace the key' : 'Save the key'}
             </button>
           </form>
@@ -650,6 +656,13 @@ function RunView({
   const modelLabel = MODEL_LABELS[run.settings.model as ApiModel] ?? run.settings.model;
   return (
     <div className="ai-run" data-testid="ai-run">
+      <div className="ai-state">
+        {run.running ? (
+          <span className="badge accent">Run under way</span>
+        ) : (
+          <span className="badge">Run ended</span>
+        )}
+      </div>
       <p className="dialog-text" role="status" data-testid="ai-run-status">
         {run.running ? (
           <>
@@ -667,6 +680,14 @@ function RunView({
           </span>
         )}
       </p>
+      <div className="progress ai-run-bar" aria-hidden="true">
+        <div
+          className="progress-fill"
+          style={{
+            width: `${run.settings.capUsd > 0 ? Math.min(100, Math.round((progress.costUsd / run.settings.capUsd) * 100)) : 0}%`,
+          }}
+        />
+      </div>
       <ul className="run-list" data-testid="ai-run-figures">
         <li data-testid="ai-run-responses">
           Responses so far: {countOf(progress.responses, 'response', 'responses')}
@@ -754,6 +775,13 @@ function SessionView({
       className="ai-session"
       data-testid="ai-session"
     >
+      <div className="ai-state">
+        {session.status === 'running' ? (
+          <span className="badge ok">Session on</span>
+        ) : (
+          <span className="badge">Session ended</span>
+        )}
+      </div>
       <p className="dialog-text" role="status" data-testid="ai-session-status">
         {session.status === 'running' ? (
           <>
@@ -1196,7 +1224,36 @@ export function AiAssistantDialog({
   );
 
   return (
-    <Dialog title="AI assistant" onClose={onClose} testId="ai-assistant" wide>
+    <Dialog
+      title="AI assistant"
+      onClose={onClose}
+      testId="ai-assistant"
+      wide
+      footer={
+        info !== null && info.agreed && info.searchAgreed ? (
+          <>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setShowLog(true)}
+              data-testid="ai-log-open"
+            >
+              Activity log
+            </button>
+            <button type="button" onClick={() => setAskOff(true)} data-testid="ai-turn-off">
+              Turn the assistant off
+            </button>
+            <button type="button" onClick={onClose} data-testid="ai-close">
+              Close
+            </button>
+          </>
+        ) : info !== null && info.agreed && personId === null ? (
+          <button type="button" onClick={onClose} data-testid="ai-close">
+            Close
+          </button>
+        ) : undefined
+      }
+    >
       {error !== null && (
         <p className="error" role="alert">
           {error}
@@ -1218,13 +1275,7 @@ export function AiAssistantDialog({
             A session asks services through the app&apos;s search for records, so its notice comes
             first.{personId === null && " Open this window from a person's page."}
           </p>
-          {personId === null ? (
-            <div className="dialog-actions">
-              <button type="button" onClick={onClose} data-testid="ai-close">
-                Close
-              </button>
-            </div>
-          ) : (
+          {personId !== null && (
             <SearchNotice personId={personId} onAgreed={again} onClose={onClose} />
           )}
         </>
@@ -1262,17 +1313,6 @@ export function AiAssistantDialog({
               To start a session, choose a person and open this window from their page.
             </p>
           )}
-          <div className="dialog-actions">
-            <button type="button" onClick={() => setShowLog(true)} data-testid="ai-log-open">
-              Activity log
-            </button>
-            <button type="button" onClick={() => setAskOff(true)} data-testid="ai-turn-off">
-              Turn the assistant off
-            </button>
-            <button type="button" onClick={onClose} data-testid="ai-close">
-              Close
-            </button>
-          </div>
         </>
       )}
 
@@ -1369,7 +1409,29 @@ function AiActivityDialog({ logDays, onClose }: AiActivityDialogProps) {
   };
 
   return (
-    <Dialog title="AI assistant: activity log" onClose={onClose} testId="ai-log" wide>
+    <Dialog
+      title="AI assistant: activity log"
+      onClose={onClose}
+      testId="ai-log"
+      wide
+      footer={
+        <>
+          {page !== null && page.items.length > 0 && (
+            <button
+              type="button"
+              className="danger"
+              onClick={() => setAskClear(true)}
+              data-testid="ai-log-clear"
+            >
+              Clear the log
+            </button>
+          )}
+          <button type="button" onClick={onClose} data-testid="ai-log-close">
+            Close
+          </button>
+        </>
+      }
+    >
       <p className="hint" data-testid="ai-log-hint">
         Every call an AI made in a session: what it asked, and which records it was given. The log
         never holds the text of a record as a service gave it. It does hold the words an AI asked
@@ -1412,23 +1474,18 @@ function AiActivityDialog({ logDays, onClose }: AiActivityDialogProps) {
             ))}
           </ol>
           {!ended && page.items.length < page.total && (
-            <button type="button" onClick={more} disabled={busy} data-testid="ai-log-more">
+            <button
+              type="button"
+              className="small"
+              onClick={more}
+              disabled={busy}
+              data-testid="ai-log-more"
+            >
               More
             </button>
           )}
         </>
       )}
-      <div className="dialog-actions">
-        {page !== null && page.items.length > 0 && (
-          <button type="button" onClick={() => setAskClear(true)} data-testid="ai-log-clear">
-            Clear the log
-          </button>
-        )}
-        <button type="button" onClick={onClose} data-testid="ai-log-close">
-          Close
-        </button>
-      </div>
-
       {askClear && (
         <ConfirmDialog
           title="Clear the activity log?"

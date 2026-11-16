@@ -1,0 +1,462 @@
+/*
+ * Layout: the logo, the start screen (a hero, then cards and list rows), and the workspace
+ * (a 48px top bar, an action bar, then the list of people on the left and a person on the right).
+ */
+
+/* The logo: dark is the default, so the copy for the light theme is the one that is hidden. */
+.logo-light {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  .logo-light {
+    display: inline-block;
+  }
+
+  .logo-dark {
+    display: none;
+  }
+}
+
+/* The page: padded 32px, as wide as 1280px. */
+.shell {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--space-8);
+}
+
+.shell > * + * {
+  margin-top: var(--space-6);
+}
+
+/* Hero: the red-glow banner. The only gradient in the design; use it on the start screen only. */
+.hero {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--bg);
+}
+
+.hero-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 120% at 0% 0%, rgb(237 0 13 / 22%), transparent 60%),
+    radial-gradient(ellipse 50% 90% at 100% 100%, rgb(237 0 13 / 10%), transparent 60%);
+}
+
+.hero-slashes {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    -48deg,
+    transparent 0 46px,
+    rgb(237 0 13 / 7%) 46px 58px,
+    transparent 58px 120px
+  );
+  mask-image: linear-gradient(90deg, transparent 30%, #000 75%);
+}
+
+.hero-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-7);
+}
+
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.hero-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.hero h1 {
+  display: flex;
+  line-height: 0;
+}
+
+.hero-logo {
+  height: var(--control-lg);
+  width: auto;
+  filter: drop-shadow(0 8px 30px rgb(237 0 13 / 35%));
+}
+
+.eyebrow {
+  display: block;
+  color: var(--accent-text);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+.tagline {
+  margin: var(--space-1) 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.375;
+}
+
+/* Cards and the rows of recent trees. */
+.card {
+  padding: 20px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+.card form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card > p {
+  margin: 0 0 12px;
+}
+
+.start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+  gap: var(--space-6);
+  margin-top: var(--space-6);
+}
+
+.start-grid > .card {
+  margin-top: 0;
+}
+
+.recent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.recent li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: var(--space-3) var(--space-3\.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--panel-2);
+}
+
+.recent-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.recent-text strong {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.375;
+}
+
+.recent-text .muted {
+  font-size: 13px;
+}
+
+.recent .actions {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.status {
+  margin: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+}
+
+.status > div {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 16px;
+  padding: 10px 16px;
+}
+
+.status > div + div {
+  border-top: 1px solid var(--border);
+}
+
+.status dt {
+  color: var(--muted);
+}
+
+.status dd {
+  margin: 0;
+  min-width: 0;
+}
+
+/* Open tree: bars on top, the list on the left, one person on the right. */
+.workspace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The top bar: brand, tree, then search and the icon buttons. 48px, on the page colour, with a hairline. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--topbar);
+  padding: 0 var(--space-4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand-mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2\.5);
+}
+
+.topbar-mark {
+  height: 24px;
+  width: auto;
+}
+
+/* The label beside the mark. */
+.brand-label {
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  line-height: 20px;
+}
+
+.tree-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: 260px;
+  line-height: 1.25;
+}
+
+.tree-title h1 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-title span {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Search, then the icon buttons, at the right. */
+.topbar-end {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.topbar-end .search-field {
+  margin-right: var(--space-2);
+}
+
+/* The action bar: what can be done with the tree, in a row under the top bar. */
+.actionbar {
+  position: sticky;
+  top: var(--topbar);
+  z-index: 2;
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+/* A label is never broken; the buttons go to a second row in a narrow window. */
+.actionbar .actions button {
+  white-space: nowrap;
+}
+
+.notice-bar {
+  padding: 0 16px;
+}
+
+.notice-bar:not(:empty) {
+  padding-bottom: var(--space-2);
+}
+
+.notice-bar p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+/* The text of a message takes the room; its buttons sit together at the end. */
+.notice-bar p > span {
+  flex: 1;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  /* One row exactly as tall as the space left, so each pane scrolls on its own. */
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panes > nav {
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+
+.panes > main {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The list of people: rows like the guide's list rows. */
+.person-list {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.person-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list-count {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.list-empty {
+  padding: 16px;
+}
+
+.person-list .row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  font-weight: 400;
+  text-align: left;
+  /* Rows far off screen are not laid out until they are scrolled to. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 37px;
+}
+
+.person-list .row:hover {
+  background: var(--hover);
+}
+
+/* The chosen row has a wash, a red mark at its left edge and a bolder name: not colour alone. */
+.person-list .row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.person-list .row.selected .row-name {
+  font-weight: 600;
+}
+
+.person-list .row:focus-visible {
+  outline-offset: -2px;
+}
+
+.row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-life {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-list .more {
+  display: flex;
+  margin: 12px auto;
+}
+
+@media (forced-colors: active) {
+  .card,
+  .status,
+  .hero,
+  .recent li {
+    border-color: ButtonText;
+  }
+
+  /* The current row of a list carries a mark besides colour. */
+  .person-list .row.selected {
+    background: Highlight;
+    color: HighlightText;
+    box-shadow: none;
+    forced-color-adjust: none;
+  }
+
+  .person-list .row.selected .row-life {
+    color: HighlightText;
+  }
+
+  .person-list .row {
+    border-bottom-color: GrayText;
+  }
+}

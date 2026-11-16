@@ -555,7 +555,19 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
     });
 
   return (
-    <Dialog title="Backups" onClose={onClose} testId="backups-dialog" wide>
+    <Dialog
+      title="Backups"
+      onClose={onClose}
+      testId="backups-dialog"
+      wide
+      footer={
+        confirming === null ? (
+          <button type="button" onClick={onClose} data-testid="backups-close">
+            Done
+          </button>
+        ) : undefined
+      }
+    >
       <p className="dialog-text">
         The app backs up this tree when you close it or quit, if anything has changed. It keeps the
         ten newest backups, and of older ones the last backup of each month for six months. They are
@@ -592,7 +604,13 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
             first, so you can come back to it.
           </p>
           <div className="dialog-actions">
-            <button type="button" onClick={() => setConfirming(null)} disabled={busy} autoFocus>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setConfirming(null)}
+              disabled={busy}
+              autoFocus
+            >
               Cancel
             </button>
             <button
@@ -659,13 +677,11 @@ export function BackupsDialog({ tree, onTree, onClose }: BackupsDialogProps) {
             <button
               type="button"
               disabled={busy}
+              className="primary"
               data-testid="backup-now"
               onClick={() => void backupNow()}
             >
               Back up now
-            </button>
-            <button type="button" className="primary" onClick={onClose} data-testid="backups-close">
-              Done
             </button>
           </div>
         </>

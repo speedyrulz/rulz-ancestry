@@ -1,0 +1,156 @@
+/* Reset, type, headings, links and scrollbars. Base size 14px; the working size is 13px (the "ui" size). */
+
+* {
+  box-sizing: border-box;
+  /* Thin scrollbars. The thumb is --faint rather than the guide's --border-strong: it must show 3:1 on the page. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The page is a column: an update notice, if there is one, then the screen. */
+#root {
+  display: flex;
+  flex-direction: column;
+}
+
+h1 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.025em;
+}
+
+h2 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+h3 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.375;
+}
+
+p {
+  margin: 0 0 8px;
+}
+
+a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  text-decoration-color: currentcolor;
+}
+
+strong {
+  color: var(--text);
+}
+
+summary {
+  cursor: pointer;
+}
+
+details > .hint {
+  margin: 8px 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code,
+kbd {
+  font-family: var(--font-mono);
+}
+
+code {
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+/* A key in a hint, such as the search field's Ctrl F. */
+kbd {
+  padding: 0 var(--space-1\.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  color: var(--faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.faint {
+  color: var(--faint);
+}
+
+/* A date range or a count that must not break across two lines. */
+.nowrap {
+  white-space: nowrap;
+}
+
+.error {
+  color: var(--danger-text);
+}
+
+/* An error is red like the accent, so a block of one also gets a bar at its side: it never rests on colour alone. */
+p.error,
+div.error {
+  padding-left: 10px;
+  border-left: 3px solid var(--danger);
+}
+
+/* A path or a line of code: mono, 12px, broken anywhere when it is one long word. */
+.path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

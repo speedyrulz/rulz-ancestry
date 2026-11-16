@@ -1,0 +1,291 @@
+/* Pictures and documents. */
+
+ul.media-grid,
+.dialog ul.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+
+/* A tile is a card of the guide: panel, a hairline, radius 12; the hover fill and a shadow lift it. */
+button.media-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-xl);
+  background: var(--panel);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  text-align: left;
+}
+
+button.media-tile:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--hover);
+  box-shadow: var(--shadow-tile);
+}
+
+.media-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--media-bg);
+}
+
+.media-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.media-thumb.large {
+  width: 240px;
+  margin: 0 auto var(--space-4);
+}
+
+.media-none {
+  padding: var(--space-1) var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.media-caption,
+.media-note {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-caption {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.media-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.media-strip {
+  width: 100%;
+}
+
+.citation .media-strip {
+  margin-top: var(--space-1\.5);
+}
+
+/* Above a form, as in the form for a citation. */
+.dialog-body > .media-strip {
+  margin-bottom: var(--space-4);
+}
+
+.citation .media-strip ul.media-grid,
+.dialog-body > .media-strip ul.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(104px, 132px));
+}
+
+.library-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.library-filter .field {
+  flex: 1;
+}
+
+.library-filter .check {
+  padding-bottom: var(--space-2);
+  white-space: nowrap;
+}
+
+.scroll-box.tall {
+  min-height: 180px;
+  padding: var(--space-3);
+}
+
+.viewer {
+  display: flex;
+  flex: 1;
+  gap: var(--space-4);
+  min-height: 0;
+}
+
+.viewer-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The tool bar: the zoom group of icon buttons and a figure, then the words. */
+.viewer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+}
+
+.viewer-zoom {
+  min-width: 48px;
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--media-bg);
+  touch-action: none;
+  user-select: none;
+}
+
+.viewer-stage.movable {
+  cursor: grab;
+}
+
+.viewer-stage.movable:active {
+  cursor: grabbing;
+}
+
+.viewer-stage img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+}
+
+.viewer-message {
+  max-width: 520px;
+  margin: auto;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.viewer-message .actions {
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* A path or a web address can be one long word. */
+.viewer-message .path,
+.facts .path {
+  overflow-wrap: anywhere;
+}
+
+.viewer-side {
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding-right: var(--space-1);
+}
+
+.viewer-side textarea {
+  resize: vertical;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-0\.5) var(--space-3);
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.dialog ul.media-uses {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.media-uses li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.media-uses li:last-child {
+  border-bottom: none;
+}
+
+.media-uses button.small {
+  flex-shrink: 0;
+}
+
+/* The buttons stay in sight however far the panel is scrolled. */
+.dialog .viewer-buttons {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: var(--space-3) 0 var(--space-0\.5);
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+@media (max-width: 900px) {
+  .viewer {
+    flex-direction: column;
+    height: auto;
+    overflow-y: auto;
+  }
+
+  .viewer-stage {
+    min-height: 40vh;
+  }
+
+  .viewer-side {
+    width: 100%;
+    overflow-y: visible;
+  }
+
+  .viewer-tools {
+    flex-wrap: wrap;
+  }
+}
+
+@media (forced-colors: active) {
+  button.media-tile,
+  .viewer-stage {
+    border: 1px solid ButtonText;
+  }
+}

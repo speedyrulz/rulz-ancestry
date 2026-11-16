@@ -65,6 +65,7 @@ import {
   type TakeRecordFactsResult,
   type TreeState,
 } from '../shared/ipc';
+import { THEME_METHODS } from '../shared/theme';
 import { UPDATE_METHODS } from '../shared/updates';
 import { AiSessionService } from './aisession';
 import { GazetteerService } from './gazetteer';
@@ -434,10 +435,12 @@ afterEach(async () => {
 
 describe('the handler table', () => {
   it('has a handler for every function of the contract and nothing else', () => {
-    // The update check's handlers are made by main/updates.ts and added in index.ts.
-    const core = API_METHODS.filter((m) => !(UPDATE_METHODS as readonly string[]).includes(m));
+    // The handlers of the update check and the theme are made by main/updates.ts and main/theme.ts,
+    // and added in index.ts.
+    const others: readonly string[] = [...UPDATE_METHODS, ...THEME_METHODS];
+    const core = API_METHODS.filter((m) => !others.includes(m));
     expect(Object.keys(handlers).sort()).toEqual([...core].sort());
-    expect(core.length + UPDATE_METHODS.length).toBe(API_METHODS.length);
+    expect(core.length + others.length).toBe(API_METHODS.length);
   });
 });
 

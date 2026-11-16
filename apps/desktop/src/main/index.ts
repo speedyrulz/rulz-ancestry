@@ -33,6 +33,7 @@ import { USUAL_PROFILES } from '../bridge/profile';
 import { packsPath, profilePath, treesPath } from './rename';
 import { connectorCommandOf } from './connectorcommand';
 import { createHandlers, toIpcError, type HandlerTable, type Platform } from './handlers';
+import { createThemeHandlers, ThemeService } from './theme';
 import { createUpdateHandlers, scheduleStartupUpdate, UpdateService } from './updates';
 import { printReportPages, renderReportPdf } from './reportwindow';
 import { GazetteerService } from './gazetteer';
@@ -184,7 +185,8 @@ function createMainWindow(): BrowserWindow {
     show: false,
     title: 'RulZ Kinspora',
     autoHideMenuBar: true,
-    // The page's own background (styles.css), shown before the page has drawn.
+    // The page's own background (--bg in styles/tokens.css), shown before the page has drawn.
+    // The theme is applied before the window is made, so this is the saved choice.
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#050505' : '#ffffff',
     // Packaged: copied beside app.asar by extraResources in electron-builder.yml.
     icon: app.isPackaged
@@ -398,6 +400,7 @@ function registerIpc(
   censusOffers: CensusOffers,
   census: CensusService,
   updates: UpdateService,
+  theme: ThemeService,
 ): void {
   const handlers: HandlerTable = {
     ...createHandlers(
@@ -413,6 +416,7 @@ function registerIpc(
       census,
     ),
     ...createUpdateHandlers(updates),
+    ...createThemeHandlers(theme),
   };
   for (const method of API_METHODS) {
     ipcMain.handle(
@@ -633,6 +637,12 @@ if (!app.requestSingleInstanceLock()) {
       fetch: (url, init) => fetch(url, init),
       open: (url) => shell.openExternal(url),
     });
+    const theme = new ThemeService({
+      db: appDb,
+      apply: (chosen) => {
+        nativeTheme.themeSource = chosen;
+      },
+    });
     registerIpc(
       treeSession,
       gazetteer,
@@ -644,9 +654,12 @@ if (!app.requestSingleInstanceLock()) {
       censusOffers,
       census,
       updates,
+      theme,
     );
     stopStartupUpdate = scheduleStartupUpdate(updates);
     protocol.handle(MEDIA_SCHEME, serveMedia);
+    // Dark unless the user chose light. The title bar and the page follow nativeTheme.themeSource.
+    theme.applySaved();
     mainWindow = createMainWindow();
     // A search belongs to the window that started it. When the page is loaded
     // again or its process is gone, that window is no more, and nothing tells
