@@ -5636,7 +5636,10 @@ describe('reports', () => {
     expect((await errorOf('previewReport', request)).code).toBe('no-tree');
     await openNewTree();
     const tree = session.tree;
-    const first = createPerson(tree, { living: true, name: { given: 'Odette', surname: 'Hidden' } });
+    const first = createPerson(tree, {
+      living: true,
+      name: { given: 'Odette', surname: 'Hidden' },
+    });
     const second = createPerson(tree, { living: true, name: { given: 'Ben', surname: 'Hidden' } });
     const family = createFamily(tree, { partner1Id: first.id, partner2Id: second.id });
     const asked = { ...FAMILY_SHEET, familyId: family.id, includeLiving: false };
